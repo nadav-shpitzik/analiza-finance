@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+build_info.json
+.venv/
+venv/
+.pythonlibs/
+.upm/
+.cache/
+.local/
+.env
+*.csv
+*.xlsx
+exports/
