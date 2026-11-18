@@ -63,28 +63,45 @@ def _unwrap(data: Any) -> Any:
     return data
 
 
+def _maybe_json(value: Any) -> Any:
+    if isinstance(value, str) and value.strip()[:1] in ("[", "{"):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def describe(value: Any, depth: int = 4) -> Any:
+    """Field names, row counts and SAFE_FIELDS values, any nesting. Seen live 18.11: a
+    document is {"DocumentDetails": [<two parts that are not dicts>]}."""
+    value = _maybe_json(value)
+    if isinstance(value, dict):
+        out: dict = {"fields": sorted(map(str, value.keys())), "safe_values": _safe(value)}
+        if depth:
+            nested = {
+                str(k): describe(v, depth - 1)
+                for k, v in value.items()
+                if isinstance(_maybe_json(v), (dict, list))
+            }
+            if nested:
+                out["nested"] = nested
+        return out
+    if isinstance(value, list):
+        out = {"count": len(value)}
+        if value and depth:
+            out["first"] = [describe(v, depth - 1) for v in value[:2]]
+        return out
+    if isinstance(value, str):
+        return f"str({len(value)})"
+    return type(value).__name__
+
+
 def doc_summary(data: Any) -> dict:
     doc = _unwrap(data)
-    if not isinstance(doc, dict):
-        return {"found": doc not in (None, "", [], {}), "shape": type(doc).__name__}
-    lists, objects = {}, {}
-    for key, value in doc.items():
-        if isinstance(value, list):
-            first = next((v for v in value if isinstance(v, dict)), None)
-            lists[str(key)] = {
-                "count": len(value),
-                "fields": sorted(map(str, first.keys())) if first else [],
-                "safe_values_first": _safe(first) if first else {},
-            }
-        elif isinstance(value, dict):
-            objects[str(key)] = {"fields": sorted(map(str, value.keys())), "safe_values": _safe(value)}
-    return {
-        "found": True,
-        "fields": sorted(map(str, doc.keys())),
-        "safe_values": _safe(doc),
-        "objects": objects,
-        "lists": lists,
-    }
+    if doc in (None, "", [], {}):
+        return {"found": False}
+    return {"found": True, "shape": describe(doc)}
 
 
 def _safe(d: dict) -> dict:
