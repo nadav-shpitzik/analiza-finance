@@ -92,3 +92,40 @@ def test_summaries_keep_names_and_drop_values():
     assert summarize_triggers(None) == {"ok": True, "count": 0, "items": []}
     odd = summarize_companies({"weird": {"a": 1}}, "wizdb1n1")
     assert odd == {"ok": True, "shape": "dict", "keys": ["weird"]}
+
+
+def test_live_check_doc_summary_keeps_numbers_and_drops_people():
+    from scripts.live_check import doc_summary, parse_ids
+
+    doc = {
+        "statusCode": 200,
+        "repdata": {
+            "DocNumber": 50892,
+            "DocumentID": 1,
+            "AccountName": "ישראל ישראלי",
+            "AccountKey": "10093",
+            "Phone": "050-0000000",
+            "ValueDate": "2026-11-01",
+            "Tftal": 1170.0,
+            "moves": [{"ItemName": "קורס", "Quantity": 1, "Price": 1000.0, "Details": "ת.ז 123456789"}],
+        },
+    }
+    s = doc_summary(doc)
+    assert s["safe_values"] == {"DocNumber": 50892, "DocumentID": 1, "ValueDate": "2026-11-01", "Tftal": 1170.0}
+    assert s["lists"]["moves"]["count"] == 1
+    assert s["lists"]["moves"]["safe_values_first"] == {"Quantity": 1, "Price": 1000.0}
+    text = dump(s)
+    for leak in ("ישראל ישראלי", "10093\"", "050-0000000", "123456789", "קורס\""):
+        assert leak not in text.replace('"AccountKey"', "")
+    assert "AccountName" in s["fields"]
+    assert parse_ids("1, 2,x,30") == [1, 2, 30]
+    assert len(parse_ids(",".join(str(i) for i in range(50)))) == 10
+
+
+def test_live_check_doc_summary_keeps_a_header_and_its_rows():
+    from scripts.live_check import doc_summary
+
+    s = doc_summary({"stock": {"DocNumber": 7, "AccountName": "x"}, "stockmoves": [{"Price": 5, "ItemName": "y"}]})
+    assert s["objects"]["stock"] == {"fields": ["AccountName", "DocNumber"], "safe_values": {"DocNumber": 7}}
+    assert s["lists"]["stockmoves"]["safe_values_first"] == {"Price": 5}
+    assert doc_summary({"statusCode": 500}) == {"found": True, "fields": ["statusCode"], "safe_values": {}, "objects": {}, "lists": {}}

@@ -83,7 +83,7 @@ def check(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=200 if result["ok"] else 503)
 
 
-def run_check(cfg: config.Config, transport=None, clock=time.time) -> dict:
+def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optional[WizClient] = None) -> dict:
     out: dict = {
         "ok": False,
         "checked_at": _now_iso(clock()),
@@ -93,7 +93,7 @@ def run_check(cfg: config.Config, transport=None, clock=time.time) -> dict:
     if not cfg.ok:
         out["error"] = {"ok": False, "kind": "config_missing", "message": "; ".join(cfg.problems)}
         return out
-    client = WizClient(cfg.server, cfg.db, cfg.private_key, transport=transport, clock=clock)
+    client = client or WizClient(cfg.server, cfg.db, cfg.private_key, transport=transport, clock=clock)
     try:
         sess = client.session()
         out["session"] = {"ok": True, "shape": sess.shape, "length": len(sess.token)}

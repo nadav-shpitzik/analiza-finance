@@ -44,7 +44,7 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
     problems = []
     key = (env.get("WIZ_PRIVATE_KEY") or "").strip()
     if not key:
-        problems.append("WIZ_PRIVATE_KEY is not set (Replit Secrets)")
+        problems.append("WIZ_PRIVATE_KEY is not set (a Replit Secret, or the repository secret for live-check)")
     server = (env.get("WIZ_SERVER") or DEFAULT_SERVER).strip().lower()
     if not _SERVER_RE.match(server):
         problems.append(f"WIZ_SERVER {server!r} is not an lbN.wizcloud.co.il host")

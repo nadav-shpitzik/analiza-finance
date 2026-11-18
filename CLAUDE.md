@@ -25,7 +25,10 @@ there for anything beyond this repo. Talk to Nadav in Hebrew.
 
 - Tests: `pip install -r requirements-dev.txt && python -m pytest -q`. Every new read path gets a
   test that the write paths stay refused.
-- `WIZ_PRIVATE_KEY` lives only in Replit Secrets (workspace and deployment). Locally, tests use a
+- `WIZ_PRIVATE_KEY` lives only in Replit Secrets (workspace and deployment) and in this repo's Actions secret
+  for live-check. Locally, tests use a
   fake transport; a live local run takes a placeholder key and proves only the error path.
+- Live check without Replit: dispatch `live-check.yml` (inputs `company`, `doc_ids`), read the job log. It
+  prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
 - Deploy: Replit Autoscale. Not wired to `/deploy` yet (no GitHub-main build step), so a publish is
   Pull in the Repl, then Republish. `/health` shows `build.sha`.

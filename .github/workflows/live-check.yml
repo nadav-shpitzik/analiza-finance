@@ -1,0 +1,37 @@
+# Manual, read-only check against WizCloud (Hashavshevet). Never runs on push.
+# The token is the repository secret WIZ_PRIVATE_KEY; the output is shapes and names only.
+name: live-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "demo (wizdb2245n4) or analiza (wizdb2245n5)"
+        required: true
+        default: "demo"
+        type: choice
+        options: ["demo", "analiza"]
+      doc_ids:
+        description: "Comma-separated stockIDs to read with getDoc (shapes only, max 10)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r requirements.txt
+      - name: live check
+        env:
+          WIZ_PRIVATE_KEY: ${{ secrets.WIZ_PRIVATE_KEY }}
+          WIZ_COMPANY: ${{ inputs.company }}
+          DOC_IDS: ${{ inputs.doc_ids }}
+        run: python scripts/live_check.py
