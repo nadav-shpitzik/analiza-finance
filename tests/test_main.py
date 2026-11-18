@@ -91,7 +91,17 @@ def test_summaries_keep_names_and_drop_values():
     assert summarize_triggers([]) == {"ok": True, "count": 0, "fields": [], "items": []}
     assert summarize_triggers(None) == {"ok": True, "count": 0, "items": []}
     odd = summarize_companies({"weird": {"a": 1}}, "wizdb1n1")
-    assert odd == {"ok": True, "shape": "dict", "keys": ["weird"]}
+    assert odd == {"ok": True, "shape": "dict", "tree": {"weird": {"a": "int"}}}
+
+
+def test_companies_nested_under_status_are_found():
+    nested = {"statusCode": 200, "status": {"companies": [{"dbname": "wizdb2245n5", "name": "אנליזה"}]}}
+    assert summarize_companies(nested, "wizdb2245n5")["items"] == [{"db": "wizdb2245n5", "name": "אנליזה"}]
+    as_string = {"statusCode": 200, "status": '[{"db": "wizdb2245n4", "desc": "Demo"}]'}
+    assert summarize_companies(as_string, "wizdb2245n4")["items"] == [{"db": "wizdb2245n4", "name": "Demo"}]
+    secret_text = {"statusCode": 200, "status": "OK 123456789"}
+    s = summarize_companies(secret_text, "x")
+    assert s["tree"] == {"statusCode": "int", "status": "str(12)"} and "123456789" not in dump(s)
 
 
 def test_live_check_doc_summary_keeps_numbers_and_drops_people():
