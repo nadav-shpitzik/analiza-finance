@@ -22,8 +22,8 @@ in slices `docs/backlog/0299-analiza-finance-build.md`. Boot from there for anyt
    Demo before `analiza` (`wizdb2245n5`).
 4. **No data from the books in git or in chat.** Report output carries names, ID numbers and
    salaries. Write it under `exports/` (ignored) or to the database, show shapes and counts, not
-   rows. `.gitignore` blocks csv/xlsx. **An ID number is never stored server side** (ADR-0143 §5,
-   ADR-0173): text from the books is cleaned of digit runs before it is written (spec §3.4).
+   rows. `.gitignore` blocks csv/xlsx. **An ID number is never stored server side** (ADR-0173 §1,
+   ADR-0171 §1): text from the books is cleaned of digit runs before it is written (spec §3.4).
 5. **A success shape is unverified until a live answer is seen.** Code that reads a response it has
    never seen says so in `/check` (what shape it found), never `except: pass`.
 6. **A reconciliation rule exists only with its test** (the rules file, §0). A name is only ever a
