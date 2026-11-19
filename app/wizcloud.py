@@ -18,14 +18,16 @@ Error shapes seen live on 2026-11-18 (lb1 and lb19, garbage tokens):
 - TokenCompanies, bad session: 500 `{"statusCode":500,"status":{"errors":"Token is not valid"}}`.
 - Triggers getURL, no header: 400 `{"status":"error","statusCode":400,"message":"Invalid params, no Authorization key in headers "}`.
 - Triggers getURL, bad session: 400 `{"status":"error","statusCode":400,"message":"Invalid token"}`.
-A successful answer has not been seen yet: the success shapes below are read
-defensively and every check reports what it actually found.
+Success seen live on 2026-11-18 (live-check, GitHub Actions): createSession answers raw
+text (224 characters), TokenCompanies a list under `status`, getURL an empty list. Other
+success shapes are still read defensively, and every check reports what it found.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -79,34 +81,53 @@ class WizError(Exception):
         return out
 
 
+class StoreErrorBase(Exception):
+    """What a session store raises when it cannot help (app/store.StoreError is the one in use).
+    The client then opens a session of its own and reports `as_dict()`; the read goes on."""
+
+    def as_dict(self) -> dict:
+        return {"ok": False, "kind": "store_error"}
+
+
 @dataclass
 class Session:
-    token: str
+    token: str = field(repr=False)
     issued_at: float
     shape: str  # how createSession's body looked: text / json-string / json-object:<key>
+    origin: str = "new"  # "new": opened by this process; "saved": read from the store
+    saved: Optional[bool] = None  # whether the store holds it; None when there is no store
+    store_error: Optional[dict] = None  # what the store said when it could not help (app/store.py)
+    note: Optional[str] = None
+
+
+# A saved session issued up to this many seconds "in the future" is another instance's clock.
+CLOCK_SKEW_S = 300
 
 
 @dataclass
 class WizClient:
     server: str
     db: str
-    private_key: str
+    private_key: str = field(repr=False)
     transport: Optional[httpx.BaseTransport] = None
     clock: Callable[[], float] = time.time
+    # Where the session is kept between processes (app/store.PgSessionStore); None keeps it in memory.
+    store: Optional[Any] = field(default=None, repr=False)
     _session: Optional[Session] = field(default=None, init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     last_session_shape: Optional[str] = field(default=None, init=False)
 
     # ---- redaction -------------------------------------------------------
-    def redact(self, text: str) -> str:
+    def redact(self, text: str, *also: Optional[str]) -> str:
         if not text:
             return text
-        for secret in (self.private_key, self._session.token if self._session else None):
+        for secret in (self.private_key, self._session.token if self._session else None, *also):
             if secret and len(secret) >= 4:
                 text = text.replace(secret, "***")
         return text
 
-    def _short(self, text: str, limit: int = 200) -> str:
-        text = self.redact((text or "").strip())
+    def _short(self, text: str, limit: int = 200, also: Optional[str] = None) -> str:
+        text = self.redact((text or "").strip(), also)
         return text if len(text) <= limit else text[:limit] + "..."
 
     # ---- http ------------------------------------------------------------
@@ -143,27 +164,83 @@ class WizClient:
         self.last_session_shape = shape
         return Session(token=token, issued_at=self.clock(), shape=shape)
 
-    def session(self, *, fresh: bool = False) -> Session:
-        if fresh or self._session is None or self.clock() - self._session.issued_at >= SESSION_TTL_S:
+    def _fresh_enough(self, issued_at: float) -> bool:
+        return -CLOCK_SKEW_S <= self.clock() - issued_at < SESSION_TTL_S
+
+    def holds_session(self) -> bool:
+        """Whether this process already holds a session it would use without asking anyone."""
+        current = self._session
+        return current is not None and self._fresh_enough(current.issued_at)
+
+    def session(self, *, fresh: bool = False, rejected: Optional[str] = None) -> Session:
+        """The session to call with. `rejected` is a session string WizCloud just refused: any session
+        but that one will do, so a renewal another thread or instance already made is taken as is."""
+        with self._lock:
+            current = self._session
+            if fresh and rejected is None and current is not None:
+                rejected = current.token
+            if current is not None and current.token != rejected and self._fresh_enough(current.issued_at):
+                return current
             self._session = None
-            self._session = self._new_session()
-        return self._session
+            self._session = self._acquire(rejected)
+            return self._session
+
+    def _usable(self, saved: Any, rejected: Optional[str]) -> Optional[Session]:
+        if saved is None or not saved.token or saved.token == rejected or not self._fresh_enough(saved.issued_at):
+            return None
+        return Session(token=saved.token, issued_at=saved.issued_at, shape=saved.shape, origin="saved", saved=True)
+
+    def _acquire(self, rejected: Optional[str]) -> Session:
+        """A session from the store when it holds a usable one; otherwise a new one, saved under the
+        store's renewal lock. A store that fails costs a new session, never the read, and is said."""
+        if self.store is None:
+            return self._new_session()
+        opened: Optional[Session] = None
+        unreadable = False
+        try:
+            if rejected is None:
+                saved = self.store.load(self.server, self.db)
+                usable = self._usable(saved, rejected)
+                if usable is not None:
+                    return usable
+            with self.store.renewal(self.server, self.db) as renewal:
+                saved = renewal.current()
+                usable = self._usable(saved, rejected)
+                if usable is not None:
+                    return usable
+                unreadable = saved is not None and not saved.token
+                opened = self._new_session()
+                renewal.save(opened.token, opened.shape, opened.issued_at)
+            opened.saved = True
+            if unreadable:
+                opened.note = "the saved session was sealed under another key and was replaced"
+            return opened
+        except StoreErrorBase as exc:
+            problem = exc.as_dict()
+        if opened is None:
+            opened = self._new_session()
+        opened.saved = False
+        opened.store_error = problem
+        return opened
 
     # ---- calls -------------------------------------------------------------
-    def call(self, path: str, body: Any = None) -> Any:
-        """POST to one read path and return the parsed JSON body."""
+    def call(self, path: str, body: Any = None, *, retry: bool = True) -> Any:
+        """POST to one read path and return the parsed JSON body. A rejected session gets one fresh
+        try, unless `retry` is False (scripts/live_check.py's session test needs to see the refusal)."""
         if path not in READ_PATHS:
             raise WizError("forbidden_path", f"{path!r} is not a read path")
+        rejected: Optional[str] = None
         for attempt in (1, 2):
-            sess = self.session(fresh=attempt == 2)
+            sess = self.session(rejected=rejected)
             resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body)
             data, err = read_envelope(resp)
             if err is None:
                 return data
-            if looks_like_rejected_session(err) and attempt == 1:
-                continue  # the session may have expired early; one fresh try
+            if looks_like_rejected_session(err) and attempt == 1 and retry:
+                rejected = sess.token  # it may have expired early, or been replaced; one fresh try
+                continue
             kind = "session_rejected" if looks_like_rejected_session(err) else "http_error"
-            raise WizError(kind, self._short(err), resp.status_code)
+            raise WizError(kind, self._short(err, also=sess.token), resp.status_code)
         raise AssertionError("unreachable")
 
     def companies(self) -> Any:

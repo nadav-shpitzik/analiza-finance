@@ -1,22 +1,29 @@
-"""finance-sync: the home of the Hashavshevet (WizCloud) integration.
+"""analiza-finance: the home of finance at Analiza (ADR-0185 in the docs repo; was finance-sync).
 
-v0 proves the connection and nothing else:
-- GET /health  - no call to WizCloud. Build, config (never a secret), last check.
-- GET /check   - one live, read-only round: createSession, the companies the token
-                 reaches, the webhooks already registered. Cached 60 s, so a
-                 public link cannot hammer the vendor. 200 when everything
-                 answered, 503 otherwise, with the reason in a closed vocabulary.
-Neither endpoint returns a value from the books: names of companies, and for
-webhooks only the table and the receiving host.
+Today (slice S0 of backlog 0301) it proves the connection and keeps it:
+- GET /health - no call to WizCloud. The build (GitHub main's commit, scripts/deploy_source.py), the
+                config (never a secret), the startup migrations, the store and the saved session's age,
+                and the last check.
+- GET /check  - one live, read-only round: the session (reused from memory or from the store, opened
+                only when neither holds one), the companies the token reaches, the webhooks already
+                registered. Cached 60 s, so a public link cannot hammer the vendor. 200 when everything
+                answered, 503 otherwise, with the reason in a closed vocabulary.
+Neither endpoint returns a value from the books: names of companies, and for webhooks only the table
+and the receiving host. Neither returns the key, a session string or the database URL.
 """
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
+import logging
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -24,16 +31,59 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import config
-from .wizcloud import READ_PATHS, WizClient, WizError
+from .wizcloud import READ_PATHS, Session, WizClient, WizError
 
+SERVICE = "analiza-finance"
 CHECK_TTL_S = 60
 STARTED = time.time()
+ROOT = Path(__file__).resolve().parent.parent
+logger = logging.getLogger("analiza_finance")
 
-app = FastAPI(title="finance-sync", docs_url=None, redoc_url=None, openapi_url=None)
+
+def deploy_build(root: Path = ROOT) -> dict:
+    """What the deployment build recorded in build_info.json, through scripts/deploy_source.py's own
+    reader, as analiza-metrics does. Never raises: an absent file is source None with the reason."""
+    try:
+        spec = importlib.util.spec_from_file_location("deploy_source", root / "scripts" / "deploy_source.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.load_build_info(root / module.BUILD_INFO_NAME)
+    except Exception as exc:  # noqa: BLE001 - a broken reader must not stop the service
+        return {"source": None, "sha": None, "reason": f"scripts/deploy_source.py unreadable: {type(exc).__name__}"}
+
+
+def startup_migrations(cfg: config.Config) -> dict:
+    """migrations/ on the database this instance uses (production, in the deployment). Best effort
+    with a trace: a failure is its class name in /health, never the URL, and the service still starts."""
+    if not cfg.database_url:
+        return {"ran": False, "reason": "DATABASE_URL is not set"}
+    try:
+        from .migrate import apply_migrations
+
+        return {"ran": True, **apply_migrations(cfg.database_url), "error": None}
+    except Exception as exc:  # noqa: BLE001 - class name only, never the URL
+        logger.error("startup migration failed (%s)", type(exc).__name__)
+        return {"ran": True, "error": type(exc).__name__}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.build = deploy_build()
+    app.state.migrations = startup_migrations(config.load())
+    yield
+
+
+app = FastAPI(title=SERVICE, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.state.transport = None  # tests put an httpx.MockTransport here
 app.state.clock = time.time
+app.state.store_factory = None  # tests put a fake here; None is Postgres when DATABASE_URL is set
+app.state.client = None
+app.state.client_ident = None
+app.state.build = None
+app.state.migrations = None
 
 _lock = threading.Lock()
+_client_lock = threading.Lock()
 _cache: dict = {"at": 0.0, "result": None}
 
 
@@ -41,20 +91,45 @@ def _now_iso(ts: Optional[float] = None) -> str:
     return datetime.fromtimestamp(ts if ts is not None else time.time(), tz=timezone.utc).isoformat(timespec="seconds")
 
 
+def _store_for(cfg: config.Config, state: Any) -> Any:
+    if state.store_factory is not None:
+        return state.store_factory(cfg)
+    if cfg.database_url and cfg.private_key:
+        from .store import PgSessionStore
+
+        return PgSessionStore(cfg.database_url, cfg.private_key)
+    return None
+
+
+def get_client(state: Any, cfg: config.Config) -> WizClient:
+    """One client per process, so its session outlives a request. A new one when the config changes."""
+    secrets = hashlib.sha256(f"{cfg.private_key}\0{cfg.database_url}".encode("utf-8")).hexdigest()
+    ident = (cfg.server, cfg.db, secrets, id(state.transport), id(state.clock), id(state.store_factory))
+    with _client_lock:
+        if state.client is None or state.client_ident != ident:
+            state.client = WizClient(
+                cfg.server, cfg.db or "", cfg.private_key, transport=state.transport, clock=state.clock,
+                store=_store_for(cfg, state),
+            )
+            state.client_ident = ident
+        return state.client
+
+
 @app.get("/")
 def root() -> dict:
-    return {"service": "finance-sync", "endpoints": ["/health", "/check"]}
+    return {"service": SERVICE, "endpoints": ["/health", "/check"]}
 
 
 @app.get("/health")
-def health() -> dict:
+def health(request: Request) -> dict:
     cfg = config.load()
+    state = request.app.state
     last = _cache["result"]
     return {
-        "service": "finance-sync",
+        "service": SERVICE,
         "ok": True,
         "uptime_s": int(time.time() - STARTED),
-        "build": config.build_info(),
+        "build": state.build if state.build is not None else deploy_build(),
         "read_only": True,
         "read_paths": sorted(READ_PATHS),
         "config": {
@@ -62,26 +137,70 @@ def health() -> dict:
             "server": cfg.server,
             "company": cfg.company,
             "db": cfg.db,
+            "database_url_set": bool(cfg.database_url),
             "problems": list(cfg.problems),
         },
+        "migrations": state.migrations if state.migrations is not None else {"ran": False, "reason": "no startup in this process"},
+        "store": store_health(cfg, state.clock()),
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
     }
 
 
+def store_health(cfg: config.Config, now: float) -> dict:
+    """The tables, what the writes need and the database lacks, and the saved session's age. Never
+    the session, never the URL; a failure is a kind or a class name."""
+    if not cfg.database_url:
+        return {"configured": False, "reason": "DATABASE_URL is not set: the session is kept in memory only"}
+    try:
+        from .migrate import schema_state
+        from .store import TABLE, describe_saved
+
+        state = schema_state(cfg.database_url)
+        session = None
+        if state["tables"].get(TABLE) == "present" and cfg.db:
+            session = describe_saved(cfg.database_url, cfg.server, cfg.db, now)
+    except Exception as exc:  # noqa: BLE001 - said, never raised past /health
+        return {"configured": True, "ok": False, "error": getattr(exc, "kind", None) or type(exc).__name__}
+    return {"configured": True, "ok": not state["missing_columns"], **state, "session": session}
+
+
 @app.get("/check")
 def check(request: Request) -> JSONResponse:
-    clock = request.app.state.clock
+    state = request.app.state
+    clock = state.clock
     with _lock:
         cached = _cache["result"]
         if cached is not None and clock() - _cache["at"] < CHECK_TTL_S:
             result = dict(cached, cached=True)
         else:
-            result = run_check(config.load(), transport=request.app.state.transport, clock=clock)
+            cfg = config.load()
+            client = get_client(state, cfg) if cfg.ok else None
+            result = run_check(cfg, transport=state.transport, clock=clock, client=client)
             _cache.update(at=clock(), result=result)
             result = dict(result, cached=False)
     return JSONResponse(result, status_code=200 if result["ok"] else 503)
+
+
+def session_report(sess: Session, held: bool, store_kind: Optional[str], now: float) -> dict:
+    """How this round got its session, never the session: `source` is memory (this process held
+    it), saved (read from the store) or new (opened now); `saved` is whether the store holds it."""
+    out = {
+        "ok": True,
+        "shape": sess.shape,
+        "length": len(sess.token),
+        "source": "memory" if held else sess.origin,
+        "issued_at": _now_iso(sess.issued_at),
+        "age_s": int(now - sess.issued_at),
+        "store": store_kind or "none",
+        "saved": bool(sess.saved),
+    }
+    if sess.store_error:
+        out["store_error"] = sess.store_error
+    if sess.note:
+        out["note"] = sess.note
+    return out
 
 
 def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optional[WizClient] = None) -> dict:
@@ -96,8 +215,9 @@ def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optio
         return out
     client = client or WizClient(cfg.server, cfg.db, cfg.private_key, transport=transport, clock=clock)
     try:
+        held = client.holds_session()
         sess = client.session()
-        out["session"] = {"ok": True, "shape": sess.shape, "length": len(sess.token)}
+        out["session"] = session_report(sess, held, getattr(client.store, "kind", None), clock())
     except WizError as exc:
         out["session"] = out["error"] = exc.as_dict()
         return out

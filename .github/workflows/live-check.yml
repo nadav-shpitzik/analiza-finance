@@ -15,6 +15,11 @@ on:
         description: "Comma-separated stockIDs to read with getDoc (shapes only, max 10)"
         required: false
         default: ""
+      session_test:
+        description: "Open a second session and try the first again (spec §10; Demo first)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,4 +39,5 @@ jobs:
           WIZ_PRIVATE_KEY: ${{ secrets.WIZ_PRIVATE_KEY }}
           WIZ_COMPANY: ${{ inputs.company }}
           DOC_IDS: ${{ inputs.doc_ids }}
+          SESSION_TEST: ${{ inputs.session_test }}
         run: python scripts/live_check.py

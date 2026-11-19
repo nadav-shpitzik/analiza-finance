@@ -1,14 +1,33 @@
+# Run commands only. NEVER put env values or secrets in this file - they land in git.
+# Secrets live in the Repl's Secrets: WIZ_PRIVATE_KEY, and the account secret
+# GITHUB_DEPLOY_TOKEN linked to this app. DATABASE_URL comes with the Repl's Postgres.
 modules = ["python-3.11"]
 run = "pip install -q -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
 [nix]
 channel = "stable-24_05"
+packages = ["postgresql"]
 
 [deployment]
 deploymentTarget = "autoscale"
-build = ["sh", "-c", "pip install -q -r requirements.txt && python3 scripts/write_build_info.py"]
+# GitHub main, not the workspace (scripts/build.sh, scripts/deploy_source.py).
+build = ["bash", "scripts/build.sh"]
 run = ["sh", "-c", "python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
 [[ports]]
 localPort = 8000
 externalPort = 80
+
+# "Sync from GitHub": fast-forward the workspace to GitHub main, then apply
+# migrations/ to the DEVELOPMENT database (DATABASE_URL here is the workspace's),
+# so a publish sees the schema main's code applies in production at startup.
+[[workflows.workflow]]
+name = "Sync from GitHub"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/sync-from-github.sh && python3 -m app.migrate"

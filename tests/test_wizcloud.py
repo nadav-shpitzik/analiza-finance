@@ -4,31 +4,83 @@ import httpx
 import pytest
 
 from app import wizcloud
+from app.store import Saved, StoreError
 from app.wizcloud import READ_PATHS, SESSION_TTL_S, WizClient, WizError, parse_session_body
-from tests.conftest import KEY, SESSION
+from tests.conftest import KEY, SESSION, FakeStore
 
-# Every mutating path the vendor documents (OpenAPI 1.0.0 + the vendor's npm client).
-WRITE_PATHS = [
-    "invApi/createDoc",
-    "invApi/issueDocument",
-    "invApi/delDocument",
-    "docsApi/createRecipt",
-    "docsApi/createInvRecipt",
-    "jtransApi/tmpBatch",
-    "jtransApi/chkBatch",
-    "jtransApi/newBatch",
-    "jtransApi/issueBatch",
-    "IndexApi/importIndex",
-    "IndexApi/deleteIndex",
-    "SortCodeApi/importSortCodes",
-    "TransTypesApi/importTransTypes",
-    "BankPagesApi/importBankPage",
-    "TriggersApi/setURL",
-    "TriggersApi/deleteURL",
-    "TriggersApi/updateURL",
-    "api/napi",
-    "crmActivitiesApi/createSchema",
-]
+# Every path the vendor documents, read 2026-11-19 (backlog 0301, slice S0), from three sources:
+#   docs  - docs.wizcloud.co.il, all 35 pages of the current docs (its sitemap), the paths in their text
+#   oas   - the OpenAPI on SwaggerHub, Wizcloud/Api 1.0.0 (20 paths)
+#   npm   - the vendor's client, wizcloud-api 1.0.15 on npm (index.js)
+# The guard against a write to the books is the code alone (spec §2.5: the token is Chava's user and
+# a view-only user is not possible), so this list is the test of that guard. When the vendor documents
+# a new path, it goes here; it is refused until a decision (an ADR) adds it to READ_PATHS.
+DOCUMENTED_PATHS = {
+    # documents
+    "invApi/createDoc": "docs, oas, npm",
+    "invApi/v2/createdoc": "docs",
+    "invApi/issueDocument": "docs, oas, npm",
+    "invApi/delDocument": "docs, oas, npm",
+    "invApi/addLineDoc": "docs",
+    "invApi/delLine": "docs",
+    "invApi/invoiceDecision": "docs",
+    "invApi/getDoc": "docs, oas, npm",
+    # receipts, tax receipts, credit cards
+    "docsApi/createRecipt": "docs, oas",
+    "docsApi/createInvRecipt": "docs, oas",
+    "docsApi/v2/createReceipt": "docs",
+    "docsApi/v2/createInvReceipt": "docs",
+    "docsApi/createRefund": "docs",
+    "docsApi/createToken": "docs",
+    "docsApi/responseCG_confirmNum": "docs",
+    # journal batches
+    "jtransApi/tmpBatch": "docs, oas, npm",
+    "jtransApi/chkBatch": "docs, oas, npm",
+    "jtransApi/newBatch": "docs, oas, npm",
+    "jtransApi/issueBatch": "docs, oas, npm",
+    # cards, codes, bank pages, extra data, files
+    "IndexApi/importIndex": "docs, oas, npm",
+    "IndexApi/deleteIndex": "npm",
+    "SortCodeApi/importSortCodes": "docs, oas",
+    "TransTypesApi/importTransTypes": "docs, oas",
+    "BankPagesApi/importBankPage": "docs, oas, npm",
+    "ExtraDataApi/importExtraData": "docs",
+    "ExtraDataNameApi/importExtraData": "docs",
+    "FilesApi/uploadfile": "docs",
+    "FilesApi/attachFiles": "docs",
+    "compDefApi/getCompDef": "docs",
+    "compDefApi/UpdCompDef": "docs",
+    # CRM
+    "crmApi/getRecords": "docs",
+    "crmApi/insertRecord": "docs",
+    "crmApi/updateRecord": "docs",
+    "crmApi/deleteRecord": "docs",
+    "crmApi/runProcess": "docs",
+    "crmActivitiesApi/createSchema": "npm",
+    "crmActivitiesTest/createSchema": "npm",
+    "api/napi": "npm",
+    # billing (standing orders)
+    "billingApi/getAllConid": "docs",
+    "billingApi/getLateConid": "docs",
+    "billingApi/getNowConid": "docs",
+    # reports, companies, webhooks
+    "ExportDataApi/exportData": "docs, oas, npm",
+    "CompanyListToTokenApi/TokenCompanies": "docs, oas, npm",
+    "TriggersApi/getURL": "docs, oas",
+    "TriggersApi/setURL": "docs, oas",
+    "TriggersApi/updateURL": "docs, oas",
+    "TriggersApi/deleteURL": "docs, oas",
+}
+# Reads the vendor documents that this service does not use. Refused all the same: READ_PATHS is the
+# list of what the service reads, not of what is harmless.
+UNUSED_READS = {
+    "billingApi/getAllConid",
+    "billingApi/getLateConid",
+    "billingApi/getNowConid",
+    "compDefApi/getCompDef",
+    "crmApi/getRecords",
+}
+WRITE_PATHS = sorted(set(DOCUMENTED_PATHS) - READ_PATHS - UNUSED_READS)
 # Spellings that would slip past a prefix or case-insensitive check.
 TRICKS = [
     "/invApi/getDoc",
@@ -44,7 +96,7 @@ def client(fake, clock):
     return WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=fake.transport(), clock=clock)
 
 
-@pytest.mark.parametrize("path", WRITE_PATHS + TRICKS)
+@pytest.mark.parametrize("path", WRITE_PATHS + sorted(UNUSED_READS) + TRICKS + ["createSession"])
 def test_anything_outside_the_read_list_is_refused_before_any_request(fake, clock, path):
     c = client(fake, clock)
     with pytest.raises(WizError) as err:
@@ -53,13 +105,22 @@ def test_anything_outside_the_read_list_is_refused_before_any_request(fake, cloc
     assert fake.requests == []
 
 
-def test_the_read_list_is_exactly_four_paths():
+def test_every_documented_write_path_is_in_the_refused_list():
+    """The acceptance of slice S0: no documented path that writes slips out of the test above."""
+    assert len(WRITE_PATHS) == 38
+    for path in ("invApi/createDoc", "docsApi/v2/createReceipt", "crmApi/deleteRecord", "FilesApi/uploadfile",
+                 "TriggersApi/setURL", "TriggersApi/updateURL", "TriggersApi/deleteURL", "IndexApi/importIndex"):
+        assert path in WRITE_PATHS
+
+
+def test_the_read_list_is_exactly_four_documented_paths():
     assert READ_PATHS == {
         "CompanyListToTokenApi/TokenCompanies",
         "TriggersApi/getURL",
         "ExportDataApi/exportData",
         "invApi/getDoc",
     }
+    assert READ_PATHS <= set(DOCUMENTED_PATHS)
     assert not set(WRITE_PATHS) & READ_PATHS
 
 
@@ -214,3 +275,109 @@ def test_kinds_are_a_closed_list():
     with pytest.raises(AssertionError):
         WizError("something_new")
     assert len(set(wizcloud.KINDS)) == len(wizcloud.KINDS)
+
+
+# ---- the saved session (slice S0): the store's contract, faked; tests/test_store.py runs the SQL ----
+
+
+def stored_client(fake, clock, store):
+    return WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=fake.transport(), clock=clock, store=store)
+
+
+def test_a_saved_session_is_used_without_opening_one(fake, clock):
+    store = FakeStore()
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token=SESSION, shape="text", issued_at=clock.t - 3600)
+    c = stored_client(fake, clock, store)
+    assert c.companies() == fake.companies
+    assert fake.issued == 0
+    assert fake.requests[0].headers["authorization"] == f"Bearer {SESSION}"
+    assert c.session().origin == "saved" and store.renewals == 0
+
+
+def test_a_new_session_is_saved_for_the_next_process(fake, clock):
+    store = FakeStore()
+    first = stored_client(fake, clock, store)
+    first.companies()
+    assert fake.issued == 1 and store.saves == 1
+    assert first.session().origin == "new" and first.session().saved is True
+    second = stored_client(fake, clock, store)  # a cold start: a new process, the same database
+    second.companies()
+    assert fake.issued == 1
+    assert second.session().origin == "saved"
+
+
+def test_a_saved_session_past_its_day_is_renewed(fake, clock):
+    store = FakeStore()
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="OLDSESSION-123", shape="text", issued_at=clock.t - SESSION_TTL_S)
+    c = stored_client(fake, clock, store)
+    c.companies()
+    assert fake.issued == 1
+    assert store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")].token == SESSION
+
+
+def test_a_rejected_saved_session_is_replaced_once(fake, clock):
+    store = FakeStore()
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="REVOKED-123456", shape="text", issued_at=clock.t - 60)
+    c = stored_client(fake, clock, store)
+    assert c.companies() == fake.companies
+    assert fake.issued == 1
+    assert store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")].token == SESSION
+
+
+def test_a_renewal_by_another_instance_is_taken_not_repeated(fake, clock):
+    """If a new session revokes the old one (unverified, spec §10), the instance that finds its session
+    rejected takes the one another instance saved, instead of opening a third."""
+    store = FakeStore()
+    c = stored_client(fake, clock, store)
+    c.companies()
+    assert fake.issued == 1
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="OTHERINSTANCE-77", shape="text", issued_at=clock.t)
+    fake.valid_sessions = {"OTHERINSTANCE-77"}
+    assert c.companies() == fake.companies
+    assert fake.issued == 1
+    assert fake.requests[-1].headers["authorization"] == "Bearer OTHERINSTANCE-77"
+
+
+def test_a_failing_store_costs_a_session_not_the_read(fake, clock):
+    store = FakeStore()
+    store.fail = StoreError("store_unreachable", "OperationalError")
+    c = stored_client(fake, clock, store)
+    assert c.companies() == fake.companies
+    sess = c.session()
+    assert (sess.origin, sess.saved, sess.store_error) == (
+        "new", False, {"ok": False, "kind": "store_unreachable", "detail": "OperationalError"})
+    c.triggers()
+    assert fake.issued == 1 and store.loads == 1  # held in memory: the store is not asked again
+
+
+def test_a_failed_save_does_not_open_a_second_session(fake, clock):
+    store = FakeStore()
+    store.fail_on_save = StoreError("store_error", "42501")
+    c = stored_client(fake, clock, store)
+    c.companies()
+    assert fake.issued == 1
+    assert c.session().saved is False and c.session().store_error["kind"] == "store_error"
+
+
+def test_a_session_sealed_under_another_key_is_replaced_and_said(fake, clock):
+    store = FakeStore()
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="", shape="text", issued_at=clock.t - 60)
+    c = stored_client(fake, clock, store)
+    c.companies()
+    assert fake.issued == 1
+    assert c.session().note == "the saved session was sealed under another key and was replaced"
+
+
+def test_without_retry_a_rejected_session_is_reported(fake, clock):
+    fake.valid_sessions = set()
+    c = client(fake, clock)
+    with pytest.raises(WizError) as err:
+        c.call("CompanyListToTokenApi/TokenCompanies", retry=False)
+    assert err.value.kind == "session_rejected" and fake.issued == 1
+
+
+def test_no_repr_carries_the_key_or_the_session(fake, clock):
+    c = stored_client(fake, clock, FakeStore())
+    c.companies()
+    text = repr(c) + repr(c.session())
+    assert KEY not in text and SESSION not in text

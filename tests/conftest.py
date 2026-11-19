@@ -1,11 +1,20 @@
 import json
+import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.store import Saved  # noqa: E402
+
+# A throwaway Postgres for the store's SQL (CI sets it; locally: any empty database). Without it
+# those tests skip, and say so.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+needs_pg = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")
 
 KEY = "PRIVATEKEY-0123456789abcdef"  # distinctive, so a leak is easy to grep
 SESSION = "SESSIONTOKEN-fedcba9876543210"
@@ -62,6 +71,47 @@ class Clock:
         return self.t
 
 
+class FakeStore:
+    """app.store.PgSessionStore's contract, in memory: load(), renewal() with current() and save().
+    `rows` is what the database would hold, by (server, db). Set `fail` to a StoreError to make every
+    call raise it, or `fail_on_save` to fail only the save (after createSession answered)."""
+
+    kind = "fake"
+
+    def __init__(self):
+        self.rows = {}
+        self.fail = None
+        self.fail_on_save = None
+        self.loads = 0
+        self.renewals = 0
+        self.saves = 0
+
+    def load(self, server, db):
+        self.loads += 1
+        if self.fail:
+            raise self.fail
+        return self.rows.get((server, db))
+
+    @contextmanager
+    def renewal(self, server, db):
+        self.renewals += 1
+        if self.fail:
+            raise self.fail
+        store = self
+
+        class R:
+            def current(self):
+                return store.rows.get((server, db))
+
+            def save(self, token, shape, issued_at):
+                if store.fail_on_save:
+                    raise store.fail_on_save
+                store.saves += 1
+                store.rows[(server, db)] = Saved(token=token, shape=shape, issued_at=issued_at)
+
+        yield R()
+
+
 @pytest.fixture
 def fake():
     return FakeWiz()
@@ -81,11 +131,17 @@ def app_client(fake, clock, monkeypatch):
     monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
     monkeypatch.delenv("WIZ_COMPANY", raising=False)
     monkeypatch.delenv("WIZ_SERVER", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     main._cache.update(at=0.0, result=None)
     main.app.state.transport = fake.transport()
     main.app.state.clock = clock
+    main.app.state.client = None
+    main.app.state.store_factory = None
     yield TestClient(main.app)
     main.app.state.transport = None
+    main.app.state.clock = __import__("time").time
+    main.app.state.client = None
+    main.app.state.store_factory = None
     main._cache.update(at=0.0, result=None)
 
 

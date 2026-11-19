@@ -1,21 +1,19 @@
-"""Configuration from the environment. Only WIZ_PRIVATE_KEY is a secret.
+"""Configuration from the environment. WIZ_PRIVATE_KEY and DATABASE_URL are secrets.
 
 The server and the two company databases are not secrets (Nadav, 2026-11-18):
 the token reaches a Demo company and the real one, both on LB19. The service
 starts on Demo and moves to the real company by changing WIZ_COMPANY, a
-deliberate one-line act.
+deliberate one-line act. DATABASE_URL comes with the Repl's Postgres (the
+workspace and the deployment each have their own); it carries a password, so
+it is only ever reported as set or not.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Mapping, Optional
-
-ROOT = Path(__file__).resolve().parent.parent
 
 COMPANIES = {
     "demo": "wizdb2245n4",  # "Demo"
@@ -33,6 +31,7 @@ class Config:
     db: Optional[str]
     private_key: str = field(repr=False)
     problems: tuple = ()
+    database_url: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -52,19 +51,12 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
     db = COMPANIES.get(company)
     if db is None:
         problems.append(f"WIZ_COMPANY {company!r} is not one of {sorted(COMPANIES)}")
-    return Config(server=server, company=company, db=db, private_key=key, problems=tuple(problems))
+    return Config(
+        server=server,
+        company=company,
+        db=db,
+        private_key=key,
+        problems=tuple(problems),
+        database_url=(env.get("DATABASE_URL") or "").strip(),
+    )
 
-
-def build_info() -> dict:
-    """What `scripts/write_build_info.py` recorded at build time.
-
-    Same vocabulary as the other services' /health `build` field, so `/deploy`
-    reads it the same way.
-    """
-    path = ROOT / "build_info.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"source": None, "reason": "no build_info.json"}
-    except (OSError, ValueError) as exc:
-        return {"source": None, "reason": f"build_info.json unreadable: {type(exc).__name__}"}

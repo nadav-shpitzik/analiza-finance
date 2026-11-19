@@ -5,6 +5,10 @@ Prints one JSON object:
 - `docs`: when DOC_IDS is set, one entry per stockID read with invApi/getDoc: whether a
   document came back, its field names, how many rows each list inside it has, and a few
   values that identify no person (number, type, dates, totals).
+- `session_test`: when SESSION_TEST is "true", whether a second session leaves the first one
+  working (spec §10, "a new WizCloud session revokes the previous one": tried on Demo first).
+  Two clients with no store each open a session; the first is then tried again, with no retry.
+  Printed: the kinds of the answers and whether the two sessions were the same string.
 Never printed: names, addresses, phones, free text, account keys, the key or the session.
 GitHub also masks the WIZ_PRIVATE_KEY secret in the log.
 
@@ -120,10 +124,48 @@ def parse_ids(raw: str) -> list:
     return ids[:MAX_DOCS]
 
 
+TOKEN_COMPANIES = "CompanyListToTokenApi/TokenCompanies"
+
+
+def _probe(client: WizClient) -> str:
+    """One read with the client's current session and no fresh try: "ok", or the kind of refusal."""
+    try:
+        client.call(TOKEN_COMPANIES, retry=False)
+        return "ok"
+    except WizError as exc:
+        return exc.kind
+
+
+def session_test(cfg: config.Config, transport=None) -> dict:
+    """Does opening a second session revoke the first? Reads only; no session string is printed."""
+    first = WizClient(cfg.server, cfg.db or "", cfg.private_key, transport=transport)
+    second = WizClient(cfg.server, cfg.db or "", cfg.private_key, transport=transport)
+    out: dict = {"company": cfg.company}
+    try:
+        a = first.session()
+        out["first"] = _probe(first)
+        b = second.session()
+        out["second"] = _probe(second)
+        out["same_string"] = a.token == b.token
+        out["first_after_second"] = _probe(first)
+    except WizError as exc:
+        out["error"] = exc.as_dict()
+        return out
+    if out["first"] == "ok" and out["second"] == "ok":
+        out["verdict"] = (
+            "one session: createSession answered the same string" if out["same_string"]
+            else "both live: a new session does not revoke the previous one" if out["first_after_second"] == "ok"
+            else "revoked: a new session ends the previous one"
+        )
+    return out
+
+
 def main() -> int:
     cfg = config.load()
     client = WizClient(cfg.server, cfg.db or "", cfg.private_key) if cfg.ok else None
     out: dict = {"code_sha": os.environ.get("GITHUB_SHA"), "check": run_check(cfg, client=client)}
+    if os.environ.get("SESSION_TEST", "").strip().lower() == "true" and cfg.ok:
+        out["session_test"] = session_test(cfg)
     ids = parse_ids(os.environ.get("DOC_IDS", ""))
     if ids and client is not None and out["check"].get("session", {}).get("ok"):
         docs = {}

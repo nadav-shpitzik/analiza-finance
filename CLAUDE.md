@@ -7,7 +7,9 @@ the service page `docs/services/analiza-finance/README.md`, ADR-0185 (this home)
 `docs/design/analiza-finance-spec.md` with its two companions (the reconciliation rules, the desk move plan), and the build
 in slices `docs/backlog/0301-analiza-finance-build.md`. Boot from there for anything beyond this repo. Talk to Nadav in Hebrew.
 
-**Nadav's go on the spec: 19.11. The build follows the slices of backlog 0301, S0 first.**
+**Nadav's go on the spec: 19.11. The build follows the slices of backlog 0301.** S0 (the home: the name, the build from
+GitHub `main`, Postgres, the saved session, the test of every documented path) is in the code; its acceptance is read on
+the deployment's `/health` and `/check` (0301 says where it stands).
 
 ## Hard rules
 
@@ -17,7 +19,10 @@ in slices `docs/backlog/0301-analiza-finance-build.md`. Boot from there for anyt
    new ADR in the docs repo plus Nadav's explicit go, and is tried on the Demo company first.
 2. **The private key travels in the createSession URL.** Never log, print, return or put in an
    exception a URL or a request object. The `httpx` and `httpcore` loggers stay at WARNING. Errors
-   carry a `kind` from the closed `KINDS` list plus a redacted, truncated message.
+   carry a `kind` from the closed `KINDS` list plus a redacted, truncated message. **A session string
+   carries all of Chava's rights for 24 hours:** it is saved only sealed (`app/store.py`, AES-GCM under a
+   key derived from the private key), never printed or exported, and `wiz_sessions` is never granted to
+   another service's role. `DATABASE_URL` carries a password: reported as set or not, errors by class.
 3. **Demo first.** `WIZ_COMPANY=demo` (`wizdb2245n4`) is the default. A new call or report runs on
    Demo before `analiza` (`wizdb2245n5`).
 4. **No data from the books in git or in chat.** Report output carries names, ID numbers and
@@ -36,12 +41,24 @@ in slices `docs/backlog/0301-analiza-finance-build.md`. Boot from there for anyt
 
 ## Working here
 
-- Tests: `pip install -r requirements-dev.txt && python -m pytest -q`. Every new read path gets a
-  test that the write paths stay refused.
+- Tests: `pip install -r requirements-dev.txt && python -m pytest -q`; the store's SQL runs against a real,
+  empty Postgres when `TEST_DATABASE_URL` is set (CI: `tests.yml`, Postgres 16, every push to `main`). Every path
+  the vendor documents is in `DOCUMENTED_PATHS` (`tests/test_wizcloud.py`, read 19.11 from the docs site, the
+  OpenAPI and the npm client) and refused unless it is in `READ_PATHS`; a path the vendor adds goes there.
 - `WIZ_PRIVATE_KEY` lives only in Replit Secrets (workspace and deployment) and in this repo's Actions secret
   for live-check. Locally, tests use a
   fake transport; a live local run takes a placeholder key and proves only the error path.
-- Live check without Replit: dispatch `live-check.yml` (inputs `company`, `doc_ids`), read the job log. It
-  prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
-- Deploy: Replit Autoscale, no Repl yet (slice S0). Not wired to `/deploy` yet (no GitHub-main build step),
-  so a publish is Pull in the Repl, then Republish. `/health` shows `build.sha`.
+- Live check without Replit: dispatch `live-check.yml` (inputs `company`, `doc_ids`, `session_test`), read the job
+  log. It prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
+- Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
+  a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
+  and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
+- **A change that touches `migrations/` or `app/migrate.py`** ships in this order, each step said to Nadav as its
+  own step, with the Shell command itself (the norm in analiza-metrics' CLAUDE.md, the same trap):
+  1. Land on `main`.
+  2. In the Repl's **Shell** (hand Nadav the command, never only the workflow's name, Nadav 19.11):
+     `bash scripts/sync-from-github.sh && python3 -m app.migrate` - the same as the workflow Sync from GitHub.
+     Expect `Now at: <main sha7>`, then `database: helium/...` (development), and last the `ok:` line.
+  3. **Republish in the Replit UI**, reading the SQL it shows: only `CREATE` / `ADD`; any `DROP` is Cancel.
+     A publish from the chat refuses any schema difference.
+  4. `/health`: `build.sha` is main's, `migrations` lists the file, `store.missing_columns` is `[]`.
