@@ -55,10 +55,10 @@ def test_check_happy_path(app_client, fake):
         "saved": False,
     }
     assert body["companies"]["count"] == 2
-    assert body["companies"]["items"] == [
-        {"db": "wizdb2245n4", "name": "Demo"},
-        {"db": "wizdb2245n5", "name": "אנליזה מודיעין סייבר"},
-    ]
+    # the public /check names only the configured company (Nadav 19.11: the deployment is public)
+    assert body["companies"]["items"] == [{"db": "wizdb2245n4", "name": "Demo"}]
+    assert body["companies"]["others_not_named"] == 1
+    assert "אנליזה" not in r.text and "wizdb2245n5" not in r.text
     assert body["companies"]["includes_configured_db"] is True
     assert body["triggers"]["items"] == [{"table": "accounts", "host": "hooks.example.com"}]
     assert "secret=abc" not in r.text
@@ -109,6 +109,17 @@ def test_server_must_be_a_wizcloud_balancer(monkeypatch):
 def test_config_repr_hides_the_key(monkeypatch):
     monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
     assert KEY not in repr(config.load())
+
+
+def test_live_check_names_every_company_the_public_check_only_the_configured_one():
+    data = [{"dbName": "wizdb2245n3", "description": "מנוי 170854"}, {"dbName": "wizdb2245n4", "description": "Demo"}]
+    public = summarize_companies(data, "wizdb2245n4")
+    assert public["items"] == [{"db": "wizdb2245n4", "name": "Demo"}] and public["others_not_named"] == 1
+    assert "170854" not in dump(public)
+    full = summarize_companies(data, "wizdb2245n4", others_named=True)
+    assert len(full["items"]) == 2 and "others_not_named" not in full
+    missing = summarize_companies(data, "wizdb2245n5")
+    assert missing["items"] == [] and missing["includes_configured_db"] is False and missing["others_not_named"] == 2
 
 
 def test_summaries_keep_names_and_drop_values():

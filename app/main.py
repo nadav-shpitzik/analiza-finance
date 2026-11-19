@@ -249,7 +249,8 @@ def session_report(sess: Session, held: bool, store_kind: Optional[str], now: fl
     return out
 
 
-def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optional[WizClient] = None) -> dict:
+def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optional[WizClient] = None,
+              others_named: bool = False) -> dict:
     out: dict = {
         "ok": False,
         "checked_at": _now_iso(clock()),
@@ -267,7 +268,7 @@ def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optio
         out["session"] = out["error"] = exc.as_dict()
         return out
     for name, fetch, summarize in (
-        ("companies", client.companies, lambda d: summarize_companies(d, cfg.db)),
+        ("companies", client.companies, lambda d: summarize_companies(d, cfg.db, others_named)),
         ("triggers", client.triggers, summarize_triggers),
     ):
         try:
@@ -350,7 +351,10 @@ def _fields(items: list) -> list:
     return sorted(keys)
 
 
-def summarize_companies(data: Any, our_db: Optional[str]) -> dict:
+def summarize_companies(data: Any, our_db: Optional[str], others_named: bool = False) -> dict:
+    """The companies the token reaches. The public /check names only the configured one and counts the
+    rest (Nadav 19.11: the deployment is public, for monday and Make, and another company's name or a
+    subscription number has no reason to be); live-check, whose log is the private repo's, names all."""
     items = _items(data)
     if items is None:
         return {"ok": True, "shape": type(data).__name__, "tree": shape_tree(data)}
@@ -365,13 +369,17 @@ def summarize_companies(data: Any, our_db: Optional[str]) -> dict:
             None,
         )
         found.append({"db": db, "name": name})
-    return {
+    shown = found if others_named else [f for f in found if f["db"] == our_db]
+    out = {
         "ok": True,
         "count": len(items),
         "fields": _fields(items),
-        "items": found,
+        "items": shown,
         "includes_configured_db": any(f["db"] == our_db for f in found) if found else None,
     }
+    if len(shown) < len(found):
+        out["others_not_named"] = len(found) - len(shown)
+    return out
 
 
 def summarize_triggers(data: Any) -> dict:

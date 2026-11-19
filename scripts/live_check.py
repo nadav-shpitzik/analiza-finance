@@ -167,7 +167,8 @@ def session_test(cfg: config.Config, transport=None) -> dict:
 def main() -> int:
     cfg = config.load()
     client = WizClient(cfg.server, cfg.db or "", cfg.private_key) if cfg.ok else None
-    out: dict = {"code_sha": os.environ.get("GITHUB_SHA"), "check": run_check(cfg, client=client)}
+    # The job log is the private repo's: every company the token reaches is named there (not on /check).
+    out: dict = {"code_sha": os.environ.get("GITHUB_SHA"), "check": run_check(cfg, client=client, others_named=True)}
     if os.environ.get("SESSION_TEST", "").strip().lower() == "true" and cfg.ok:
         out["session_test"] = session_test(cfg)
     ids = parse_ids(os.environ.get("DOC_IDS", ""))
