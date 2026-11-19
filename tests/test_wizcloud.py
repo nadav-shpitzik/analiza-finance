@@ -8,10 +8,12 @@ from app.store import Saved, StoreError
 from app.wizcloud import READ_PATHS, SESSION_TTL_S, WizClient, WizError, parse_session_body
 from tests.conftest import KEY, SESSION, FakeStore
 
-# Every path the vendor documents, read 2026-11-19 (backlog 0301, slice S0), from three sources:
-#   docs  - docs.wizcloud.co.il, all 35 pages of the current docs (its sitemap), the paths in their text
-#   oas   - the OpenAPI on SwaggerHub, Wizcloud/Api 1.0.0 (20 paths)
-#   npm   - the vendor's client, wizcloud-api 1.0.15 on npm (index.js)
+# Every path the vendor documents, as the vendor writes it, read 2026-11-19 (backlog 0301, slice S0) by three
+# independent sweeps and a completeness critic:
+#   docs  - docs.wizcloud.co.il, both versions (2.0.0: 35 pages, 1.0.0: 34), the site's 115 JS files and its
+#           screenshots, and a page withdrawn from the sitemap that is still served (/docs/matrix/)
+#   oas   - the five specs on SwaggerHub (Wizcloud/Api 1.0.0 and 1.0.1, and three drafts)
+#   npm   - the vendor's client wizcloud-api, all 16 published versions
 # The guard against a write to the books is the code alone (spec §2.5: the token is Chava's user and
 # a view-only user is not possible), so this list is the test of that guard. When the vendor documents
 # a new path, it goes here; it is refused until a decision (an ADR) adds it to READ_PATHS.
@@ -25,6 +27,9 @@ DOCUMENTED_PATHS = {
     "invApi/delLine": "docs",
     "invApi/invoiceDecision": "docs",
     "invApi/getDoc": "docs, oas, npm",
+    "InvApi/createDoc": "docs (a getting-started screenshot, capital I)",
+    "restoreDoc": "docs (documents, REST row)",
+    "inv_issue/restoreDoc": "docs (documents, REST row)",
     # receipts, tax receipts, credit cards
     "docsApi/createRecipt": "docs, oas",
     "docsApi/createInvRecipt": "docs, oas",
@@ -33,6 +38,11 @@ DOCUMENTED_PATHS = {
     "docsApi/createRefund": "docs",
     "docsApi/createToken": "docs",
     "docsApi/responseCG_confirmNum": "docs",
+    "docsapi/getReceipt/": "docs (receipts, REST row, as written)",
+    "docsapi/delReceipt/": "docs (receipts, REST row, as written)",
+    "docsapi/restoreDoc/": "docs (receipts, REST row, as written)",
+    "cancelKabala/cancel/": "docs (receipts, REST row)",
+    "cancelKabala/cancel": "docs (credit card refunds, REST row)",
     # journal batches
     "jtransApi/tmpBatch": "docs, oas, npm",
     "jtransApi/chkBatch": "docs, oas, npm",
@@ -50,6 +60,9 @@ DOCUMENTED_PATHS = {
     "FilesApi/attachFiles": "docs",
     "compDefApi/getCompDef": "docs",
     "compDefApi/UpdCompDef": "docs",
+    "matrixItemApi/importMatrixItem": "docs (/docs/matrix/, withdrawn from the sitemap, still served)",
+    "matrixItemApi/deleteMatrixItem": "docs (/docs/matrix/, withdrawn from the sitemap, still served)",
+    "matrixItemApi/getMatrixItem": "docs (/docs/matrix/, withdrawn from the sitemap, still served)",
     # CRM
     "crmApi/getRecords": "docs",
     "crmApi/insertRecord": "docs",
@@ -63,8 +76,10 @@ DOCUMENTED_PATHS = {
     "billingApi/getAllConid": "docs",
     "billingApi/getLateConid": "docs",
     "billingApi/getNowConid": "docs",
-    # reports, companies, webhooks
+    # sessions, reports, companies, webhooks
+    "createSession/{WizcloudApiPrivateKey}/{WizcloudApiDBName}": "docs, oas, npm (the client's own GET, never through call())",
     "ExportDataApi/exportData": "docs, oas, npm",
+    "ExportDataApi/exportData?target=pdf": "docs (reportdata: the PDF form)",
     "CompanyListToTokenApi/TokenCompanies": "docs, oas, npm",
     "TriggersApi/getURL": "docs, oas",
     "TriggersApi/setURL": "docs, oas",
@@ -79,10 +94,20 @@ UNUSED_READS = {
     "billingApi/getNowConid",
     "compDefApi/getCompDef",
     "crmApi/getRecords",
+    "docsapi/getReceipt/",
+    "matrixItemApi/getMatrixItem",
+    "ExportDataApi/exportData?target=pdf",
 }
-WRITE_PATHS = sorted(set(DOCUMENTED_PATHS) - READ_PATHS - UNUSED_READS)
+SESSION_PATHS = {"createSession/{WizcloudApiPrivateKey}/{WizcloudApiDBName}"}
+# Everything else writes, or its effect is not stated (api/napi, jtransApi/chkBatch): refused all the same.
+WRITE_PATHS = sorted(set(DOCUMENTED_PATHS) - READ_PATHS - UNUSED_READS - SESSION_PATHS)
 # Spellings that would slip past a prefix or case-insensitive check.
 TRICKS = [
+    "docsapi/delReceipt",  # the vendor writes it with a trailing slash; a client may not
+    "docsApi/delReceipt",
+    "docsapi/restoreDoc",
+    "invApi/createDoc/{data}",  # the rest-api table's placeholder notation
+    "invApi/getDoc/123",
     "/invApi/getDoc",
     "invApi/getDoc/../createDoc",
     "invapi/getdoc",
@@ -96,7 +121,7 @@ def client(fake, clock):
     return WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=fake.transport(), clock=clock)
 
 
-@pytest.mark.parametrize("path", WRITE_PATHS + sorted(UNUSED_READS) + TRICKS + ["createSession"])
+@pytest.mark.parametrize("path", WRITE_PATHS + sorted(UNUSED_READS) + sorted(SESSION_PATHS) + TRICKS + ["createSession"])
 def test_anything_outside_the_read_list_is_refused_before_any_request(fake, clock, path):
     c = client(fake, clock)
     with pytest.raises(WizError) as err:
@@ -107,9 +132,10 @@ def test_anything_outside_the_read_list_is_refused_before_any_request(fake, cloc
 
 def test_every_documented_write_path_is_in_the_refused_list():
     """The acceptance of slice S0: no documented path that writes slips out of the test above."""
-    assert len(WRITE_PATHS) == 38
+    assert (len(DOCUMENTED_PATHS), len(WRITE_PATHS), len(UNUSED_READS)) == (60, 47, 8)
     for path in ("invApi/createDoc", "docsApi/v2/createReceipt", "crmApi/deleteRecord", "FilesApi/uploadfile",
-                 "TriggersApi/setURL", "TriggersApi/updateURL", "TriggersApi/deleteURL", "IndexApi/importIndex"):
+                 "TriggersApi/setURL", "TriggersApi/updateURL", "TriggersApi/deleteURL", "IndexApi/importIndex",
+                 "docsapi/delReceipt/", "cancelKabala/cancel", "inv_issue/restoreDoc", "matrixItemApi/deleteMatrixItem"):
         assert path in WRITE_PATHS
 
 

@@ -45,8 +45,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
 
 - Tests: `pip install -r requirements-dev.txt && python -m pytest -q`; the store's SQL runs against a real,
   empty Postgres when `TEST_DATABASE_URL` is set (CI: `tests.yml`, Postgres 16, every push to `main`). Every path
-  the vendor documents is in `DOCUMENTED_PATHS` (`tests/test_wizcloud.py`, read 19.11 from the docs site, the
-  OpenAPI and the npm client) and refused unless it is in `READ_PATHS`; a path the vendor adds goes there.
+  the vendor documents is in `DOCUMENTED_PATHS` (`tests/test_wizcloud.py`: 60 as the vendor writes them, read 19.11
+  from both docs versions with their JS and screenshots, five SwaggerHub specs and 16 npm client versions) and refused
+  unless it is in `READ_PATHS`; a path the vendor adds goes there. Read the docs with broad patterns: the vendor
+  writes `docsapi/...`, `cancelKabala/cancel` and `inv_issue/restoreDoc` too (an `...Api/` regex missed them).
 - `WIZ_PRIVATE_KEY` lives only in Replit Secrets (workspace and deployment) and in this repo's Actions secret
   for live-check. Locally, tests use a
   fake transport; a live local run takes a placeholder key and proves only the error path.
