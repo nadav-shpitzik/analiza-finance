@@ -18,9 +18,10 @@ run = ["sh", "-c", "python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 localPort = 8000
 externalPort = 80
 
-# "Sync from GitHub": fast-forward the workspace to GitHub main, then apply
-# migrations/ to the DEVELOPMENT database (DATABASE_URL here is the workspace's),
-# so a publish sees the schema main's code applies in production at startup.
+# "Sync from GitHub": fast-forward the workspace to GitHub main, install main's
+# requirements, then apply migrations/ to the DEVELOPMENT database (DATABASE_URL
+# here is the workspace's). Production's schema follows it at the next Republish,
+# whose SQL is read; the deployment never changes its own schema (app/migrate.py).
 [[workflows.workflow]]
 name = "Sync from GitHub"
 author = "agent"
@@ -30,4 +31,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "bash scripts/sync-from-github.sh && python3 -m app.migrate"
+args = "bash scripts/sync-from-github.sh && pip install -q -r requirements.txt && python3 -m app.migrate"

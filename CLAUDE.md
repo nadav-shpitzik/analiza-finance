@@ -61,8 +61,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   own step, with the Shell command itself (the norm in analiza-metrics' CLAUDE.md, the same trap):
   1. Land on `main`.
   2. In the Repl's **Shell** (hand Nadav the command, never only the workflow's name, Nadav 19.11):
-     `bash scripts/sync-from-github.sh && python3 -m app.migrate` - the same as the workflow Sync from GitHub.
-     Expect `Now at: <main sha7>`, then `database: helium/...` (development), and last the `ok:` line.
+     `bash scripts/sync-from-github.sh && pip install -q -r requirements.txt && python3 -m app.migrate` - the
+     same as the workflow Sync from GitHub. Expect `Now at: <main sha7>`, then `database: helium/...`
+     (development), and last the `ok:` line.
   3. **Republish in the Replit UI**, reading the SQL it shows: only `CREATE` / `ADD`; any `DROP` is Cancel.
      A publish from the chat refuses any schema difference.
   4. `/health`: `build.sha` is main's, the new table is `"present"` in `store.tables`, and `store.missing_columns`

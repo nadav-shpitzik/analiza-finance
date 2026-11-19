@@ -42,12 +42,13 @@ TABLE = "wiz_sessions"
 CHECKED_TABLES = {TABLE: ("server", "db", "sealed", "shape", "issued_at", "saved_at")}
 
 CONNECT_TIMEOUT_S = 10
-# A renewal waits this long for another instance's renewal, then gives up and says so. Longer than
-# createSession's own budget (app/wizcloud.SESSION_TIMEOUT, about 15 s at worst), so a slow vendor does
-# not make the waiters open sessions of their own. When it does happen the cost is an unsaved extra
-# session: a new session does not revoke the old one (seen on Demo 19.11), and a renewal is only taken
-# when it is newer than the session that was refused.
-LOCK_TIMEOUT = "20s"
+# A renewal waits this long for another instance's renewal, then gives up and says so. createSession's
+# budget (app/wizcloud.SESSION_TIMEOUT) is per phase, not per request: connect 5 s, TLS 5 s, the write
+# 10 s and each read 10 s - about 30 s before the first byte at worst, and DNS has no bound at all
+# (review 19.11). So the wait covers the bounded phases with a margin, and a slower vendor costs an
+# unsaved extra session, said as store_lock_timeout: harmless, since a new session does not revoke the
+# old one (seen on Demo 19.11) and a renewal is taken only when it is newer than the refused session.
+LOCK_TIMEOUT = "35s"
 _KEY_INFO = b"analiza-finance/wiz-session/v1"
 _NONCE_BYTES = 12
 
@@ -159,9 +160,18 @@ class PgSessionStore:
         return "PgSessionStore()"
 
     def _connect(self):
+        """psycopg.connect, where any failure is a StoreError. Some are not psycopg errors at all - a
+        password with a %-escape that is not UTF-8, a host label over 63 characters - and would have
+        made /check a 500 instead of costing a session (review 19.11). Only the connect is wrapped:
+        the renewal's body raises WizError, which must stay a WizError."""
         import psycopg
 
-        return psycopg.connect(self._url, connect_timeout=CONNECT_TIMEOUT_S)
+        try:
+            return psycopg.connect(self._url, connect_timeout=CONNECT_TIMEOUT_S)
+        except psycopg.Error:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the class only: the text can carry the URL
+            raise StoreError("store_unreachable", type(exc).__name__) from None
 
     def _open(self, row, server: str, db: str) -> Optional[Saved]:
         if row is None:

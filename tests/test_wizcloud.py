@@ -449,24 +449,59 @@ def test_a_key_that_would_reshape_the_url_is_refused_before_any_request(fake, cl
     assert fake.requests == []
 
 
-def test_a_partial_echo_of_the_session_is_masked(clock):
-    """A 2xx body that is not JSON and echoes the session, whole or cut: no 12 characters of it survive."""
-    partial = SESSION[:20]
+def test_a_2xx_answer_that_is_not_json_is_never_quoted(clock):
+    """It can be a document or a report row (names, ID numbers): only its shape is said (review 19.11)."""
+    body = f"<html>ישראל ישראלי 123456789 {SESSION}</html>" + "." * 300
 
     def handler(request):
         if request.url.path.startswith("/createSession/"):
             return httpx.Response(200, text=SESSION)
-        return httpx.Response(200, text=f"<html>bad {SESSION} and {partial}xyz and {KEY[3:18]}</html>" + "." * 300)
+        return httpx.Response(200, text=body, headers={"content-type": "text/html; charset=utf-8"})
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.get_doc(626)
+    assert err.value.kind == "bad_response" and err.value.status == 200
+    assert err.value.message == f"a 200 answer that is not JSON ({len(body)} characters, content-type text/html)"
+
+
+def test_a_short_plain_text_refusal_is_still_retried(fake, clock):
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            fake.issued += 1
+            return httpx.Response(200, text=f"SESSION-NUMBER-{fake.issued}-abcdef")
+        if request.headers["authorization"].endswith("-1-abcdef"):
+            return httpx.Response(200, text="Invalid token")
+        return httpx.Response(200, json=[])
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+    assert c.companies() == [] and fake.issued == 2
+
+
+def test_a_partial_echo_of_a_secret_in_an_error_text_is_masked(clock):
+    """A 4xx error text is quoted (it is the vendor's diagnosis), redacted first, then cut: no 12
+    characters of the key or of the session survive, whole or cut, and no unseen token either."""
+    partial = SESSION[:20]
+    unseen = "ZQ" + "9x" * 40  # a session the client never saw, e.g. handed back inside an error
+
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        return httpx.Response(400, text=f"bad {SESSION} and {partial}xyz and {KEY[3:18]} and {unseen}" + " ." * 5000)
 
     c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
     with pytest.raises(WizError) as err:
         c.companies()
     text = str(err.value) + str(err.value.as_dict())
-    for i in range(len(SESSION) - 11):
-        assert SESSION[i:i + 12] not in text
-    for i in range(len(KEY) - 11):
-        assert KEY[i:i + 12] not in text
-    assert "<html>bad ***" in err.value.message
+    for secret in (SESSION, KEY, unseen):
+        for i in range(len(secret) - 11):
+            assert secret[i:i + 12] not in text
+    assert err.value.message.startswith("bad *** and ***") and len(err.value.message) <= 203
+
+
+def test_a_session_shaped_key_in_a_json_object_is_counted_not_named():
+    secretish = "S" * 224
+    assert parse_session_body('{"%s": 1, "status": 2}' % secretish) == (None, "json-object:keys=status (+1 other)")
 
 
 def test_create_session_has_its_own_tighter_timeout(clock):
@@ -481,3 +516,59 @@ def test_create_session_has_its_own_tighter_timeout(clock):
     WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock).companies()
     assert seen["createSession"] == {"connect": 5.0, "read": 10.0, "write": 10.0, "pool": 10.0}
     assert seen["CompanyListToTokenApi"]["read"] == 30.0
+
+
+@pytest.mark.parametrize("key", ['"PRIVATEKEY-0123456789abcdef"', "﻿PRIVATEKEY-0123", "PRIVATEKEY-0123​",
+                                 "PRIVATEKEY\x00-0123", "PRIVATEKEY\x7f-0123", "PRIVATE{KEY}-0123", "PRIVATE%KEY-0123",
+                                 "x%2F..%2FinvApi%2FdelDocument"])
+def test_a_mis_pasted_key_is_a_config_problem_not_a_code_bug(fake, clock, key):
+    """Review 19.11: quotes, a BOM or a zero-width space read as forbidden_path ("a bug, never the
+    vendor"), and a control character made /check a 500."""
+    from app import config
+
+    assert config.load({"WIZ_PRIVATE_KEY": key}).problems
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", key, transport=fake.transport(), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.companies()
+    assert err.value.kind == "config_missing" and fake.requests == []
+
+
+@pytest.mark.parametrize("key", ["PRIVATEKEY-0123456789abcdef", "abc.DEF_123~x+y=", "a!b*c'(d);e:f@g&h$i,j"])
+def test_key_problem_lets_any_key_through_that_travels_as_is(key):
+    from app.wizcloud import key_problem
+
+    assert key_problem(key) is None
+
+
+def test_a_dead_session_borrowed_from_the_store_gets_one_more_try(fake, clock):
+    """Review 19.11: the vendor drops sessions twice; another instance renewed in between, and its
+    renewal is dead too. The retry was spent on it; now one more attempt opens a session of its own."""
+    store = FakeStore()
+    tokens = iter(f"SESSION-{n}-abcdefghij" for n in range(1, 10))
+
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            fake.session_body = next(tokens)
+            fake.valid_sessions = {fake.session_body}  # each drop and each new session: only the newest lives
+        return fake.handler(request)
+
+    transport = httpx.MockTransport(handler)
+    a = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=transport, clock=clock, store=store)
+    b = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=transport, clock=clock, store=store)
+    a.companies()
+    b.companies()  # both hold SESSION-1 (b took it from the row)
+    fake.valid_sessions = set()  # the vendor drops every session
+    clock.t += 5
+    a.companies()  # a renews to SESSION-2 and saves it
+    fake.valid_sessions = set()  # dropped again before b's next call
+    clock.t += 5
+    assert b.companies() == fake.companies  # SESSION-1 refused, SESSION-2 borrowed and refused, SESSION-3 opened
+    assert b.session().token == "SESSION-3-abcdefghij" and store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")].token == b.session().token
+
+
+def test_a_session_this_call_opened_itself_is_not_retried_twice(fake, clock):
+    fake.valid_sessions = set()
+    c = stored_client(fake, clock, FakeStore())
+    with pytest.raises(WizError) as err:
+        c.companies()
+    assert err.value.kind == "session_rejected" and fake.issued == 2

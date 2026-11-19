@@ -219,3 +219,13 @@ def test_the_shell_migration_prints_no_secret(monkeypatch, capsys):
         text = out.out + out.err
         assert "SECRETPW" not in text and "user" not in text and "127.0.0.1" not in text
         assert "FAILED: " in out.err and "Nothing was applied" in out.err
+
+
+@needs_pg
+def test_a_successful_shell_migration_names_the_database_never_the_user(pg, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", pg)
+    assert migrate.main() == 0
+    out = capsys.readouterr().out
+    user = psycopg.conninfo.conninfo_to_dict(pg).get("user") or ""
+    assert out.startswith("database: ") and out.rstrip().endswith("carries every column the writes need")
+    assert not user or f"{user}@" not in out and f"{user}:" not in out

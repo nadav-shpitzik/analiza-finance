@@ -61,10 +61,33 @@ SESSION_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 # read into a write (review 19.11), so the client never trusts its caller for this.
 SERVER_RE = re.compile(r"^lb\d+\.wizcloud\.co\.il$")
 DB_RE = re.compile(r"^wizdb[0-9a-z]+$")
-# Characters that would change the structure of the createSession URL the key travels in.
-_URL_BREAKERS = re.compile(r"[/?#\s]")
 # Any stretch of a message this long that also occurs inside a secret is masked: a partial echo too.
 _PARTIAL_MIN = 12
+# A run this long of characters a token is made of is masked in every message, whatever it is: no vendor
+# error text needs one, and it catches a secret the client has not seen yet (a session in an error body).
+_TOKEN_RUN = re.compile(r"[A-Za-z0-9+/=_.~-]{32,}")
+
+
+def key_problem(key: str) -> Optional[str]:
+    """Why the private key cannot travel as is in the createSession URL path, or None. One rule for
+    app/config.py and the client (review 19.11): printable ASCII with no space, no character that
+    changes the URL (/ ? #), and nothing httpx would rewrite as %XX - so a key pasted with quote
+    marks, a BOM or a zero-width space is a config problem, not a forbidden path. A % is refused too:
+    httpx sends it as is, and the vendor's server may decode %2F into a /. Says which kind of character,
+    never which character."""
+    if not key:
+        return "is empty"
+    if any(not 0x21 <= ord(ch) <= 0x7E for ch in key):
+        return "has a space or a character that is not plain ASCII (a pasted quote mark, a BOM, a zero-width space?)"
+    if re.search(r"[/?#%]", key):
+        return "has a character that changes a URL (/, ?, # or %, which the server may decode as an escape)"
+    try:
+        same = httpx.URL(f"https://x/{key}").raw_path == f"/{key}".encode("ascii")
+    except (httpx.InvalidURL, UnicodeError):
+        same = False
+    if not same:
+        return 'has a character a URL path cannot carry as is (such as " < > ` { } | \\ ^)'
+    return None
 
 # Closed vocabulary for what went wrong. /check reports exactly one of these.
 KINDS = (
@@ -133,19 +156,28 @@ class WizClient:
     last_session_shape: Optional[str] = field(default=None, init=False)
 
     # ---- redaction -------------------------------------------------------
+    def _secrets(self, *also: Optional[str]) -> list:
+        return [x for x in (self.private_key, self._session.token if self._session else None, *also) if x and len(x) >= 4]
+
     def redact(self, text: str, *also: Optional[str]) -> str:
-        """Mask the key and the session strings: whole, and any run of _PARTIAL_MIN or more characters
-        that occurs inside one of them, so a vendor message that echoes part of a session is masked too."""
+        """Mask the key and the session strings: whole, any run of _PARTIAL_MIN or more characters that
+        occurs inside one of them (a partial echo), and any token-like run of 32 or more characters (a
+        secret the client has not seen)."""
         if not text:
             return text
-        secrets = [x for x in (self.private_key, self._session.token if self._session else None, *also) if x and len(x) >= 4]
+        secrets = self._secrets(*also)
         for secret in secrets:
             text = text.replace(secret, "***")
-        return mask_overlaps(text, secrets)
+        return _TOKEN_RUN.sub("***", mask_overlaps(text, secrets))
 
     def _short(self, text: str, limit: int = 200, also: Optional[str] = None) -> str:
-        """Redact first, then cut: a cut made first could leave a piece of a secret no longer whole."""
-        text = self.redact((text or "").strip(), also)
+        """Redact first, then cut: a cut made first could leave a piece of a secret no longer whole. The
+        text is first capped at limit plus twice the longest secret, so a large body costs nothing: a
+        secret that starts before the limit is still whole inside the cap, and what lies past the limit
+        is cut anyway."""
+        text = (text or "").strip()
+        longest = max((len(x) for x in self._secrets(also)), default=0)
+        text = self.redact(text[: limit + 2 * longest + _PARTIAL_MIN], also)
         return text if len(text) <= limit else text[:limit] + "..."
 
     # ---- http ------------------------------------------------------------
@@ -158,7 +190,10 @@ class WizClient:
         if not SERVER_RE.match(self.server or ""):
             raise WizError("config_missing", "the server is not an lbN.wizcloud.co.il host")
         url = f"https://{self.server}/{path}"
-        parsed = httpx.URL(url)
+        try:
+            parsed = httpx.URL(url)
+        except (httpx.InvalidURL, UnicodeError):
+            raise WizError("config_missing", "the request URL is not valid (the key or the company has a stray character)") from None
         if parsed.host != self.server or parsed.raw_path.decode("ascii", "replace") != f"/{path}" or parsed.fragment:
             raise WizError("forbidden_path", "the request would not land on the configured server and path")
         return url
@@ -180,8 +215,11 @@ class WizClient:
     def _new_session(self) -> Session:
         if not (self.server and self.db and self.private_key):
             raise WizError("config_missing", "WIZ_PRIVATE_KEY, server or company is not set")
-        if not DB_RE.match(self.db) or _URL_BREAKERS.search(self.private_key):
-            raise WizError("config_missing", "the company database or the private key has a character a URL path cannot carry")
+        if not DB_RE.match(self.db):
+            raise WizError("config_missing", "the company database is not a wizdb name")
+        problem = key_problem(self.private_key)
+        if problem:
+            raise WizError("config_missing", f"WIZ_PRIVATE_KEY {problem}")
         resp = self._send("GET", f"createSession/{self.private_key}/{self.db}", timeout=SESSION_TIMEOUT)
         text = resp.text or ""
         if "module not active" in text.lower():
@@ -197,6 +235,10 @@ class WizClient:
 
     def _fresh_enough(self, issued_at: float) -> bool:
         return -CLOCK_SKEW_S <= self.clock() - issued_at < SESSION_TTL_S
+
+    def current(self) -> Optional[Session]:
+        """The session this process holds now, or None (never held, or a renewal failed)."""
+        return self._session
 
     def holds_session(self) -> bool:
         """Whether this process already holds a session it would use without asking anyone."""
@@ -262,14 +304,18 @@ class WizClient:
         if path not in READ_PATHS:
             raise WizError("forbidden_path", f"{path!r} is not a read path")
         rejected: Optional[Session] = None
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             sess = self.session(rejected=rejected)
             resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body)
             data, err = read_envelope(resp)
             if err is None:
                 return data
-            if looks_like_rejected_session(err) and attempt == 1 and retry:
-                rejected = sess  # it may have expired early, or been replaced; one fresh try
+            # One fresh try after a refusal. A replacement taken from the store was never tried by this
+            # call, and can be just as dead (the vendor dropped sessions twice): then one more, which
+            # opens a session of its own, since the row now holds a refused one (review 19.11).
+            fresh_try_left = attempt == 1 or (attempt == 2 and sess.origin == "saved")
+            if looks_like_rejected_session(err) and retry and fresh_try_left:
+                rejected = sess
                 continue
             kind = "session_rejected" if looks_like_rejected_session(err) else "http_error"
             raise WizError(kind, self._short(err, also=sess.token), resp.status_code)
@@ -343,7 +389,10 @@ def parse_session_body(text: str) -> tuple[Optional[str], str]:
                 value = parsed.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip(), f"json-object:{key}"
-            return None, "json-object:keys=" + ",".join(sorted(map(str, parsed.keys())))[:120]
+            # Name only short identifier-like keys; anything else (a key that is itself a session?) is counted.
+            names = sorted(k for k in map(str, parsed.keys()) if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", k))
+            others = len(parsed) - len(names)
+            return None, "json-object:keys=" + ",".join(names)[:120] + (f" (+{others} other)" if others else "")
         return None, f"json-{type(parsed).__name__}"
     if any(ch.isspace() for ch in body):
         return None, "text-with-spaces"
@@ -355,7 +404,9 @@ def read_envelope(resp: httpx.Response) -> tuple[Any, Optional[str]]:
 
     WizCloud answers errors in at least two envelopes, sometimes with 2xx-looking
     bodies inside a 4xx/5xx status. Both the HTTP status and the envelope's own
-    `statusCode` are checked.
+    `statusCode` are checked. A 2xx body that is not JSON is never quoted: it can be
+    a document or a report row (names, ID numbers), so only its shape is said
+    (review 19.11) - unless it is a short refusal of the session, which is retried.
     """
     text = resp.text or ""
     try:
@@ -363,7 +414,14 @@ def read_envelope(resp: httpx.Response) -> tuple[Any, Optional[str]]:
     except ValueError:
         if resp.status_code >= 400:
             return None, text or f"HTTP {resp.status_code}"
-        return None, "unparseable body: " + text  # cut by the caller, after redaction
+        if len(text) < 200 and looks_like_rejected_session(text):
+            return None, text
+        content_type = (resp.headers.get("content-type") or "none").split(";")[0].strip()[:40]
+        raise WizError(
+            "bad_response",
+            f"a {resp.status_code} answer that is not JSON ({len(text)} characters, content-type {content_type})",
+            resp.status_code,
+        ) from None
     envelope_status = None
     if isinstance(data, dict):
         raw = data.get("statusCode")

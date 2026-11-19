@@ -66,9 +66,12 @@ app.state.client_ident = None
 app.state.build = None
 
 STORE_TTL_S = 15  # /health is open: at most one database connection per this many seconds, however often it is hit
+# One live round at a time, and one store read at a time: a request that finds one running gets the
+# last answer marked in_progress (or stale) instead of waiting in the threadpool (review 19.11).
 _lock = threading.Lock()
 _client_lock = threading.Lock()
-_store_lock = threading.Lock()
+_store_lock = threading.Lock()  # guards _store_cache only, never held across the read
+_store_read = threading.Lock()  # held by the one request that reads the store
 _cache: dict = {"at": 0.0, "result": None}
 _store_cache: dict = {"at": 0.0, "key": None, "value": None}
 
@@ -148,41 +151,66 @@ def _read_store(cfg: config.Config) -> dict:
 
 def store_health(cfg: config.Config, now: float) -> dict:
     """The tables, what the writes need and the database lacks, and the saved session's age. Never
-    the session, never the URL; a failure is a class name. Read at most once every STORE_TTL_S."""
+    the session, never the URL; a failure is a class name. Read at most once every STORE_TTL_S, by
+    one request at a time: the others meanwhile get the last read marked stale."""
     if not cfg.database_url:
         return {"configured": False, "reason": "DATABASE_URL is not set: the session is kept in memory only"}
-    from .store import describe
-
     key = (hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), cfg.server, cfg.db)
+    stale = False
     with _store_lock:
-        if _store_cache["key"] == key and _store_cache["value"] is not None and 0 <= now - _store_cache["at"] < STORE_TTL_S:
-            value = _store_cache["value"]
-        else:
+        mine = _store_cache["key"] == key and _store_cache["value"] is not None
+        fresh = mine and 0 <= now - _store_cache["at"] < STORE_TTL_S
+        value, read_at = (_store_cache["value"], _store_cache["at"]) if mine else (None, now)
+    if not fresh:
+        if _store_read.acquire(blocking=False):
             try:
-                value = {"read": _read_store(cfg)}
-            except Exception as exc:  # noqa: BLE001 - said, never raised past /health, never the text
-                value = {"error": type(exc).__name__}
-            _store_cache.update(at=now, key=key, value=value)
-        read_at = _store_cache["at"]
-    if "error" in value:
-        return {"configured": True, "ok": False, "error": value["error"], "read_at": _now_iso(read_at)}
-    read = value["read"]
-    return {
-        "configured": True,
-        "ok": not read["missing_columns"],
-        "tables": read["tables"],
-        "missing_columns": read["missing_columns"],
-        "migrations": read["migrations"],
-        "session": describe(read["times"], now),
-        "read_at": _now_iso(read_at),
-    }
+                try:
+                    value = {"read": _read_store(cfg)}
+                except Exception as exc:  # noqa: BLE001 - said, never raised past /health, never the text
+                    value = {"error": type(exc).__name__}
+                read_at = now
+                with _store_lock:
+                    _store_cache.update(at=now, key=key, value=value)
+            finally:
+                _store_read.release()
+        elif value is None:
+            return {"configured": True, "ok": None, "reason": "another request is reading the store"}
+        else:
+            stale = True
+    try:
+        from .store import describe
+
+        if "error" in value:
+            out = {"configured": True, "ok": False, "error": value["error"], "read_at": _now_iso(read_at)}
+        else:
+            read = value["read"]
+            out = {
+                "configured": True,
+                "ok": not read["missing_columns"],
+                "tables": read["tables"],
+                "missing_columns": read["missing_columns"],
+                "migrations": read["migrations"],
+                "session": describe(read["times"], now),
+                "read_at": _now_iso(read_at),
+            }
+    except Exception as exc:  # noqa: BLE001 - /health never raises
+        out = {"configured": True, "ok": False, "error": type(exc).__name__}
+    if stale:
+        out["stale"] = True
+    return out
 
 
 @app.get("/check")
 def check(request: Request) -> JSONResponse:
     state = request.app.state
     clock = state.clock
-    with _lock:
+    if not _lock.acquire(blocking=False):
+        # A round is running: the last answer, marked, rather than a thread parked on the lock.
+        last = _cache["result"]
+        if last is None:
+            return JSONResponse({"ok": False, "in_progress": True, "message": "a check is running; ask again in a minute"}, status_code=503)
+        return JSONResponse(dict(last, cached=True, in_progress=True), status_code=200 if last["ok"] else 503)
+    try:
         cached = _cache["result"]
         if cached is not None and clock() - _cache["at"] < CHECK_TTL_S:
             result = dict(cached, cached=True)
@@ -192,11 +220,13 @@ def check(request: Request) -> JSONResponse:
             result = run_check(cfg, transport=state.transport, clock=clock, client=client)
             _cache.update(at=clock(), result=result)
             result = dict(result, cached=False)
+    finally:
+        _lock.release()
     return JSONResponse(result, status_code=200 if result["ok"] else 503)
 
 
 def session_report(sess: Session, held: bool, store_kind: Optional[str], now: float) -> dict:
-    """How this round got its session, never the session: `source` is memory (this process held
+    """How the round's session came to be, never the session: `source` is memory (this process held
     it), saved (read from the store) or new (opened now); `saved` is whether the store holds it."""
     out = {
         "ok": True,
@@ -228,8 +258,7 @@ def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optio
     client = client or WizClient(cfg.server, cfg.db, cfg.private_key, transport=transport, clock=clock)
     try:
         held = client.holds_session()
-        sess = client.session()
-        out["session"] = session_report(sess, held, getattr(client.store, "kind", None), clock())
+        first = client.session()
     except WizError as exc:
         out["session"] = out["error"] = exc.as_dict()
         return out
@@ -242,6 +271,16 @@ def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optio
         except WizError as exc:
             out[name] = exc.as_dict()
             out.setdefault("error", exc.as_dict())
+    # The session as the round ended, not as it began: a read may have renewed it, and that renewal's
+    # store_error or note belongs in the answer (review 19.11).
+    last = client.current()
+    store_kind = getattr(client.store, "kind", None)
+    if last is None:  # the session was refused and the renewal failed: the reads above say why
+        out["session"] = dict(session_report(first, held, store_kind, clock()), renewal_failed=True)
+    else:
+        out["session"] = session_report(last, held and last is first, store_kind, clock())
+        if last is not first:
+            out["session"]["renewed"] = True
     out["ok"] = all(out[n].get("ok") is True for n in ("companies", "triggers"))
     return out
 

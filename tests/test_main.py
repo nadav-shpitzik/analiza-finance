@@ -247,7 +247,8 @@ def test_the_build_ships_this_repo_and_guards_the_schema():
     assert "--schema migrations,app/migrate.py" in build
     replit = (ROOT / ".replit").read_text(encoding="utf-8")
     assert 'build = ["bash", "scripts/build.sh"]' in replit
-    assert "python3 -m app.migrate" in replit
+    # the schema step installs main's requirements first: S0 is the first change that needs psycopg (review 19.11)
+    assert 'args = "bash scripts/sync-from-github.sh && pip install -q -r requirements.txt && python3 -m app.migrate"' in replit
 
 
 @needs_pg
@@ -336,3 +337,89 @@ def test_a_network_blip_is_not_called_a_revocation(fake):
 def test_a_key_that_would_reshape_the_url_is_a_config_problem(monkeypatch):
     assert config.load({"WIZ_PRIVATE_KEY": "ABC?x=/wizdb2245n5"}).problems
     assert config.load({"WIZ_PRIVATE_KEY": "ABC-def_123+="}).ok
+
+
+def test_a_renewal_during_the_round_is_what_check_reports(app_client, fake, clock):
+    """Review 19.11: /check described the session it took before the reads. A read that renews it,
+    and a save that fails, must show in the answer."""
+    from app.store import StoreError
+
+    shared = FakeStore()
+    main.app.state.store_factory = lambda cfg: shared
+    first = app_client.get("/check").json()["session"]
+    assert (first["source"], first["saved"]) == ("new", True)
+    fake.valid_sessions = {"RENEWED-IN-THE-ROUND-1"}  # the vendor dropped the session meanwhile
+    fake.session_body = "RENEWED-IN-THE-ROUND-1"
+    shared.fail_on_save = StoreError("store_error", "25006")
+    clock.t += 61
+    later = app_client.get("/check").json()
+    assert later["ok"] is True
+    s = later["session"]
+    assert (s["renewed"], s["source"], s["saved"], s["store_error"]["kind"]) == (True, "new", False, "store_error")
+    assert s["issued_at"] != first["issued_at"]
+
+
+def test_a_failed_renewal_is_said_on_the_session(app_client, fake, clock):
+    app_client.get("/check")
+    fake.valid_sessions = set()
+    fake.session_body = "iligal token"  # createSession now refuses the key
+    fake.session_status = 400
+    clock.t += 61
+    body = app_client.get("/check").json()
+    assert body["ok"] is False and body["session"]["renewal_failed"] is True
+    assert body["companies"]["kind"] == "bad_key"
+
+
+def test_a_check_already_running_answers_at_once(app_client, fake):
+    app_client.get("/check")
+    assert main._lock.acquire(blocking=False)  # a round in progress in another thread
+    try:
+        r = app_client.get("/check")
+    finally:
+        main._lock.release()
+    assert r.status_code == 200 and r.json()["in_progress"] is True and r.json()["cached"] is True
+    main._cache.update(at=0.0, result=None)
+    assert main._lock.acquire(blocking=False)
+    try:
+        r = app_client.get("/check")
+    finally:
+        main._lock.release()
+    assert r.status_code == 503 and r.json()["in_progress"] is True
+
+
+def test_health_serves_the_last_store_read_while_another_request_reads(app_client, clock, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:SECRETPW@127.0.0.1:1/nothing")
+    monkeypatch.setattr(main, "_read_store", lambda cfg: {
+        "tables": {"wiz_sessions": "present", "schema_migrations": "present"}, "missing_columns": [],
+        "migrations": [], "times": None})
+    assert app_client.get("/health").json()["store"]["ok"] is True
+    clock.t += 20  # the read is old; another request is reading right now
+    assert main._store_read.acquire(blocking=False)
+    try:
+        store = app_client.get("/health").json()["store"]
+    finally:
+        main._store_read.release()
+    assert store["ok"] is True and store["stale"] is True
+
+
+def test_a_url_psycopg_cannot_even_parse_costs_a_session_not_the_read(app_client, fake, monkeypatch):
+    """Review 19.11: a %-escape that is not UTF-8 in the password raised UnicodeDecodeError past the
+    store's guard, and /check answered 500."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:SECRETPW%FF@127.0.0.1:1/x")
+    r = app_client.get("/check")
+    assert r.status_code == 200
+    assert r.json()["session"]["store_error"] == {"ok": False, "kind": "store_unreachable", "detail": "UnicodeDecodeError"}
+    assert "SECRETPW" not in r.text
+
+
+def test_the_shell_migration_names_a_missing_module(monkeypatch, capsys):
+    from app import migrate
+
+    def missing(url):
+        raise ModuleNotFoundError("No module named 'psycopg'", name="psycopg")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user@127.0.0.1:1/x")
+    monkeypatch.setattr(migrate, "apply_migrations", missing)
+    assert migrate.main() == 1
+    err = capsys.readouterr().err
+    assert "no module 'psycopg' - run pip install -r requirements.txt first" in err

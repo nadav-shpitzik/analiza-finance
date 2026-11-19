@@ -106,7 +106,10 @@ def schema_state(cur) -> dict:
 
 def _failure(exc: BaseException) -> str:
     """A database error as its class and SQLSTATE, never its text: psycopg's message can carry the host,
-    the user and, for a malformed URL, the password itself (review 19.11)."""
+    the user and, for a malformed URL, the password itself (review 19.11). A missing module is named,
+    with the step that installs it: it reads like a database problem otherwise."""
+    if isinstance(exc, ImportError):
+        return f"{type(exc).__name__}: no module {exc.name!r} - run pip install -r requirements.txt first"
     code = getattr(exc, "sqlstate", None)
     return type(exc).__name__ + (f" (SQLSTATE {code})" if code else "")
 
