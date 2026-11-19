@@ -1,11 +1,8 @@
-# Run commands only. NEVER put env values or secrets in this file - they land in git.
-# Secrets live in the Repl's Secrets: WIZ_PRIVATE_KEY, and the account secret
-# GITHUB_DEPLOY_TOKEN linked to this app. DATABASE_URL comes with the Repl's Postgres.
-modules = ["python-3.11"]
+modules = ["python-3.12", "bash"]
 run = "pip install -q -r requirements.txt && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
 packages = ["postgresql"]
 
 [deployment]
