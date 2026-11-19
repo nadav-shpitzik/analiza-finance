@@ -6,7 +6,7 @@
 התיעוד המלא בריפו התיעוד: `docs/services/analiza-finance/README.md`. ההחלטות: ‏ADR-0185 (בית הכספים, 19.11:
 הספרים, ההצלבה, פריטים ופעולות, ושולחן הכספים שעובר מ-analiza-metrics), ו-ADR-0176 (קריאה בלבד מהספרים):
 `docs/decisions/0176-finance-sync-is-the-home-of-hashavshevet-and-reads-the-books-only.md`. האפיון: `docs/design/analiza-finance-spec.md`,
-והבנייה במנות: `docs/backlog/0299-analiza-finance-build.md`. השם `finance-sync` נשאר בקוד (`app/main.py`) עד מנה S0
+והבנייה במנות: `docs/backlog/0301-analiza-finance-build.md`. השם `finance-sync` נשאר בקוד (`app/main.py`) עד מנה S0
 (ב-`nadav-shpitzik/Analiza-Monday`).
 
 ## הגבול: קריאה בלבד מהספרים
