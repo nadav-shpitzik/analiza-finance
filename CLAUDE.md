@@ -67,5 +67,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   3. **Republish in the Replit UI**, reading the SQL it shows: only `CREATE` / `ADD`; any `DROP` is Cancel.
      A publish from the chat refuses any schema difference.
   4. `/health`: `build.sha` is main's, the new table is `"present"` in `store.tables`, and `store.missing_columns`
-     is `[]` (read at most every 15 s). In production `store.migrations` stays empty: the publish copies the schema,
-     not the ledger's rows.
+     is `[]` (read at most every 15 s). Read the tables, not `store.migrations`: what the publish does with the
+     ledger's rows is not settled (after the first publish, 19.11, production held 001's row).
+- **Replit Agent edits `.replit` and pushes it to `main`** (19.11, `c37bf9b`, on import: Python 3.12, nix 25_05).
+  The Repl runs Python 3.12; CI and live-check follow it.
