@@ -7,7 +7,7 @@ the service page `docs/services/analiza-finance/README.md`, ADR-0185 (this home)
 `docs/design/analiza-finance-spec.md` with its two companions (the reconciliation rules, the desk move plan), and the build
 in slices `docs/backlog/0301-analiza-finance-build.md`. Boot from there for anything beyond this repo. Talk to Nadav in Hebrew.
 
-**Until Nadav's go on the spec, nothing beyond v0 is built here.**
+**Nadav's go on the spec: 19.11. The build follows the slices of backlog 0301, S0 first.**
 
 ## Hard rules
 
