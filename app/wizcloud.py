@@ -171,13 +171,15 @@ class WizClient:
         return _TOKEN_RUN.sub("***", mask_overlaps(text, secrets))
 
     def _short(self, text: str, limit: int = 200, also: Optional[str] = None) -> str:
-        """Redact first, then cut: a cut made first could leave a piece of a secret no longer whole. The
-        text is first capped at limit plus twice the longest secret, so a large body costs nothing: a
-        secret that starts before the limit is still whole inside the cap, and what lies past the limit
-        is cut anyway."""
+        """Redact first, then cut: a cut made first could leave a piece of a secret no longer whole. A
+        large body is first capped at limit plus twice the longest secret, so it costs nothing; a secret
+        that starts before the limit is still whole inside the cap. Masking shrinks the text, which can
+        pull what sat at the cap inside the limit, so whatever the cap cut through - a run of token
+        characters, or the start of a known secret - is masked too (review 19.11)."""
         text = (text or "").strip()
-        longest = max((len(x) for x in self._secrets(also)), default=0)
-        text = self.redact(text[: limit + 2 * longest + _PARTIAL_MIN], also)
+        secrets = self._secrets(also)
+        longest = max((len(x) for x in secrets), default=0)
+        text = self.redact(_cap(text, limit + 2 * longest + _PARTIAL_MIN, secrets), also)
         return text if len(text) <= limit else text[:limit] + "..."
 
     # ---- http ------------------------------------------------------------
@@ -335,6 +337,25 @@ class WizClient:
 
 
 # ---- pure helpers (tested directly) ----------------------------------------
+
+
+_TAIL_RUN = re.compile(r"[A-Za-z0-9+/=_.~-]+$")
+
+
+def _cap(text: str, cap: int, secrets: list) -> str:
+    """text[:cap], and if that cut through a token-like run or through the start of a known secret,
+    that stub masked as well: measured on the same cut text, the longer of the two goes."""
+    if len(text) <= cap:
+        return text
+    head = text[:cap]
+    run = _TAIL_RUN.search(head)
+    cut = len(run.group(0)) if run else 0
+    for secret in secrets:
+        for n in range(min(len(secret), len(head)), cut, -1):
+            if head.endswith(secret[:n]):
+                cut = n
+                break
+    return head[: len(head) - cut] + ("***" if cut else "")
 
 
 def mask_overlaps(text: str, secrets: list, k: int = _PARTIAL_MIN) -> str:

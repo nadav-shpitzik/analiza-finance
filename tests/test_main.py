@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import config, main
 from app.main import deploy_build, summarize_companies, summarize_triggers
+from app.wizcloud import WizClient
 from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, FakeStore, dump, needs_pg
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -423,3 +424,28 @@ def test_the_shell_migration_names_a_missing_module(monkeypatch, capsys):
     assert migrate.main() == 1
     err = capsys.readouterr().err
     assert "no module 'psycopg' - run pip install -r requirements.txt first" in err
+
+
+def test_a_round_that_ends_with_no_session_is_not_ok_and_live_check_reads_no_documents(fake, monkeypatch, capsys):
+    """Review 19.11: renewal_failed still said ok: true, and live-check opened its document gate."""
+    from scripts import live_check
+
+    calls = {"create": 0}
+
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            calls["create"] += 1
+            if calls["create"] > 1:
+                return httpx.Response(503, text="Service Unavailable")
+            return httpx.Response(200, text="FIRST-SESSION-0001")
+        return httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Token is not valid"}})
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
+    monkeypatch.setenv("DOC_IDS", "1,2,3")
+    monkeypatch.setattr(live_check, "WizClient", lambda *a, **k: WizClient(*a, transport=transport, **k))
+    assert live_check.main() == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["check"]["session"]["ok"] is False and out["check"]["session"]["renewal_failed"] is True
+    assert "docs" not in out
+    assert calls["create"] == 3  # the round's own: the first session, the companies retry, triggers' try; documents would add 3

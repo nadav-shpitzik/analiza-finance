@@ -49,6 +49,10 @@ CONNECT_TIMEOUT_S = 10
 # unsaved extra session, said as store_lock_timeout: harmless, since a new session does not revoke the
 # old one (seen on Demo 19.11) and a renewal is taken only when it is newer than the refused session.
 LOCK_TIMEOUT = "35s"
+# A plain read (load, and /health) waits at most this long for a lock someone else holds on the table, or
+# for any one statement: a stuck table costs a new session or a stale /health, never a hung request.
+READ_LOCK_TIMEOUT = "5s"
+READ_STATEMENT_TIMEOUT = "10s"
 _KEY_INFO = b"analiza-finance/wiz-session/v1"
 _NONCE_BYTES = 12
 
@@ -182,6 +186,8 @@ class PgSessionStore:
     def load(self, server: str, db: str) -> Optional[Saved]:
         with _guard():
             with self._connect() as conn:
+                conn.execute(f"SET LOCAL lock_timeout = '{READ_LOCK_TIMEOUT}'")
+                conn.execute(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'")
                 row = conn.execute(_SELECT, (server, db)).fetchone()
         return self._open(row, server, db)
 

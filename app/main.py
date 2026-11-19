@@ -141,9 +141,13 @@ def _read_store(cfg: config.Config) -> dict:
     import psycopg
 
     from .migrate import CONNECT_TIMEOUT_S, schema_state
-    from .store import TABLE, saved_times
+    from .store import READ_LOCK_TIMEOUT, READ_STATEMENT_TIMEOUT, TABLE, saved_times
 
-    with psycopg.connect(cfg.database_url, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
+    with psycopg.connect(cfg.database_url, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
+        # A table locked by someone else ends this read instead of hanging it (transaction-scoped, so a
+        # pooled connection keeps nothing).
+        cur.execute(f"SET LOCAL lock_timeout = '{READ_LOCK_TIMEOUT}'")
+        cur.execute(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'")
         state = schema_state(cur)
         times = saved_times(cur, cfg.server, cfg.db) if state["tables"].get(TABLE) == "present" and cfg.db else None
     return {**state, "times": times}
@@ -276,7 +280,8 @@ def run_check(cfg: config.Config, transport=None, clock=time.time, client: Optio
     last = client.current()
     store_kind = getattr(client.store, "kind", None)
     if last is None:  # the session was refused and the renewal failed: the reads above say why
-        out["session"] = dict(session_report(first, held, store_kind, clock()), renewal_failed=True)
+        # ok False: the round ended with no session, and live-check reads documents only after an ok one.
+        out["session"] = dict(session_report(first, held, store_kind, clock()), ok=False, renewal_failed=True)
     else:
         out["session"] = session_report(last, held and last is first, store_kind, clock())
         if last is not first:

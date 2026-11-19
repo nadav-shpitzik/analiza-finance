@@ -229,3 +229,22 @@ def test_a_successful_shell_migration_names_the_database_never_the_user(pg, monk
     user = psycopg.conninfo.conninfo_to_dict(pg).get("user") or ""
     assert out.startswith("database: ") and out.rstrip().endswith("carries every column the writes need")
     assert not user or f"{user}@" not in out and f"{user}:" not in out
+
+
+@needs_pg
+def test_a_locked_table_ends_a_read_instead_of_hanging_it(pg, fake, clock, monkeypatch):
+    """Review 19.11 (hardening): load() and /health's read had no lock or statement timeout."""
+    import time as _time
+
+    migrate.apply_migrations(pg)
+    monkeypatch.setattr(store, "READ_LOCK_TIMEOUT", "1s")
+    with psycopg.connect(pg) as holder:
+        holder.execute("LOCK TABLE wiz_sessions IN ACCESS EXCLUSIVE MODE")  # held until this block ends
+        started = _time.monotonic()
+        with pytest.raises(StoreError) as err:
+            PgSessionStore(pg, KEY).load(SERVER, DB)
+        assert err.value.kind == "store_lock_timeout" and _time.monotonic() - started < 5
+        c = WizClient(SERVER, DB, KEY, transport=fake.transport(), clock=clock, store=PgSessionStore(pg, KEY))
+        monkeypatch.setattr(store, "LOCK_TIMEOUT", "1s")
+        assert c.companies() == fake.companies  # the read goes on with a session of its own
+        assert c.session().store_error["kind"] == "store_lock_timeout"

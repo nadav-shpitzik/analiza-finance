@@ -572,3 +572,38 @@ def test_a_session_this_call_opened_itself_is_not_retried_twice(fake, clock):
     with pytest.raises(WizError) as err:
         c.companies()
     assert err.value.kind == "session_rejected" and fake.issued == 2
+
+
+def test_a_secret_cut_by_the_cap_does_not_slide_into_the_message(clock):
+    """Review 19.11: masking a long run before the cap shrinks the text, and what the cap cut through -
+    the start of an unseen session, or of a known one - slid inside the 200 characters."""
+    import base64
+
+    blob = base64.b64encode(bytes(range(256)) * 2).decode()[:240]  # a long token-like run, masked to ***
+    unseen = "UNSEEN" + "q7" * 109  # a 224-character session the client never saw
+    cap = 200 + 2 * len(SESSION) + 12  # the cap _short applies on a read: limit + 2 x the longest known secret + 12
+    for tail_secret, inside in ((unseen, 20), (SESSION, 11)):
+        lead = "err " + blob + " "
+        lead = lead[: cap - inside - 1] + " "  # the secret starts `inside` characters before the cap
+        body = lead + tail_secret + " end"
+
+        def handler(request, body=body):
+            if request.url.path.startswith("/createSession/"):
+                return httpx.Response(200, text=SESSION)
+            return httpx.Response(400, text=body)
+
+        c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+        with pytest.raises(WizError) as err:
+            c.companies()
+        message = err.value.message
+        for secret in (unseen, SESSION, KEY):
+            for i in range(len(secret) - 7):
+                assert secret[i:i + 8] not in message, (tail_secret[:6], secret[i:i + 8])
+
+
+def test_the_cap_masks_a_cut_through_a_known_secret_with_odd_characters():
+    from app.wizcloud import _cap
+
+    assert _cap("abc PRIV!ATE and more", 11, ["PRIV!ATE"]) == "abc ***"  # '!' breaks the token run; the prefix rule catches it
+    assert _cap("abc def ghi", 9, ["PRIV!ATE"]) == "abc def ***"  # a cut word is masked too: it may be a token's head
+    assert _cap("short", 99, ["x" * 20]) == "short"
