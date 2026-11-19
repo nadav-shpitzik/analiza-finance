@@ -12,13 +12,13 @@
 # leaves the workspace files alone and build_info says why. A failure while
 # writing files exits 1: the build fails and Replit keeps the running deployment.
 #
-# SCHEMA (--schema migrations,app/migrate.py): the service applies migrations/
-# at startup (app/migrate.py), and the workspace and the deployment have
-# different databases; a publish aligns production to the development one,
-# DROP included. So when main's migrations differ from the workspace's, this
-# builds from the workspace and says why. Such a change ships as CLAUDE.md
-# says: Sync from GitHub in the Repl, `python3 -m app.migrate` in its Shell,
-# then Republish in the UI, where the migration SQL is read.
+# SCHEMA (--schema migrations,app/migrate.py): the workspace and the deployment
+# have different databases; a publish aligns production to the development one,
+# DROP included, and the service never changes its own schema (app/migrate.py
+# says why). So when main's migrations differ from the workspace's, this builds
+# from the workspace and says why. Such a change ships as CLAUDE.md says: in the
+# Repl's Shell, the sync and `python3 -m app.migrate`, then Republish in the UI,
+# where the migration SQL is read.
 #
 # The rest of the build then runs from main's copy of this script, in case main
 # changed it; DEPLOY_SOURCE_APPLIED stops that second pass from fetching again.
@@ -33,7 +33,7 @@ if [ -z "${DEPLOY_SOURCE_APPLIED:-}" ]; then
     python3 scripts/deploy_source.py \
         --repo nadav-shpitzik/analiza-finance \
         --require app/main.py,app/wizcloud.py,app/migrate.py,requirements.txt \
-        --generated replit.md \
+        --generated replit.md,.agents,uv.lock,poetry.lock \
         --schema migrations,app/migrate.py
     export DEPLOY_SOURCE_APPLIED=1
     exec bash scripts/build.sh

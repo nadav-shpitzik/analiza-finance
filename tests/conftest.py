@@ -133,6 +133,7 @@ def app_client(fake, clock, monkeypatch):
     monkeypatch.delenv("WIZ_SERVER", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
     main.app.state.transport = fake.transport()
     main.app.state.clock = clock
     main.app.state.client = None
@@ -143,6 +144,7 @@ def app_client(fake, clock, monkeypatch):
     main.app.state.client = None
     main.app.state.store_factory = None
     main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
 
 
 def dump(obj) -> str:

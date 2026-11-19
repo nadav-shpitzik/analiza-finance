@@ -151,12 +151,16 @@ def session_test(cfg: config.Config, transport=None) -> dict:
     except WizError as exc:
         out["error"] = exc.as_dict()
         return out
-    if out["first"] == "ok" and out["second"] == "ok":
-        out["verdict"] = (
-            "one session: createSession answered the same string" if out["same_string"]
-            else "both live: a new session does not revoke the previous one" if out["first_after_second"] == "ok"
-            else "revoked: a new session ends the previous one"
-        )
+    if out["first"] != "ok" or out["second"] != "ok":
+        out["verdict"] = "inconclusive: a read failed before the test could start"
+    elif out["same_string"]:
+        out["verdict"] = "one session: createSession answered the same string"
+    elif out["first_after_second"] == "ok":
+        out["verdict"] = "both live: a new session does not revoke the previous one"
+    elif out["first_after_second"] == "session_rejected":
+        out["verdict"] = "revoked: a new session ends the previous one"
+    else:  # a network blip or a server error says nothing about revocation (review 19.11)
+        out["verdict"] = f"inconclusive: the third read failed with {out['first_after_second']}"
     return out
 
 

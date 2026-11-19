@@ -1,6 +1,8 @@
 #!/bin/bash
 # "Sync from GitHub" - the workflow button that brings this Repl's workspace
-# up to GitHub main. Copied from Analiza-Deal-Breakdown unchanged on 2026-10-20
+# up to GitHub main. analiza-finance: copied from analiza-metrics on 2026-11-19, with
+# the last line changed for a Python-only Repl (review 19.11). There:
+# Copied from Analiza-Deal-Breakdown unchanged on 2026-10-20
 # (Analiza-Monday backlog 0214); that copy came from Monday-API-Extension
 # (2026-09-25), plus the lockfile rule below. It replaces pulling in the Git pane, which
 # merged on some days and rebased on others, and pushed Replit's own
@@ -73,4 +75,4 @@ else
     git log --format='  %h %s' "$before..HEAD" | head -20
 fi
 echo "Now at: $(git log -1 --format='%h %s')"
-echo "Restart the 'Project' workflow to run the new code here (it runs npm install first)."
+echo "Press Stop, then Run, to run the new code here (Run installs requirements.txt first)."

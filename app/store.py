@@ -42,8 +42,12 @@ TABLE = "wiz_sessions"
 CHECKED_TABLES = {TABLE: ("server", "db", "sealed", "shape", "issued_at", "saved_at")}
 
 CONNECT_TIMEOUT_S = 10
-# A renewal waits this long for another instance's renewal, then gives up and says so.
-LOCK_TIMEOUT = "15s"
+# A renewal waits this long for another instance's renewal, then gives up and says so. Longer than
+# createSession's own budget (app/wizcloud.SESSION_TIMEOUT, about 15 s at worst), so a slow vendor does
+# not make the waiters open sessions of their own. When it does happen the cost is an unsaved extra
+# session: a new session does not revoke the old one (seen on Demo 19.11), and a renewal is only taken
+# when it is newer than the session that was refused.
+LOCK_TIMEOUT = "20s"
 _KEY_INFO = b"analiza-finance/wiz-session/v1"
 _NONCE_BYTES = 12
 
@@ -204,19 +208,27 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def describe_saved(url: str, server: str, db: str, now: float) -> Optional[dict]:
-    """For /health: when the saved session was issued and how old it is. Never the blob, never the
-    session. Needs no key. Raises StoreError."""
-    import psycopg
-
-    with _guard():
-        with psycopg.connect(url, connect_timeout=CONNECT_TIMEOUT_S) as conn:
-            row = conn.execute(
-                f"SELECT shape, extract(epoch FROM issued_at)::float8, extract(epoch FROM saved_at)::float8 "
-                f"FROM {TABLE} WHERE server = %s AND db = %s",
-                (server, db),
-            ).fetchone()
+def saved_times(cur, server: str, db: str) -> Optional[dict]:
+    """For /health, on the caller's cursor: the saved session's shape and times (epoch seconds). Never
+    the blob, never the session; needs no key."""
+    cur.execute(
+        f"SELECT shape, extract(epoch FROM issued_at)::float8, extract(epoch FROM saved_at)::float8 "
+        f"FROM {TABLE} WHERE server = %s AND db = %s",
+        (server, db),
+    )
+    row = cur.fetchone()
     if row is None:
         return None
     shape, issued_at, saved_at = row
-    return {"shape": shape, "issued_at": _iso(issued_at), "age_s": int(now - issued_at), "saved_at": _iso(saved_at)}
+    return {"shape": shape, "issued_at": issued_at, "saved_at": saved_at}
+
+
+def describe(times: Optional[dict], now: float) -> Optional[dict]:
+    if times is None:
+        return None
+    return {
+        "shape": times["shape"],
+        "issued_at": _iso(times["issued_at"]),
+        "age_s": int(now - times["issued_at"]),
+        "saved_at": _iso(times["saved_at"]),
+    }

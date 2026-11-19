@@ -3,8 +3,10 @@
 import psycopg
 import pytest
 
+import httpx
+
 from app import migrate, store
-from app.store import PgSessionStore, StoreError, derive_key, describe_saved, seal, unseal
+from app.store import PgSessionStore, StoreError, derive_key, describe, saved_times, seal, unseal
 from app.wizcloud import WizClient
 from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, needs_pg
 
@@ -63,7 +65,7 @@ def test_migrations_apply_once_and_the_ledger_is_checked(pg):
     assert first == {"applied": ["001_wiz_sessions.sql"], "skipped": [], "repaired": [], "missing": []}
     second = migrate.apply_migrations(pg)
     assert second == {"applied": [], "skipped": ["001_wiz_sessions.sql"], "repaired": [], "missing": []}
-    state = migrate.schema_state(pg)
+    state = schema_state(pg)
     assert state == {
         "tables": {"wiz_sessions": "present", "schema_migrations": "present"},
         "missing_columns": [],
@@ -72,7 +74,7 @@ def test_migrations_apply_once_and_the_ledger_is_checked(pg):
     # The ledger says 001 ran, the table is gone (a restore, a reset): reported, then repaired.
     with psycopg.connect(pg, autocommit=True) as conn:
         conn.execute("DROP TABLE wiz_sessions")
-    assert migrate.schema_state(pg)["missing_columns"] == ["wiz_sessions"]
+    assert schema_state(pg)["missing_columns"] == ["wiz_sessions"]
     third = migrate.apply_migrations(pg)
     assert third["repaired"] == ["001_wiz_sessions.sql"] and third["missing"] == []
 
@@ -90,10 +92,12 @@ def test_two_processes_share_one_session_and_the_row_is_sealed(pg, fake, clock):
         rows = conn.execute("SELECT server, db, sealed, shape FROM wiz_sessions").fetchall()
     assert len(rows) == 1 and rows[0][:2] == (SERVER, DB) and rows[0][3] == "text"
     assert SESSION.encode() not in bytes(rows[0][2])
-    seen = describe_saved(pg, SERVER, DB, clock.t + 90)
+    with psycopg.connect(pg) as conn, conn.cursor() as cur:
+        seen = describe(saved_times(cur, SERVER, DB), clock.t + 90)
+        other = saved_times(cur, SERVER, "wizdb2245n5")
     assert seen["shape"] == "text" and seen["age_s"] == 90
     assert SESSION not in str(seen)
-    assert describe_saved(pg, SERVER, "wizdb2245n5", clock.t) is None
+    assert other is None and describe(other, clock.t) is None
 
 
 @needs_pg
@@ -103,10 +107,12 @@ def test_a_rejected_session_is_renewed_once_for_everyone(pg, fake, clock):
     b = WizClient(SERVER, DB, KEY, transport=fake.transport(), clock=clock, store=PgSessionStore(pg, KEY))
     a.companies()
     b.companies()
-    # WizCloud now refuses the shared session (revoked, or expired early) and answers a new one.
+    # WizCloud now refuses the shared session (expired early, say) and answers a new one.
     fake.valid_sessions = {"RENEWED-SESSION-42"}
     fake.session_body = "RENEWED-SESSION-42"
+    clock.t += 5
     a.companies()  # a renews and saves
+    clock.t += 5
     b.companies()  # b finds its session refused, and takes a's renewal from the row
     assert fake.issued == 2
     assert b.session().token == "RENEWED-SESSION-42" and b.session().origin == "saved"
@@ -141,3 +147,75 @@ def test_a_database_without_the_table_is_a_schema_kind(pg, fake, clock):
     c = WizClient(SERVER, DB, KEY, transport=fake.transport(), clock=clock, store=PgSessionStore(pg, KEY))
     assert c.companies() == fake.companies
     assert c.session().store_error == {"ok": False, "kind": "store_schema", "detail": "42P01"}
+
+
+def schema_state(url):
+    with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+        return migrate.schema_state(cur)
+
+
+class Vendor:
+    """Sessions die only when the vendor drops them (a new one does not revoke the old: Demo 19.11)."""
+
+    def __init__(self):
+        self.n = 0
+        self.valid = set()
+
+    def handler(self, request):
+        path = request.url.path.lstrip("/")
+        if path.startswith("createSession/"):
+            self.n += 1
+            token = f"T{self.n}-" + "x" * 30
+            self.valid.add(token)
+            return httpx.Response(200, text=token)
+        if request.headers.get("authorization", "").removeprefix("Bearer ") not in self.valid:
+            return httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Token is not valid"}})
+        return httpx.Response(200, json=[{"dbName": DB}])
+
+
+@needs_pg
+def test_an_older_saved_session_is_not_taken_for_a_renewal(pg, clock):
+    """The review's sequence (19.11): A renews but cannot save, so the row keeps an older session;
+    when A's session is refused again, the row's older one is not a renewal and is not taken."""
+    migrate.apply_migrations(pg)
+    vendor = Vendor()
+
+    def instance():
+        return WizClient(SERVER, DB, KEY, transport=httpx.MockTransport(vendor.handler), clock=clock,
+                         store=PgSessionStore(pg, KEY))
+
+    instance().companies()  # B opens T1; the row holds T1
+    a = instance()
+    a.companies()  # A cold-starts and takes T1 from the row
+    vendor.valid.clear()  # the vendor drops every live session
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("ALTER TABLE wiz_sessions ADD CONSTRAINT refuse CHECK (false) NOT VALID")
+    clock.t += 5
+    a.companies()  # A renews to T2, the save fails, the row keeps T1
+    assert a.session().saved is False and vendor.n == 2
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("ALTER TABLE wiz_sessions DROP CONSTRAINT refuse")
+    vendor.valid.clear()  # the vendor drops sessions again
+    clock.t += 5
+    assert a.companies() == [{"dbName": DB}]  # T1 in the row is older than T2: not taken
+    assert vendor.n == 3 and a.session().token.startswith("T3-")
+
+
+@needs_pg
+def test_a_failed_migration_applies_nothing(pg, tmp_path, monkeypatch):
+    (tmp_path / "001_wiz_sessions.sql").write_text((migrate.MIGRATIONS_DIR / "001_wiz_sessions.sql").read_text())
+    (tmp_path / "002_broken.sql").write_text("CREATE TABLE broken (x int NOT NULL DEFAULT 'not a number');")
+    monkeypatch.setattr(migrate, "MIGRATIONS_DIR", tmp_path)
+    with pytest.raises(psycopg.Error):
+        migrate.apply_migrations(pg)
+    assert schema_state(pg)["tables"] == {"wiz_sessions": "absent", "schema_migrations": "absent"}
+
+
+def test_the_shell_migration_prints_no_secret(monkeypatch, capsys):
+    for url in ("postgresql://user:pa%zzSECRETPW@127.0.0.1:1/x", "postgresql://user:SECRETPW@127.0.0.1:1/x"):
+        monkeypatch.setenv("DATABASE_URL", url)
+        assert migrate.main() == 1
+        out = capsys.readouterr()
+        text = out.out + out.err
+        assert "SECRETPW" not in text and "user" not in text and "127.0.0.1" not in text
+        assert "FAILED: " in out.err and "Nothing was applied" in out.err

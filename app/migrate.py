@@ -1,17 +1,22 @@
-"""Apply migrations/ in order: `python3 -m app.migrate` in the Repl's Shell (the development database),
-and at startup in the deployment (the production one). Adapted on 2026-11-19 (slice S0 of backlog 0301)
-from analiza-metrics' app/migrate.py, which carries the history; the parts that matter here:
+"""Apply migrations/ to the DEVELOPMENT database: `python3 -m app.migrate` in the Repl's Shell (also the
+last step of the workflow Sync from GitHub). The deployment never runs it. Adapted on 2026-11-19 (slice S0
+of backlog 0301) from analiza-metrics' app/migrate.py, which carries the history.
 
-- A publish aligns production's schema to the development database's, DROP included (the runbook
-  replit-postgres-provisioning in the docs repo). So a schema change reaches the development database
-  first, from the Shell, and only then a Republish whose SQL is read: only CREATE / ADD goes ahead.
-  The build refuses main's migrations until the workspace has them (`--schema` in scripts/build.sh),
-  so the startup run never puts production ahead of development.
-- The ledger is not the schema (metrics, 2026-09-03). After the ledger pass, the live columns are
-  checked against what the writes name (`app.store.CHECKED_TABLES`), every file is re-run once if they
-  disagree (each is written to be re-runnable), and what is still missing is reported, not raised, so
-  the service starts and /health says what is wrong.
-- Two autoscale cold starts at once run one after the other, under an advisory lock.
+Why the deployment never changes its own schema. A publish aligns production's schema to the development
+database's, DROP included (the runbook replit-postgres-provisioning in the docs repo). analiza-metrics also
+applies its migrations at startup, as a safety net; the review of 19.11 showed the cost: whenever the
+development database misses a step (a Pull in the Git pane, or the Sync's migration failing), the build
+still ships main - the files match - and a startup run creates the tables in production only. Every
+Republish after that offers to DROP them, with their data. So here production's schema comes from one
+place only, the publish, and a missed step shows instead as `store.missing_columns` in /health and a
+`store_schema` error on /check, with nothing to lose. The build's `--schema` guard (scripts/build.sh)
+still holds main's migrations back until the workspace has them.
+
+The ledger is not the schema (metrics, 2026-09-03): after the ledger pass, the live columns are checked
+against what the writes name (`app.store.CHECKED_TABLES`), every file is re-run once if they disagree
+(each is written to be re-runnable), and what is still missing is reported. The whole run is one
+transaction under a transaction-scoped advisory lock: it applies entirely or not at all, and a pooled
+connection cannot keep the lock (or a SET) past it.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 LEDGER = "schema_migrations"
-# pg_advisory_lock key for a migration run: a fixed number, this service's own.
+# pg_advisory_xact_lock key for a migration run: a fixed number, this service's own.
 MIGRATE_LOCK_ID = 7_301_000_001
 MIGRATE_LOCK_TIMEOUT = "60s"
 CONNECT_TIMEOUT_S = 10
@@ -56,19 +61,17 @@ def _missing(cur) -> list:
 
 
 def apply_migrations(url: str) -> dict:
-    """Apply the pending files, verify, repair once. Returns {"applied", "skipped", "repaired",
-    "missing"}; raises only on a connection or SQL failure."""
+    """Apply the pending files, verify, repair once, in one transaction. Returns {"applied", "skipped",
+    "repaired", "missing"}; raises on a connection or SQL failure (and then nothing was applied)."""
     import psycopg
 
     applied: list = []
     skipped: list = []
     repaired: list = []
     files = sorted(MIGRATIONS_DIR.glob("*.sql"))
-    # The lock is the session's: closing the connection at the end of the block releases it, also
-    # when a statement failed. Waiting longer than MIGRATE_LOCK_TIMEOUT raises, and the startup says so.
-    with psycopg.connect(url, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
-        cur.execute(f"SET lock_timeout = '{MIGRATE_LOCK_TIMEOUT}'")
-        cur.execute("SELECT pg_advisory_lock(%s)", (MIGRATE_LOCK_ID,))
+    with psycopg.connect(url, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute(f"SET LOCAL lock_timeout = '{MIGRATE_LOCK_TIMEOUT}'")
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATE_LOCK_ID,))
         cur.execute(
             f"CREATE TABLE IF NOT EXISTS {LEDGER} ("
             "filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
@@ -90,19 +93,22 @@ def apply_migrations(url: str) -> dict:
     return {"applied": applied, "skipped": skipped, "repaired": repaired, "missing": missing}
 
 
-def schema_state(url: str) -> dict:
-    """For /health: which tables are there, what the writes need and the database lacks, and which
-    files the ledger records. Reads only. Raises on a connection failure."""
-    import psycopg
+def schema_state(cur) -> dict:
+    """For /health, on the caller's cursor: which tables are there, what the writes need and the
+    database lacks, and which files the ledger records. Reads only."""
+    tables = {t: ("present" if _live_columns(cur, t) else "absent") for t in (*checked_tables(), LEDGER)}
+    recorded: list = []
+    if tables[LEDGER] == "present":
+        cur.execute(f"SELECT filename FROM {LEDGER} ORDER BY filename")
+        recorded = [row[0] for row in cur.fetchall()]
+    return {"tables": tables, "missing_columns": _missing(cur), "migrations": recorded}
 
-    with psycopg.connect(url, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
-        tables = {t: ("present" if _live_columns(cur, t) else "absent") for t in (*checked_tables(), LEDGER)}
-        recorded: list = []
-        if tables[LEDGER] == "present":
-            cur.execute(f"SELECT filename FROM {LEDGER} ORDER BY filename")
-            recorded = [row[0] for row in cur.fetchall()]
-        missing = _missing(cur)
-    return {"tables": tables, "missing_columns": missing, "migrations": recorded}
+
+def _failure(exc: BaseException) -> str:
+    """A database error as its class and SQLSTATE, never its text: psycopg's message can carry the host,
+    the user and, for a malformed URL, the password itself (review 19.11)."""
+    code = getattr(exc, "sqlstate", None)
+    return type(exc).__name__ + (f" (SQLSTATE {code})" if code else "")
 
 
 def _target(url: str) -> str:
@@ -117,7 +123,7 @@ def _target(url: str) -> str:
             host = conn.info.host or "?"
         return f"{host}/{db}"
     except Exception as exc:  # noqa: BLE001 - the identity is a courtesy, not the job
-        return f"unknown ({type(exc).__name__})"
+        return f"unknown ({_failure(exc)})"
 
 
 def main() -> int:
@@ -126,9 +132,13 @@ def main() -> int:
         print("DATABASE_URL is not set: create the Repl's Postgres first (the Database tool)", file=sys.stderr)
         return 2
     print(f"database: {_target(url)}")
-    print("note: this is the database THIS SHELL sees. The deployment has its own and")
-    print("      migrates it itself on startup, after a Republish.")
-    result = apply_migrations(url)
+    print("note: this is the database THIS SHELL sees (development, in the workspace). The deployment's")
+    print("      schema follows it at the next Republish, whose SQL you read: CREATE / ADD only.")
+    try:
+        result = apply_migrations(url)
+    except Exception as exc:  # noqa: BLE001 - said in one safe line, nothing applied
+        print(f"FAILED: {_failure(exc)}. Nothing was applied (one transaction).", file=sys.stderr)
+        return 1
     for name in result["skipped"]:
         print(f"skip     {name} (recorded)")
     for name in result["applied"]:

@@ -331,6 +331,7 @@ def test_a_renewal_by_another_instance_is_taken_not_repeated(fake, clock):
     c = stored_client(fake, clock, store)
     c.companies()
     assert fake.issued == 1
+    clock.t += 5  # the other instance renewed after this one opened its session
     store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="OTHERINSTANCE-77", shape="text", issued_at=clock.t)
     fake.valid_sessions = {"OTHERINSTANCE-77"}
     assert c.companies() == fake.companies
@@ -381,3 +382,76 @@ def test_no_repr_carries_the_key_or_the_session(fake, clock):
     c.companies()
     text = repr(c) + repr(c.session())
     assert KEY not in text and SESSION not in text
+
+
+
+def test_an_older_saved_session_is_not_a_renewal(fake, clock):
+    """The row may hold a session older than the one just refused (a save that failed): not taken."""
+    store = FakeStore()
+    c = stored_client(fake, clock, store)
+    c.companies()
+    store.rows[("lb19.wizcloud.co.il", "wizdb2245n4")] = Saved(token="OLDER-SESSION-1", shape="text", issued_at=clock.t - 60)
+    fake.valid_sessions = {"NEWSESSION-1234567890"}
+    fake.session_body = "NEWSESSION-1234567890"
+    assert c.companies() == fake.companies
+    assert fake.issued == 2 and c.session().token == "NEWSESSION-1234567890"
+
+
+@pytest.mark.parametrize("server", [
+    "lb19.wizcloud.co.il/invApi/delDocument#",
+    "lb19.wizcloud.co.il/invApi/delDocument?x=",
+    "lb19.wizcloud.co.il.evil.example",
+    "evil.example/lb19.wizcloud.co.il",
+    "LB19.wizcloud.co.il",
+])
+def test_the_client_refuses_a_server_that_is_not_a_balancer(fake, clock, server):
+    """The review's trick (19.11): a server string that turns getDoc into delDocument. The client checks
+    the host itself, before any request, and whatever config.load() let through."""
+    c = WizClient(server, "wizdb2245n4", KEY, transport=fake.transport(), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.get_doc(626)
+    assert err.value.kind == "config_missing"
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("key", ["KEY?x=/wizdb2245n5", "KEY#frag", "KEY/../x", "KEY WITH SPACE"])
+def test_a_key_that_would_reshape_the_url_is_refused_before_any_request(fake, clock, key):
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", key, transport=fake.transport(), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.companies()
+    assert err.value.kind == "config_missing" and key not in str(err.value)
+    assert fake.requests == []
+
+
+def test_a_partial_echo_of_the_session_is_masked(clock):
+    """A 2xx body that is not JSON and echoes the session, whole or cut: no 12 characters of it survive."""
+    partial = SESSION[:20]
+
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        return httpx.Response(200, text=f"<html>bad {SESSION} and {partial}xyz and {KEY[3:18]}</html>" + "." * 300)
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.companies()
+    text = str(err.value) + str(err.value.as_dict())
+    for i in range(len(SESSION) - 11):
+        assert SESSION[i:i + 12] not in text
+    for i in range(len(KEY) - 11):
+        assert KEY[i:i + 12] not in text
+    assert "<html>bad ***" in err.value.message
+
+
+def test_create_session_has_its_own_tighter_timeout(clock):
+    seen = {}
+
+    def handler(request):
+        seen[request.url.path.split("/")[1]] = request.extensions["timeout"]
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        return httpx.Response(200, json=[])
+
+    WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock).companies()
+    assert seen["createSession"] == {"connect": 5.0, "read": 10.0, "write": 10.0, "pool": 10.0}
+    assert seen["CompanyListToTokenApi"]["read"] == 30.0

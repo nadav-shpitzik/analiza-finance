@@ -2,6 +2,7 @@ import json
 import shutil
 from pathlib import Path
 
+import httpx
 import psycopg
 from fastapi.testclient import TestClient
 
@@ -192,18 +193,38 @@ def test_a_broken_store_is_said_on_check_and_health_without_the_url(app_client, 
     session = r.json()["session"]
     assert (session["store"], session["saved"], session["store_error"]["kind"]) == ("postgres", False, "store_unreachable")
     h = app_client.get("/health")
-    assert h.json()["store"] == {"configured": True, "ok": False, "error": "OperationalError"}
+    store = h.json()["store"]
+    assert (store["configured"], store["ok"], store["error"]) == (True, False, "OperationalError")
     assert h.json()["config"]["database_url_set"] is True
     for text in (r.text, h.text):
         assert "SECRETPW" not in text and "127.0.0.1" not in text
 
 
-def test_startup_without_a_database_says_so(monkeypatch):
+def test_health_reads_the_store_at_most_every_fifteen_seconds(app_client, clock, monkeypatch):
+    """/health is open: a flood must not turn into a connection per hit (review 19.11)."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:SECRETPW@127.0.0.1:1/nothing")
+    reads = []
+    monkeypatch.setattr(main, "_read_store", lambda cfg: reads.append(1) or {
+        "tables": {"wiz_sessions": "present", "schema_migrations": "present"}, "missing_columns": [],
+        "migrations": ["001_wiz_sessions.sql"], "times": {"shape": "text", "issued_at": clock.t - 100, "saved_at": clock.t - 100}})
+    for _ in range(5):
+        body = app_client.get("/health").json()
+    assert len(reads) == 1
+    assert body["store"]["session"]["age_s"] == 100
+    clock.t += 10
+    assert app_client.get("/health").json()["store"]["session"]["age_s"] == 110  # the age moves, the read is reused
+    assert len(reads) == 1
+    clock.t += 6
+    app_client.get("/health")
+    assert len(reads) == 2
+
+
+def test_startup_changes_no_schema_without_a_database(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with TestClient(main.app) as c:
         body = c.get("/health").json()
-    assert body["migrations"] == {"ran": False, "reason": "DATABASE_URL is not set"}
-    main.app.state.migrations = None
+    assert "migrations" not in body
+    assert body["store"]["configured"] is False
     main.app.state.build = None
 
 
@@ -230,13 +251,25 @@ def test_the_build_ships_this_repo_and_guards_the_schema():
 
 
 @needs_pg
-def test_startup_migrates_and_health_shows_the_saved_session_without_it(app_client, fake, clock, monkeypatch):
+def test_the_deployment_never_creates_its_schema_and_says_what_is_missing(app_client, fake, clock, monkeypatch):
+    """Production's schema comes only from a Republish (app/migrate.py). A database that missed the
+    development step shows it in /health and /check, and the read of the books goes on."""
     with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
         conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
     try:
         with TestClient(main.app) as c:
-            assert c.get("/health").json()["migrations"]["applied"] == ["001_wiz_sessions.sql"]
+            store = c.get("/health").json()["store"]
+            assert (store["ok"], store["missing_columns"]) == (False, ["wiz_sessions"])
+            assert store["tables"] == {"wiz_sessions": "absent", "schema_migrations": "absent"}
+            check = c.get("/check")
+            assert check.status_code == 200
+            assert check.json()["session"]["store_error"] == {"ok": False, "kind": "store_schema", "detail": "42P01"}
+            from app.migrate import apply_migrations
+
+            apply_migrations(TEST_DATABASE_URL)  # the Shell step, then (here) the same database
+            clock.t += 61
+            main.app.state.client = None
             assert c.get("/check").json()["session"]["saved"] is True
             clock.t += 30
             h = c.get("/health")
@@ -246,7 +279,6 @@ def test_startup_migrates_and_health_shows_the_saved_session_without_it(app_clie
         assert store["session"]["age_s"] == 30 and store["session"]["shape"] == "text"
         assert SESSION not in h.text and KEY not in h.text
     finally:
-        main.app.state.migrations = None
         main.app.state.build = None
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
             conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
@@ -267,11 +299,40 @@ def test_the_session_test_reads_only_and_prints_no_session(fake):
             fake.valid_sessions = {fake.session_body}  # each new session ends the one before
         return fake.handler(request)
 
-    import httpx
-
     revoked = session_test(cfg, transport=httpx.MockTransport(handler))
     assert (revoked["first"], revoked["second"], revoked["first_after_second"]) == ("ok", "ok", "session_rejected")
     assert revoked["verdict"] == "revoked: a new session ends the previous one"
     assert "SESSION-0001" not in dump(revoked) and "SESSION-002" not in dump(revoked)
     paths = {r.url.path.split("/")[1] for r in fake.requests}
     assert paths <= {"createSession", "CompanyListToTokenApi"}
+
+
+def test_a_network_blip_is_not_called_a_revocation(fake):
+    """Review 19.11: any failure of the third read used to read as "revoked"."""
+    from scripts.live_check import session_test
+
+    reads = {"n": 0}
+
+    def handler(request):
+        if request.url.path.startswith("/CompanyListToTokenApi/"):
+            reads["n"] += 1
+            if reads["n"] == 3:
+                raise httpx.ConnectError("blip", request=request)
+        return fake.handler(request)
+
+    tokens = iter(["FIRST-SESSION-0001", "SECOND-SESSION-002"])
+
+    def two_strings(request):
+        if request.url.path.startswith("/createSession/"):
+            fake.session_body = next(tokens)
+            fake.valid_sessions.add(fake.session_body)
+        return handler(request)
+
+    out = session_test(config.load({"WIZ_PRIVATE_KEY": KEY}), transport=httpx.MockTransport(two_strings))
+    assert out["first_after_second"] == "network"
+    assert out["verdict"] == "inconclusive: the third read failed with network"
+
+
+def test_a_key_that_would_reshape_the_url_is_a_config_problem(monkeypatch):
+    assert config.load({"WIZ_PRIVATE_KEY": "ABC?x=/wizdb2245n5"}).problems
+    assert config.load({"WIZ_PRIVATE_KEY": "ABC-def_123+="}).ok

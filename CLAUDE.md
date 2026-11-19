@@ -37,7 +37,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
    four billing columns on Accounts; the charge boards are written by the person in the browser, or by
    a session through the monday connector after Nadav's go in chat.
 8. **A Postgres schema change goes to the development database first, from the Shell**, then a
-   Republish whose SQL is read (the norm in the docs repo's CLAUDE.md).
+   Republish whose SQL is read (the norm in the docs repo's CLAUDE.md). **The deployment never changes its own
+   schema** - no migration at startup, no `CREATE ... IF NOT EXISTS` at first use - so production's schema comes
+   only from the publish and can never run ahead of development (`app/migrate.py` says why; review 19.11).
 
 ## Working here
 
@@ -61,4 +63,6 @@ the deployment's `/health` and `/check` (0301 says where it stands).
      Expect `Now at: <main sha7>`, then `database: helium/...` (development), and last the `ok:` line.
   3. **Republish in the Replit UI**, reading the SQL it shows: only `CREATE` / `ADD`; any `DROP` is Cancel.
      A publish from the chat refuses any schema difference.
-  4. `/health`: `build.sha` is main's, `migrations` lists the file, `store.missing_columns` is `[]`.
+  4. `/health`: `build.sha` is main's, the new table is `"present"` in `store.tables`, and `store.missing_columns`
+     is `[]` (read at most every 15 s). In production `store.migrations` stays empty: the publish copies the schema,
+     not the ledger's rows.

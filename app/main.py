@@ -2,8 +2,8 @@
 
 Today (slice S0 of backlog 0301) it proves the connection and keeps it:
 - GET /health - no call to WizCloud. The build (GitHub main's commit, scripts/deploy_source.py), the
-                config (never a secret), the startup migrations, the store and the saved session's age,
-                and the last check.
+                config (never a secret), the store (its schema as the publish left it, and the saved
+                session's age; read at most every STORE_TTL_S), and the last check.
 - GET /check  - one live, read-only round: the session (reused from memory or from the store, opened
                 only when neither holds one), the companies the token reaches, the webhooks already
                 registered. Cached 60 s, so a public link cannot hammer the vendor. 200 when everything
@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import logging
 import re
 import threading
 import time
@@ -37,7 +36,6 @@ SERVICE = "analiza-finance"
 CHECK_TTL_S = 60
 STARTED = time.time()
 ROOT = Path(__file__).resolve().parent.parent
-logger = logging.getLogger("analiza_finance")
 
 
 def deploy_build(root: Path = ROOT) -> dict:
@@ -52,24 +50,10 @@ def deploy_build(root: Path = ROOT) -> dict:
         return {"source": None, "sha": None, "reason": f"scripts/deploy_source.py unreadable: {type(exc).__name__}"}
 
 
-def startup_migrations(cfg: config.Config) -> dict:
-    """migrations/ on the database this instance uses (production, in the deployment). Best effort
-    with a trace: a failure is its class name in /health, never the URL, and the service still starts."""
-    if not cfg.database_url:
-        return {"ran": False, "reason": "DATABASE_URL is not set"}
-    try:
-        from .migrate import apply_migrations
-
-        return {"ran": True, **apply_migrations(cfg.database_url), "error": None}
-    except Exception as exc:  # noqa: BLE001 - class name only, never the URL
-        logger.error("startup migration failed (%s)", type(exc).__name__)
-        return {"ran": True, "error": type(exc).__name__}
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # No migration here, by design: production's schema comes only from a Republish (app/migrate.py).
     app.state.build = deploy_build()
-    app.state.migrations = startup_migrations(config.load())
     yield
 
 
@@ -80,11 +64,13 @@ app.state.store_factory = None  # tests put a fake here; None is Postgres when D
 app.state.client = None
 app.state.client_ident = None
 app.state.build = None
-app.state.migrations = None
 
+STORE_TTL_S = 15  # /health is open: at most one database connection per this many seconds, however often it is hit
 _lock = threading.Lock()
 _client_lock = threading.Lock()
+_store_lock = threading.Lock()
 _cache: dict = {"at": 0.0, "result": None}
+_store_cache: dict = {"at": 0.0, "key": None, "value": None}
 
 
 def _now_iso(ts: Optional[float] = None) -> str:
@@ -140,7 +126,6 @@ def health(request: Request) -> dict:
             "database_url_set": bool(cfg.database_url),
             "problems": list(cfg.problems),
         },
-        "migrations": state.migrations if state.migrations is not None else {"ran": False, "reason": "no startup in this process"},
         "store": store_health(cfg, state.clock()),
         "last_check": None
         if last is None
@@ -148,22 +133,49 @@ def health(request: Request) -> dict:
     }
 
 
+def _read_store(cfg: config.Config) -> dict:
+    """One connection: the schema as it stands and the saved session's times. Raises on failure."""
+    import psycopg
+
+    from .migrate import CONNECT_TIMEOUT_S, schema_state
+    from .store import TABLE, saved_times
+
+    with psycopg.connect(cfg.database_url, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S) as conn, conn.cursor() as cur:
+        state = schema_state(cur)
+        times = saved_times(cur, cfg.server, cfg.db) if state["tables"].get(TABLE) == "present" and cfg.db else None
+    return {**state, "times": times}
+
+
 def store_health(cfg: config.Config, now: float) -> dict:
     """The tables, what the writes need and the database lacks, and the saved session's age. Never
-    the session, never the URL; a failure is a kind or a class name."""
+    the session, never the URL; a failure is a class name. Read at most once every STORE_TTL_S."""
     if not cfg.database_url:
         return {"configured": False, "reason": "DATABASE_URL is not set: the session is kept in memory only"}
-    try:
-        from .migrate import schema_state
-        from .store import TABLE, describe_saved
+    from .store import describe
 
-        state = schema_state(cfg.database_url)
-        session = None
-        if state["tables"].get(TABLE) == "present" and cfg.db:
-            session = describe_saved(cfg.database_url, cfg.server, cfg.db, now)
-    except Exception as exc:  # noqa: BLE001 - said, never raised past /health
-        return {"configured": True, "ok": False, "error": getattr(exc, "kind", None) or type(exc).__name__}
-    return {"configured": True, "ok": not state["missing_columns"], **state, "session": session}
+    key = (hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), cfg.server, cfg.db)
+    with _store_lock:
+        if _store_cache["key"] == key and _store_cache["value"] is not None and 0 <= now - _store_cache["at"] < STORE_TTL_S:
+            value = _store_cache["value"]
+        else:
+            try:
+                value = {"read": _read_store(cfg)}
+            except Exception as exc:  # noqa: BLE001 - said, never raised past /health, never the text
+                value = {"error": type(exc).__name__}
+            _store_cache.update(at=now, key=key, value=value)
+        read_at = _store_cache["at"]
+    if "error" in value:
+        return {"configured": True, "ok": False, "error": value["error"], "read_at": _now_iso(read_at)}
+    read = value["read"]
+    return {
+        "configured": True,
+        "ok": not read["missing_columns"],
+        "tables": read["tables"],
+        "missing_columns": read["missing_columns"],
+        "migrations": read["migrations"],
+        "session": describe(read["times"], now),
+        "read_at": _now_iso(read_at),
+    }
 
 
 @app.get("/check")
