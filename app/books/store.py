@@ -38,18 +38,19 @@ _QUEUE = ("INSERT INTO books_retry (company, stock_id, kind, attempts) SELECT %s
           "ON CONFLICT (company, stock_id) DO NOTHING")
 
 
-# A held document read again unchanged, in one statement: its last read moves and its books_retry row goes - what the
-# full save does for it, in one round trip instead of six (22.11 on the deployment: about 0.24 s a save, more than the
-# read, so the steady tick's fixed phases filled the box and the weekly sweep never began). Only a row that is neither
-# missing nor gone and has the same hash; and its lock is taken NOWAIT, so a row held elsewhere falls to the full save,
-# which waits within its statement timeout - this one has none (autocommit, no SET LOCAL).
+# A held document read again unchanged, in one message: its last read moves and its books_retry row goes - what the full
+# save does for it - in one round trip instead of six (22.11 on the deployment: about 0.24 s a save, more than the read,
+# so the steady tick's fixed phases filled the box and the weekly sweep never began). BEGIN, SET LOCAL statement_timeout,
+# the statement and COMMIT travel as one Query, so every wait in it - a row or a table lock - ends at the same timeout
+# as the full save's (adversarial review 22.11: NOWAIT alone left the retry row's lock and the table locks unbounded).
+# Only a row that is neither missing nor gone and has the same hash; anything else matches no row and the full save
+# runs. The values go in as literals: a Query with parameters cannot carry four statements.
 _UNCHANGED = (
-    "WITH hit AS (SELECT stock_id FROM books_documents WHERE company = %(company)s AND stock_id = %(stock_id)s "
-    "AND content_hash = %(hash)s AND gone_at IS NULL AND missing_since IS NULL FOR UPDATE NOWAIT), "
-    "upd AS (UPDATE books_documents d SET last_read_at = now() FROM hit "
-    "WHERE d.company = %(company)s AND d.stock_id = hit.stock_id RETURNING d.stock_id), "
-    "cleared AS (DELETE FROM books_retry r USING upd WHERE r.company = %(company)s AND r.stock_id = upd.stock_id) "
-    "SELECT count(*) FROM upd")
+    "BEGIN; SET LOCAL statement_timeout = {timeout}; "
+    "WITH upd AS (UPDATE books_documents SET last_read_at = now() WHERE company = {company} AND stock_id = {stock_id} "
+    "AND content_hash = {hash} AND gone_at IS NULL AND missing_since IS NULL RETURNING stock_id), "
+    "cleared AS (DELETE FROM books_retry r USING upd WHERE r.company = {company} AND r.stock_id = upd.stock_id) "
+    "SELECT count(*) FROM upd; COMMIT")
 
 
 class BooksStoreError(Exception):
@@ -215,7 +216,7 @@ class BooksStore:
         """'added', 'changed' or 'unchanged'. One transaction: the document, its lines, the event, its own
         books_retry row cleared, and `jumped` - the ids below it that the run has not read - put in books_retry,
         so no crash between the two leaves them unread for good (third review 22.11, finding 4). A held document
-        read again unchanged is one statement first (`_UNCHANGED`); `held=False` - a document the run does not hold -
+        read again unchanged is one message first (`_UNCHANGED`); `held=False` - a document the run does not hold -
         skips that try, which would only cost a round trip."""
         jumped = list(jumped)
         if held and not jumped and self._unchanged(company, doc):
@@ -284,16 +285,29 @@ class BooksStore:
             return "added" if row is None else "changed"
 
     def _unchanged(self, company: str, doc: dict) -> bool:
-        """True when the one statement found the row unchanged and did the save; False sends the full save."""
-        import psycopg.errors
+        """True when the one message found the row unchanged and saved it; False sends the full save. An error -
+        the timeout included - is the full save's own error (BooksStoreError with the SQLSTATE), after the block it
+        left open is rolled back."""
+        from psycopg import pq, sql
 
-        with _guard():
-            try:
-                row = self._conn.execute(
-                    _UNCHANGED, {"company": company, "stock_id": doc["stock_id"], "hash": doc["content_hash"]}).fetchone()
-            except psycopg.errors.LockNotAvailable:
-                return False  # held elsewhere: the full save waits for it, within its statement timeout
-        return bool(row[0])
+        query = sql.SQL(_UNCHANGED).format(
+            timeout=sql.Literal(STATEMENT_TIMEOUT), company=sql.Literal(company), stock_id=sql.Literal(doc["stock_id"]),
+            hash=sql.Literal(doc["content_hash"]))
+        try:
+            with _guard():
+                cur = self._conn.execute(query)
+                found = 0
+                while True:
+                    if cur.description is not None:  # the SELECT; BEGIN, SET and COMMIT carry no columns
+                        found = cur.fetchone()[0]
+                    if not cur.nextset():
+                        break
+        except BooksStoreError:
+            if self._conn.info.transaction_status != pq.TransactionStatus.IDLE:
+                with _guard():
+                    self._conn.rollback()  # the error stopped the message before its COMMIT
+            raise
+        return bool(found)
 
     # ---- the tick's lists (B2) ---------------------------------------------------------------------
     def held_status(self, company: str) -> dict:

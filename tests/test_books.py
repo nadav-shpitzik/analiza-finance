@@ -1206,8 +1206,21 @@ def saved_twice(s, sid=7, **edits):
     return run_id, doc, lines
 
 
+def round_trips(conn, fn, path):
+    """What `fn` sends on `conn` that waits for an answer - Query and Sync messages - read from libpq's own trace."""
+    with open(path, "w") as f:
+        conn.pgconn.trace(f.fileno())
+        conn.pgconn.set_trace_flags(psycopg.pq.Trace.SUPPRESS_TIMESTAMPS | psycopg.pq.Trace.REGRESS_MODE)
+        try:
+            out = fn()
+        finally:
+            conn.pgconn.untrace()
+    sent = [line.split("\t")[2] for line in open(path).read().splitlines() if line.startswith("F\t")]
+    return out, sum(1 for m in sent if m in ("Query", "Sync"))
+
+
 @needs_pg
-def test_an_unchanged_document_is_one_statement_that_does_what_the_full_save_did(pg):
+def test_an_unchanged_document_is_one_round_trip_that_does_what_the_full_save_did(pg, tmp_path):
     """On the deployment a save of an unchanged document was six round trips to the database (BEGIN, SET LOCAL,
     DELETE, SELECT FOR UPDATE, UPDATE, COMMIT), about 0.24 s - more than the read itself - so the steady tick's fixed
     phases filled the box and the weekly sweep never began (22.11, probed 161, sweep null)."""
@@ -1217,17 +1230,16 @@ def test_an_unchanged_document_is_one_statement_that_does_what_the_full_save_did
         s.mark_failed(DEMO, 7, "http_error")  # it failed once before: the read that works clears it
         with psycopg.connect(pg) as conn:
             conn.execute("UPDATE books_documents SET last_read_at = now() - interval '1 day'")
-        counting = Counting(s._conn)
-        s._conn = counting
-        try:
-            assert s.save(DEMO, run_id, doc, lines) == "unchanged"
-        finally:
-            s._conn = counting.conn
-    assert (counting.statements, counting.transactions) == (1, 0)
+        result, trips = round_trips(s._conn, lambda: s.save(DEMO, run_id, doc, lines), tmp_path / "trace")
+        assert result == "unchanged" and trips == 1
+        changed, lines2, _ = document_rows(json.loads(json.dumps(document(7, 50007, total=700.0)), parse_float=Decimal))
+        result, trips = round_trips(s._conn, lambda: s.save(DEMO, run_id, changed, lines2), tmp_path / "trace")
+        assert result == "changed" and trips > 1  # an edit takes the full save, as before
     with psycopg.connect(pg) as conn:
         assert conn.execute("SELECT extract(epoch FROM now() - last_read_at) < 60 FROM books_documents").fetchone()[0]
         assert conn.execute("SELECT count(*) FROM books_retry").fetchone()[0] == 0
-        assert [e[0] for e in conn.execute("SELECT kind FROM books_document_events").fetchall()] == ["first_seen"]
+        assert [e[0] for e in conn.execute("SELECT kind FROM books_document_events ORDER BY event_id")] == [
+            "first_seen", "changed"]
 
 
 @needs_pg
@@ -1240,7 +1252,8 @@ def test_a_missing_or_gone_document_read_again_unchanged_still_takes_the_full_sa
         with psycopg.connect(pg) as conn:
             conn.execute("UPDATE books_documents SET missing_since = now(), missing_seen_at = now()")
         assert s.save(DEMO, run_id, doc, lines) == "unchanged"
-        with psycopg.connect(pg) as conn:
+        with psycopg.connect(pg) as conn:  # checked before the gone half, which would clear it too (review 22.11)
+            assert conn.execute("SELECT missing_since, missing_seen_at FROM books_documents").fetchone() == (None, None)
             conn.execute("UPDATE books_documents SET gone_at = now()")
         assert s.save(DEMO, run_id, doc, lines) == "unchanged"
     with psycopg.connect(pg) as conn:
@@ -1250,27 +1263,57 @@ def test_a_missing_or_gone_document_read_again_unchanged_still_takes_the_full_sa
 
 
 @needs_pg
-def test_an_unchanged_document_whose_row_is_held_does_not_wait_outside_the_timeout(pg):
-    """The one statement takes its row's lock with NOWAIT: a row held elsewhere falls to the full save, which waits
-    within its statement timeout, so no lock can hold the box with no bound."""
+@pytest.mark.parametrize("lock", [
+    "SELECT 1 FROM books_documents WHERE stock_id = 7 FOR UPDATE",
+    "SELECT 1 FROM books_retry WHERE stock_id = 7 FOR UPDATE",
+    "LOCK TABLE books_documents IN SHARE MODE",
+])
+def test_an_unchanged_save_waits_for_a_lock_only_as_long_as_the_full_save_did(pg, monkeypatch, lock):
+    """Adversarial review 22.11: with NOWAIT on the document's row only, a held retry row or a table lock (a
+    CREATE INDEX) held the one statement with no bound. The message carries the full save's SET LOCAL timeout: a lock
+    let go within it is waited for, one held past it is the same 57014 the full save gave, and the connection works
+    after."""
     import threading
+    import time
 
+    monkeypatch.setattr(books_store, "STATEMENT_TIMEOUT", "1s")
     store = BooksStore(pg)
     with store.session(DEMO) as s:
         run_id, doc, lines = saved_twice(s)
-        holder = psycopg.connect(pg)
-        holder.execute("SELECT 1 FROM books_documents WHERE stock_id = 7 FOR UPDATE")
-        release = threading.Timer(0.5, holder.rollback)
-        release.start()
+        for hold_s, expect in ((0.4, "unchanged"), (4.0, "57014")):
+            s.mark_failed(DEMO, 7, "http_error")  # a retry row to hold: the save that works deletes it
+            holder = psycopg.connect(pg)
+            holder.execute(lock)
+            release = threading.Timer(hold_s, holder.rollback)
+            release.start()
+            started = time.monotonic()
+            try:
+                outcome = s.save(DEMO, run_id, doc, lines)
+            except books_store.BooksStoreError as exc:
+                outcome = exc.detail
+            took = time.monotonic() - started
+            release.join()
+            holder.close()
+            assert outcome == expect and took < 2.5, (outcome, round(took, 2))
+        assert s.save(DEMO, run_id, doc, lines) == "unchanged"  # the block the timeout left open was rolled back
+
+
+@needs_pg
+def test_a_steady_tick_saves_its_unchanged_documents_in_one_message_each(pg, clock, monkeypatch):
+    """Review 22.11: every test of the one message called the store itself, so a tick that never used it (held=False
+    passed from _found) kept every test green while the deployment stayed six round trips a document."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 110)], (110, 0)))
+    tick(vendor, pg, clock)
+    with BooksStore(pg).session(DEMO) as s:
         counting = Counting(s._conn)
         s._conn = counting
         try:
-            assert s.save(DEMO, run_id, doc, lines) == "unchanged"
+            steady = sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=600, tick=True)
         finally:
             s._conn = counting.conn
-            release.join()
-            holder.close()
-    assert counting.transactions == 1  # the one statement gave way at once; the full save waited for the lock
+    assert steady["unchanged"] == 11 and steady["added"] == 0 and steady["reasons"] == []
+    assert counting.transactions == 0  # no document took the full save
 
 
 @needs_pg
