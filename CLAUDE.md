@@ -54,12 +54,14 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   fake transport; a live local run takes a placeholder key and proves only the error path.
 - Live check without Replit: dispatch `live-check.yml` (inputs `company`, `doc_ids`, `session_test`), read the job
   log. It prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
-- **The books copy (B1):** `app/books/` (clean, parse, store, sync). A run is `POST /api/books/tick` with
-  `Authorization: Bearer <BOOKS_SYNC_KEY>` (Replit Secret; Make's keychain in B2); the detail is
-  `GET /api/books/status` behind the same key. The public `/health` says only whether the last run worked, how
-  many numbers are missing and whether the key is `ok` - no count and no number of documents (Nadav 19.11: the
-  deployment is public). `books-check.yml` (inputs `company`, `box_s`) runs two copies into a throwaway Postgres
-  inside the job and prints counts only (`scripts/books_check.py`): series, what the cleaning cost, id gaps.
+- **The books copy (B1) and its tick (B2):** `app/books/` (clean, parse, store, sync). A tick is `POST /api/books/tick`
+  with `Authorization: Bearer <BOOKS_SYNC_KEY>` (Replit Secret; Make's keychain), boxed at 60 s from the request's
+  arrival, always 200 with `ok`, `reasons`, `alert` and a Hebrew `message` for Discord; the phases are in
+  `app/books/sync.py`'s docstring. The detail is `GET /api/books/status` behind the same key. The public `/health`
+  says only whether the last run worked and why not, how many numbers are missing and whether the key is `ok` - no
+  count and no number of documents (Nadav 19.11: the deployment is public). `books-check.yml` (inputs `company`,
+  `box_s`) runs a copy, a full re-read and a steady tick into a throwaway Postgres inside the job and prints counts
+  only (`scripts/books_check.py`): series, what the cleaning cost, id gaps, what a tick reads in its box.
   **Demo holds no documents** (every id probed, 22.11). The cleaning judges a number whole (`app/books/clean.py`'s
   docstring is the rule); a new text field goes through it, and a new number shape comes with its test.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
