@@ -1,0 +1,53 @@
+# Manual, read-only check of the books copy (Analiza-Monday backlog 0301, B1's acceptance). It copies the
+# documents of one company into a throwaway Postgres that lives only inside this job, twice, and prints
+# counts and series only (scripts/books_check.py). Never runs on push. The token is the repository
+# secret WIZ_PRIVATE_KEY, as for live-check.
+name: books-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "demo (wizdb2245n4) or analiza (wizdb2245n5)"
+        required: true
+        default: "demo"
+        type: choice
+        options: ["demo", "analiza"]
+      box_s:
+        description: "Time box per run, in seconds"
+        required: false
+        default: "2400"
+
+permissions:
+  contents: read
+
+jobs:
+  books:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: books_check
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # the Repl's
+      - run: pip install -q -r requirements.txt
+      - name: books check
+        env:
+          WIZ_PRIVATE_KEY: ${{ secrets.WIZ_PRIVATE_KEY }}
+          WIZ_COMPANY: ${{ inputs.company }}
+          BOX_S: ${{ inputs.box_s }}
+          # a throwaway database inside the job; nothing shared with any deployment
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/books_check
+        run: python scripts/books_check.py
