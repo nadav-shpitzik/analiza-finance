@@ -84,6 +84,9 @@ MISSING_PER_TICK = 20
 GONE_PER_TICK = 5
 SWEEP_EVERY_S = 7 * 24 * 3600
 STUCK_ALERT_S = 24 * 3600
+# Every reason a run can give, in the order the verdict gives them: main says each one in Hebrew (a test holds the two
+# together).
+REASONS = ("wizcloud_failing", "canary", "holes", "missing_valid", "stuck", "sweep_late", "crashed")
 
 
 def _merge(into: dict, add: dict) -> None:
@@ -113,6 +116,7 @@ class _Run:
         self.notes: list = []
         self.seen: dict = {}  # id -> the outcome of its read in this run: no id is read twice
         self.waiting: set = set()  # ids in books_retry, as this run knows them
+        self.sweep_late = False  # the weekly sweep's open pass began more than a week ago
         self.known_failed: set = set()  # ids whose read failed in an earlier run
         self.retry_order: list = []  # the known-failed ids, oldest failure first
         self.pending_jumped: list = []  # ids this run queued as jumped and has not read yet
@@ -204,7 +208,7 @@ class _Run:
         floor = self.high if self.high is not None else self.base - 1
         gap = [x for x in range(floor + 1, sid) if x not in self.seen and x not in self.waiting]
         try:
-            result = self.store.save(self.company, self.run_id, doc, lines, jumped=gap)
+            result = self.store.save(self.company, self.run_id, doc, lines, jumped=gap, held=sid in self.held)
         except BooksStoreError as exc:
             self.notes.append(f"the database refused a document ({exc.detail})")
             return self._fail(sid, "store_refused")
@@ -363,7 +367,10 @@ class _Run:
 
     def weekly_sweep(self) -> None:
         """Every id from the first to the high-water mark, from the saved position, in what is left of the box. A pass
-        that ended waits a week from its start, whatever new documents came meanwhile (the frontier reads those)."""
+        that ended waits a week from its start, whatever new documents came meanwhile (the frontier reads those). It
+        runs even when the box is spent: a pass then begins with no read, so a sweep that never gets time grows late
+        and says so (22.11 on the deployment: the box closed before this phase in every tick, no row was written, and
+        nothing could tell that the sweep never ran)."""
         if self.high is None:
             return
         state = self.store.sweep_state(self.company)
@@ -383,8 +390,10 @@ class _Run:
             self.summary["swept"] += 1
             sid += 1
         ended = sid > top
-        self.store.save_sweep(self.company, sid, new_pass=new_pass, ended=ended)
+        if new_pass or ended or sid != state["next_id"]:  # a pass that got no read keeps its row as it was
+            self.store.save_sweep(self.company, sid, new_pass=new_pass, ended=ended)
         self.summary["sweep"] = {"next_id": sid, "ended": ended, "new_pass": new_pass}
+        self.sweep_late = not new_pass and not ended and state["pass_age_s"] > SWEEP_EVERY_S
 
     def conclude(self, reached: bool) -> None:
         """complete, and the verdict: ok, reasons, alert."""
@@ -416,6 +425,8 @@ class _Run:
         s["stuck_day"] = self.store.stuck_since(self.company, STUCK_ALERT_S)
         if s["stuck_day"]:
             reasons.append("stuck")
+        if self.sweep_late:
+            reasons.append("sweep_late")
         s["reasons"] = reasons
         s["ok"] = not reasons
         s["alert"] = set(reasons) != set(self.prev_reasons or [])
@@ -451,7 +462,7 @@ class _Run:
             self.sweep(self.store.missing_due(self.company, MISSING_CONFIRM_S, MISSING_PER_TICK), "rechecked")
         if tick and not self.stopped():  # 7. the recent documents, a slice a tick
             self.sweep(self.store.recent_ids(self.company, RECENT_HELD, RECENT_PER_TICK), "recent")
-        if tick and not self.stopped():  # 8. the weekly sweep, in what is left
+        if tick:  # 8. the weekly sweep, in what is left - with nothing left its pass still begins, so it has an age
             self.weekly_sweep()
         self.conclude(reached)
 

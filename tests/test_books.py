@@ -1164,3 +1164,150 @@ def test_an_alert_test_reads_nothing_and_writes_nothing(books_app):
     assert body["email"]["subject"] == "ספרי חשבשבת (demo): בדיקת התראה" and vendor.reads == []
     with psycopg.connect(main.config.load().database_url) as conn:
         assert conn.execute("SELECT count(*) FROM books_sync_runs").fetchone()[0] == 0
+
+
+# ---- the weekly sweep on the deployment (22.11: probed 161, sweep null) ------------------------------------------
+class Counting:
+    """A connection that counts what a save sends: statements and transactions."""
+
+    def __init__(self, conn):
+        self.conn, self.statements, self.transactions = conn, 0, 0
+
+    def execute(self, *a, **k):
+        self.statements += 1
+        return self.conn.execute(*a, **k)
+
+    def transaction(self, *a, **k):
+        self.transactions += 1
+        return self.conn.transaction(*a, **k)
+
+    def cursor(self, *a, **k):
+        outer, cur = self, self.conn.cursor(*a, **k)
+
+        class Cursor:
+            def execute(self, *a, **k):
+                outer.statements += 1
+                return cur.execute(*a, **k)
+
+            def __getattr__(self, name):
+                return getattr(cur, name)
+
+        return Cursor()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
+
+def saved_twice(s, sid=7, **edits):
+    """A document saved, then the same one again on a counting connection: the second save's result and counts."""
+    run_id = s.start_run(DEMO, "test", 1)
+    doc, lines, _ = document_rows(json.loads(json.dumps(document(sid, 50000 + sid, **edits)), parse_float=Decimal))
+    assert s.save(DEMO, run_id, doc, lines) == "added"
+    return run_id, doc, lines
+
+
+@needs_pg
+def test_an_unchanged_document_is_one_statement_that_does_what_the_full_save_did(pg):
+    """On the deployment a save of an unchanged document was six round trips to the database (BEGIN, SET LOCAL,
+    DELETE, SELECT FOR UPDATE, UPDATE, COMMIT), about 0.24 s - more than the read itself - so the steady tick's fixed
+    phases filled the box and the weekly sweep never began (22.11, probed 161, sweep null)."""
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        run_id, doc, lines = saved_twice(s)
+        s.mark_failed(DEMO, 7, "http_error")  # it failed once before: the read that works clears it
+        with psycopg.connect(pg) as conn:
+            conn.execute("UPDATE books_documents SET last_read_at = now() - interval '1 day'")
+        counting = Counting(s._conn)
+        s._conn = counting
+        try:
+            assert s.save(DEMO, run_id, doc, lines) == "unchanged"
+        finally:
+            s._conn = counting.conn
+    assert (counting.statements, counting.transactions) == (1, 0)
+    with psycopg.connect(pg) as conn:
+        assert conn.execute("SELECT extract(epoch FROM now() - last_read_at) < 60 FROM books_documents").fetchone()[0]
+        assert conn.execute("SELECT count(*) FROM books_retry").fetchone()[0] == 0
+        assert [e[0] for e in conn.execute("SELECT kind FROM books_document_events").fetchall()] == ["first_seen"]
+
+
+@needs_pg
+def test_a_missing_or_gone_document_read_again_unchanged_still_takes_the_full_save(pg):
+    """The one statement is only for a row that is neither missing nor gone: those are cleared, and a gone one says
+    it reappeared, in the full save's transaction."""
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        run_id, doc, lines = saved_twice(s)
+        with psycopg.connect(pg) as conn:
+            conn.execute("UPDATE books_documents SET missing_since = now(), missing_seen_at = now()")
+        assert s.save(DEMO, run_id, doc, lines) == "unchanged"
+        with psycopg.connect(pg) as conn:
+            conn.execute("UPDATE books_documents SET gone_at = now()")
+        assert s.save(DEMO, run_id, doc, lines) == "unchanged"
+    with psycopg.connect(pg) as conn:
+        assert conn.execute("SELECT gone_at, missing_since FROM books_documents").fetchone() == (None, None)
+        assert [e[0] for e in conn.execute("SELECT kind FROM books_document_events ORDER BY event_id")] == [
+            "first_seen", "reappeared"]
+
+
+@needs_pg
+def test_an_unchanged_document_whose_row_is_held_does_not_wait_outside_the_timeout(pg):
+    """The one statement takes its row's lock with NOWAIT: a row held elsewhere falls to the full save, which waits
+    within its statement timeout, so no lock can hold the box with no bound."""
+    import threading
+
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        run_id, doc, lines = saved_twice(s)
+        holder = psycopg.connect(pg)
+        holder.execute("SELECT 1 FROM books_documents WHERE stock_id = 7 FOR UPDATE")
+        release = threading.Timer(0.5, holder.rollback)
+        release.start()
+        counting = Counting(s._conn)
+        s._conn = counting
+        try:
+            assert s.save(DEMO, run_id, doc, lines) == "unchanged"
+        finally:
+            s._conn = counting.conn
+            release.join()
+            holder.close()
+    assert counting.transactions == 1  # the one statement gave way at once; the full save waited for the lock
+
+
+@needs_pg
+def test_a_tick_with_no_time_left_for_the_sweep_still_begins_its_pass(pg, clock, monkeypatch):
+    """When the box closed before phase 8 no row was written, so a pass that never began had no age and could never be
+    late (22.11 on the deployment: sweep null after every tick, and no reason said so)."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 140)]))
+    run(vendor, pg, clock)  # the copy alone: no sweep
+    vendor.reads.clear()
+    # one second a read: the canary, 50 misses and 5 probes, then the recent documents until the box closes
+    cut = tick(vendor, pg, clock, box_s=80.0, monotonic=lambda: float(len(vendor.reads)))
+    assert cut["swept"] == 0 and cut["recent"] < 39
+    unread = min(sid for sid in range(100, 140) if sid not in vendor.reads)  # what this tick read counts for the pass
+    assert cut["sweep"] == {"next_id": unread, "ended": False, "new_pass": True}
+    assert sweep_row(pg) == (unread, 0) and cut["reasons"] == []
+
+
+@needs_pg
+def test_a_pass_of_the_sweep_open_for_more_than_a_week_is_a_reason(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 140)]))
+    run(vendor, pg, clock)
+
+    def one_second_a_read():
+        return float(len(vendor.reads))
+
+    begun = tick(vendor, pg, clock, box_s=3.0, monotonic=one_second_a_read)  # the canary and one miss: no time to sweep
+    assert begun["sweep"]["new_pass"] is True and begun["swept"] == 0 and begun["reasons"] == []
+    with psycopg.connect(pg) as conn:
+        conn.execute("UPDATE books_sweep SET pass_started_at = now() - interval '7 days 1 hour'")
+    late = tick(vendor, pg, clock, box_s=3.0, monotonic=one_second_a_read)
+    assert late["reasons"] == ["sweep_late"] and late["ok"] is False and late["alert"] is True
+    assert sync.REASONS == tuple(main.REASON_TEXT) == tuple(main.SUBJECT_TEXT)  # every reason is said in Hebrew
+    done = tick(vendor, pg, clock)  # time enough: the pass ends, and the tick says it is back
+    assert done["sweep"]["ended"] is True and done["reasons"] == [] and done["alert"] is True
+    with psycopg.connect(pg) as conn:
+        conn.execute("UPDATE books_sweep SET pass_started_at = now() - interval '8 days'")
+    again = tick(vendor, pg, clock, box_s=3.0, monotonic=one_second_a_read)
+    assert again["sweep"]["new_pass"] is True and again["reasons"] == []  # an ended pass is never late: one begins

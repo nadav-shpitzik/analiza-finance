@@ -38,6 +38,20 @@ _QUEUE = ("INSERT INTO books_retry (company, stock_id, kind, attempts) SELECT %s
           "ON CONFLICT (company, stock_id) DO NOTHING")
 
 
+# A held document read again unchanged, in one statement: its last read moves and its books_retry row goes - what the
+# full save does for it, in one round trip instead of six (22.11 on the deployment: about 0.24 s a save, more than the
+# read, so the steady tick's fixed phases filled the box and the weekly sweep never began). Only a row that is neither
+# missing nor gone and has the same hash; and its lock is taken NOWAIT, so a row held elsewhere falls to the full save,
+# which waits within its statement timeout - this one has none (autocommit, no SET LOCAL).
+_UNCHANGED = (
+    "WITH hit AS (SELECT stock_id FROM books_documents WHERE company = %(company)s AND stock_id = %(stock_id)s "
+    "AND content_hash = %(hash)s AND gone_at IS NULL AND missing_since IS NULL FOR UPDATE NOWAIT), "
+    "upd AS (UPDATE books_documents d SET last_read_at = now() FROM hit "
+    "WHERE d.company = %(company)s AND d.stock_id = hit.stock_id RETURNING d.stock_id), "
+    "cleared AS (DELETE FROM books_retry r USING upd WHERE r.company = %(company)s AND r.stock_id = upd.stock_id) "
+    "SELECT count(*) FROM upd")
+
+
 class BooksStoreError(Exception):
     def __init__(self, detail: str):
         self.detail = detail
@@ -196,13 +210,18 @@ class BooksStore:
             ).fetchone()[0]
 
     # ---- one document -----------------------------------------------------------------------------
-    def save(self, company: str, run_id: int, doc: dict, lines: list, jumped: Iterable[int] = ()) -> str:
+    def save(self, company: str, run_id: int, doc: dict, lines: list, jumped: Iterable[int] = (),
+             held: bool = True) -> str:
         """'added', 'changed' or 'unchanged'. One transaction: the document, its lines, the event, its own
         books_retry row cleared, and `jumped` - the ids below it that the run has not read - put in books_retry,
-        so no crash between the two leaves them unread for good (third review 22.11, finding 4)."""
+        so no crash between the two leaves them unread for good (third review 22.11, finding 4). A held document
+        read again unchanged is one statement first (`_UNCHANGED`); `held=False` - a document the run does not hold -
+        skips that try, which would only cost a round trip."""
+        jumped = list(jumped)
+        if held and not jumped and self._unchanged(company, doc):
+            return "unchanged"
         cols = ("company",) + DOCUMENT_COLUMNS + ("content_hash", "fields_seen")
         values = [company] + [doc.get(c) for c in DOCUMENT_COLUMNS] + [doc["content_hash"], doc["fields_seen"]]
-        jumped = list(jumped)
         with _guard(), self._conn.transaction():
             cur = self._conn.cursor()
             cur.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
@@ -263,6 +282,18 @@ class BooksStore:
                 (company, doc["stock_id"], run_id, kind, fields),
             )
             return "added" if row is None else "changed"
+
+    def _unchanged(self, company: str, doc: dict) -> bool:
+        """True when the one statement found the row unchanged and did the save; False sends the full save."""
+        import psycopg.errors
+
+        with _guard():
+            try:
+                row = self._conn.execute(
+                    _UNCHANGED, {"company": company, "stock_id": doc["stock_id"], "hash": doc["content_hash"]}).fetchone()
+            except psycopg.errors.LockNotAvailable:
+                return False  # held elsewhere: the full save waits for it, within its statement timeout
+        return bool(row[0])
 
     # ---- the tick's lists (B2) ---------------------------------------------------------------------
     def held_status(self, company: str) -> dict:
