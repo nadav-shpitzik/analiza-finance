@@ -25,9 +25,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from decimal import Decimal  # noqa: E402
+
 from app import config  # noqa: E402
 from app.main import run_check  # noqa: E402
-from app.wizcloud import WizClient, WizError  # noqa: E402
+from app.wizcloud import NOT_FOUND, WizClient, WizError  # noqa: E402
 
 # Fields whose values identify no person. Matched case-insensitively. Everything else is
 # reported by name only.
@@ -102,6 +104,8 @@ def describe(value: Any, depth: int = 4) -> Any:
 
 
 def doc_summary(data: Any) -> dict:
+    if data is NOT_FOUND:  # "Stock not found": an absence, not an error (spec §4.1)
+        return {"found": False}
     doc = _unwrap(data)
     if doc in (None, "", [], {}):
         return {"found": False}
@@ -110,9 +114,9 @@ def doc_summary(data: Any) -> dict:
 
 def _safe(d: dict) -> dict:
     return {
-        str(k): v
+        str(k): (str(v) if isinstance(v, Decimal) else v)  # money arrives as Decimal (app/wizcloud.read_envelope)
         for k, v in d.items()
-        if str(k).lower() in SAFE_FIELDS and (v is None or isinstance(v, (str, int, float, bool)))
+        if str(k).lower() in SAFE_FIELDS and (v is None or isinstance(v, (str, int, float, bool, Decimal)))
     }
 
 
@@ -180,7 +184,7 @@ def main() -> int:
             except WizError as exc:
                 docs[str(stock_id)] = exc.as_dict()
         out["docs"] = docs
-    print(json.dumps(out, ensure_ascii=False, indent=1))
+    print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     return 0 if out["check"].get("ok") else 1
 
 

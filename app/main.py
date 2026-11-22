@@ -15,6 +15,7 @@ and the receiving host. Neither returns the key, a session string or the databas
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib.util
 import json
 import re
@@ -114,6 +115,8 @@ def health(request: Request) -> dict:
     cfg = config.load()
     state = request.app.state
     last = _cache["result"]
+    store = store_health(cfg, state.clock())
+    books = store.pop("books_glance", None)
     return {
         "service": SERVICE,
         "ok": True,
@@ -129,7 +132,8 @@ def health(request: Request) -> dict:
             "database_url_set": bool(cfg.database_url),
             "problems": list(cfg.problems),
         },
-        "store": store_health(cfg, state.clock()),
+        "store": store,
+        "books": {"sync_key_set": bool(cfg.books_sync_key), **(books or {})},
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
@@ -150,7 +154,24 @@ def _read_store(cfg: config.Config) -> dict:
         cur.execute(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'")
         state = schema_state(cur)
         times = saved_times(cur, cfg.server, cfg.db) if state["tables"].get(TABLE) == "present" and cfg.db else None
-    return {**state, "times": times}
+        books = _books_glance(cur, cfg.db) if state["tables"].get("books_sync_runs") == "present" and cfg.db else None
+    return {**state, "times": times, "books": books}
+
+
+def _books_glance(cur, company: str) -> dict:
+    """For the public /health: whether the last run worked and how many numbers are missing - no count of
+    documents and no number (Nadav 19.11: the deployment is public; the detail is behind the sync key)."""
+    from .books.store import summarize_series
+
+    cur.execute(
+        "SELECT finished_at, ok, complete FROM books_sync_runs WHERE company = %s ORDER BY run_id DESC LIMIT 1", (company,)
+    )
+    row = cur.fetchone()
+    cur.execute("SELECT doc_type, doc_number, status FROM books_documents WHERE company = %s AND gone_at IS NULL", (company,))
+    series = summarize_series(cur.fetchall())
+    last = None if row is None else {
+        "finished_at": row[0].isoformat(timespec="seconds") if row[0] else None, "ok": row[1], "complete": row[2]}
+    return {"last_run": last, "holes": sum(x["holes"] for x in series), "series": len(series)}
 
 
 def store_health(cfg: config.Config, now: float) -> dict:
@@ -196,12 +217,77 @@ def store_health(cfg: config.Config, now: float) -> dict:
                 "migrations": read["migrations"],
                 "session": describe(read["times"], now),
                 "read_at": _now_iso(read_at),
+                "books_glance": read.get("books"),
             }
     except Exception as exc:  # noqa: BLE001 - /health never raises
         out = {"configured": True, "ok": False, "error": type(exc).__name__}
     if stale:
         out["stale"] = True
     return out
+
+
+# ---- the books copy (backlog 0301 B1): behind the sync key ----------------------------------------
+
+BOOKS_BOX_S = 45  # Make's window is 300 s and the spec boxes the whole request at 60 (§2.3); B2 tunes it
+
+
+def _sync_key_refusal(request: Request, cfg: config.Config) -> Optional[JSONResponse]:
+    if not cfg.books_sync_key:
+        return JSONResponse({"ok": False, "error": "BOOKS_SYNC_KEY is not set"}, status_code=503)
+    sent = request.headers.get("authorization", "")
+    expected = f"Bearer {cfg.books_sync_key}"
+    if not hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8")):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    if not cfg.database_url:
+        return JSONResponse({"ok": False, "error": "DATABASE_URL is not set"}, status_code=503)
+    if not cfg.ok:
+        return JSONResponse({"ok": False, "error": "config: " + "; ".join(cfg.problems)}, status_code=503)
+    return None
+
+
+def _books_store(cfg: config.Config):
+    from .books.store import BooksStore
+
+    return BooksStore(cfg.database_url)
+
+
+@app.post("/api/books/tick")
+def books_tick(request: Request) -> JSONResponse:
+    """One run of the books copy for the configured company. 200 with ok false on a failure, as Make
+    needs (spec §2.3); skipped when another run of the company holds the lock. Counts only, no values."""
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    from .books.sync import run_once
+
+    state = request.app.state
+    try:
+        with _books_store(cfg).session(cfg.db) as store:
+            if store is None:
+                return JSONResponse({"ok": True, "skipped": True, "reason": "another run of this company is in progress"})
+            summary = run_once(get_client(state, cfg), store, cfg.db, trigger="http", box_s=BOOKS_BOX_S)
+    except Exception as exc:  # noqa: BLE001 - a 200 with the class, never the text; Make reruns a 5xx
+        return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
+    return JSONResponse({"skipped": False, **summary})
+
+
+@app.get("/api/books/status")
+def books_status(request: Request) -> JSONResponse:
+    """The last run and the series - documents held, first and last number, holes - behind the sync key:
+    document numbers and counts are no one's business on a public URL."""
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    try:
+        store = _books_store(cfg)
+        with store.session(cfg.db + ":status") as s:  # its own lock id: reading never waits for a run
+            if s is None:
+                return JSONResponse({"ok": False, "error": "busy"})
+            return JSONResponse({"ok": True, "company": cfg.company, "last_run": s.last_run(cfg.db), "series": s.series(cfg.db)})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
 
 
 @app.get("/check")

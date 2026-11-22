@@ -34,6 +34,8 @@ class Config:
     private_key: str = field(repr=False)
     problems: tuple = ()
     database_url: str = field(default="", repr=False)
+    # The key Make sends to run a tick of the books copy (spec §2.4), in a Make keychain, never inline.
+    books_sync_key: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -62,5 +64,6 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
         private_key=key,
         problems=tuple(problems),
         database_url=(env.get("DATABASE_URL") or "").strip(),
+        books_sync_key=(env.get("BOOKS_SYNC_KEY") or "").strip(),
     )
 

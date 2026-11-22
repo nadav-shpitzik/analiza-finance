@@ -8,7 +8,7 @@ import httpx
 from app import migrate, store
 from app.store import PgSessionStore, StoreError, derive_key, describe, saved_times, seal, unseal
 from app.wizcloud import WizClient
-from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, needs_pg
+from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, all_tables, drop_all, migration_files, needs_pg
 
 SERVER, DB = "lb19.wizcloud.co.il", "wizdb2245n4"
 
@@ -52,31 +52,30 @@ def test_an_unreachable_database_is_a_kind_without_the_url(fake, clock):
 
 @pytest.fixture
 def pg():
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-        conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
+    drop_all(TEST_DATABASE_URL)
     yield TEST_DATABASE_URL
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-        conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
+    drop_all(TEST_DATABASE_URL)
 
 
 @needs_pg
 def test_migrations_apply_once_and_the_ledger_is_checked(pg):
+    files = migration_files()
     first = migrate.apply_migrations(pg)
-    assert first == {"applied": ["001_wiz_sessions.sql"], "skipped": [], "repaired": [], "missing": []}
+    assert first == {"applied": files, "skipped": [], "repaired": [], "missing": []}
     second = migrate.apply_migrations(pg)
-    assert second == {"applied": [], "skipped": ["001_wiz_sessions.sql"], "repaired": [], "missing": []}
+    assert second == {"applied": [], "skipped": files, "repaired": [], "missing": []}
     state = schema_state(pg)
     assert state == {
-        "tables": {"wiz_sessions": "present", "schema_migrations": "present"},
+        "tables": {t: "present" for t in all_tables()},
         "missing_columns": [],
-        "migrations": ["001_wiz_sessions.sql"],
+        "migrations": files,
     }
     # The ledger says 001 ran, the table is gone (a restore, a reset): reported, then repaired.
     with psycopg.connect(pg, autocommit=True) as conn:
         conn.execute("DROP TABLE wiz_sessions")
     assert schema_state(pg)["missing_columns"] == ["wiz_sessions"]
     third = migrate.apply_migrations(pg)
-    assert third["repaired"] == ["001_wiz_sessions.sql"] and third["missing"] == []
+    assert third["repaired"] == files and third["missing"] == []
 
 
 @needs_pg
@@ -208,7 +207,7 @@ def test_a_failed_migration_applies_nothing(pg, tmp_path, monkeypatch):
     monkeypatch.setattr(migrate, "MIGRATIONS_DIR", tmp_path)
     with pytest.raises(psycopg.Error):
         migrate.apply_migrations(pg)
-    assert schema_state(pg)["tables"] == {"wiz_sessions": "absent", "schema_migrations": "absent"}
+    assert schema_state(pg)["tables"] == {t: "absent" for t in all_tables()}
 
 
 def test_the_shell_migration_prints_no_secret(monkeypatch, capsys):
@@ -227,7 +226,8 @@ def test_a_successful_shell_migration_names_the_database_never_the_user(pg, monk
     assert migrate.main() == 0
     out = capsys.readouterr().out
     user = psycopg.conninfo.conninfo_to_dict(pg).get("user") or ""
-    assert out.startswith("database: ") and out.rstrip().endswith("carries every column the writes need")
+    assert out.startswith("database: ") and out.rstrip().endswith("every column the writes need")
+    assert out.strip().splitlines()[-1].startswith("ok: ")
     assert not user or f"{user}@" not in out and f"{user}:" not in out
 
 

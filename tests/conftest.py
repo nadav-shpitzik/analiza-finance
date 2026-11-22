@@ -16,6 +16,26 @@ from app.store import Saved  # noqa: E402
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 needs_pg = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")
 
+
+def all_tables() -> list:
+    """Every table the migrations make, read from the code (app.migrate), plus the ledger."""
+    from app import migrate
+
+    return list(migrate.checked_tables()) + [migrate.LEDGER]
+
+
+def drop_all(url: str) -> None:
+    import psycopg
+
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("DROP TABLE IF EXISTS " + ", ".join(all_tables()))
+
+
+def migration_files() -> list:
+    from app import migrate
+
+    return sorted(p.name for p in migrate.MIGRATIONS_DIR.glob("*.sql"))
+
 KEY = "PRIVATEKEY-0123456789abcdef"  # distinctive, so a leak is easy to grep
 SESSION = "SESSIONTOKEN-fedcba9876543210"
 

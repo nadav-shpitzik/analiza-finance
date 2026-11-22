@@ -30,8 +30,10 @@ import logging
 import re
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from decimal import Decimal
+from typing import Any, Callable, Iterator, Optional
 
 import httpx
 
@@ -88,6 +90,27 @@ def key_problem(key: str) -> Optional[str]:
     if not same:
         return 'has a character a URL path cannot carry as is (such as " < > ` { } | \\ ^)'
     return None
+
+
+
+class _NotFound:
+    """getDoc's answer for an id that holds no document: WizCloud says "Stock not found" in a 500.
+    An absence, not a failure (spec §4.1): it is outside KINDS, and a 502, a timeout or any other
+    error stays a WizError - a failed read, which never changes what the copy believes."""
+
+    def __repr__(self) -> str:
+        return "NOT_FOUND"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+NOT_FOUND = _NotFound()
+
+
+def is_not_found(text: str) -> bool:
+    return "stock not found" in (text or "").lower()
+
 
 # Closed vocabulary for what went wrong. /check reports exactly one of these.
 KINDS = (
@@ -153,6 +176,7 @@ class WizClient:
     store: Optional[Any] = field(default=None, repr=False)
     _session: Optional[Session] = field(default=None, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _local: threading.local = field(default_factory=threading.local, init=False, repr=False)
     last_session_shape: Optional[str] = field(default=None, init=False)
 
     # ---- redaction -------------------------------------------------------
@@ -186,6 +210,21 @@ class WizClient:
     def _client(self, timeout: Any = TIMEOUT_S) -> httpx.Client:
         return httpx.Client(transport=self.transport, timeout=timeout, follow_redirects=False)
 
+    @contextmanager
+    def connection(self) -> Iterator["WizClient"]:
+        """One keep-alive HTTP client for a run of calls - a sync reads thousands of documents, and v0
+        opened a connection per call (spec §2.3). Held per thread: a /check in another thread keeps
+        its own. Nested use reuses the outer one."""
+        if getattr(self._local, "http", None) is not None:
+            yield self
+            return
+        self._local.http = self._client()
+        try:
+            yield self
+        finally:
+            http, self._local.http = self._local.http, None
+            http.close()
+
     def _url(self, path: str) -> str:
         """https://<server>/<path>, refused unless it lands on the configured host at exactly that path.
         The message never carries the URL: for createSession it holds the key."""
@@ -202,7 +241,12 @@ class WizClient:
 
     def _send(self, method: str, path: str, *, headers: Optional[dict] = None, body: Any = None, timeout: Any = TIMEOUT_S) -> httpx.Response:
         url = self._url(path)
+        held = getattr(self._local, "http", None)
         try:
+            if held is not None:
+                if method == "GET":
+                    return held.get(url, headers=headers, timeout=timeout)
+                return held.post(url, headers=headers, json=body if body is not None else {}, timeout=timeout)
             with self._client(timeout) as client:
                 if method == "GET":
                     return client.get(url, headers=headers)
@@ -333,7 +377,13 @@ class WizClient:
         return self.call("ExportDataApi/exportData", {"datafile": datafile, "parameters": parameters or []})
 
     def get_doc(self, stock_id: int) -> Any:
-        return self.call("invApi/getDoc", {"stockID": int(stock_id)})
+        """One document by its internal id, or NOT_FOUND. Money arrives as Decimal (read_envelope)."""
+        try:
+            return self.call("invApi/getDoc", {"stockID": int(stock_id)})
+        except WizError as exc:
+            if exc.kind == "http_error" and is_not_found(exc.message):
+                return NOT_FOUND
+            raise
 
 
 # ---- pure helpers (tested directly) ----------------------------------------
@@ -428,10 +478,11 @@ def read_envelope(resp: httpx.Response) -> tuple[Any, Optional[str]]:
     `statusCode` are checked. A 2xx body that is not JSON is never quoted: it can be
     a document or a report row (names, ID numbers), so only its shape is said
     (review 19.11) - unless it is a short refusal of the session, which is retried.
+    Numbers with a fraction are read as Decimal: money is never a float (spec §2.1).
     """
     text = resp.text or ""
     try:
-        data = json.loads(text) if text.strip() else None
+        data = json.loads(text, parse_float=Decimal) if text.strip() else None
     except ValueError:
         if resp.status_code >= 400:
             return None, text or f"HTTP {resp.status_code}"

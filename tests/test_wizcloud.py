@@ -1,11 +1,13 @@
+import json
 import logging
+from decimal import Decimal
 
 import httpx
 import pytest
 
 from app import wizcloud
 from app.store import Saved, StoreError
-from app.wizcloud import READ_PATHS, SESSION_TTL_S, WizClient, WizError, parse_session_body
+from app.wizcloud import NOT_FOUND, READ_PATHS, SESSION_TTL_S, WizClient, WizError, parse_session_body
 from tests.conftest import KEY, SESSION, FakeStore
 
 # Every path the vendor documents, as the vendor writes it, read 2026-11-19 (backlog 0301, slice S0) by three
@@ -607,3 +609,78 @@ def test_the_cap_masks_a_cut_through_a_known_secret_with_odd_characters():
     assert _cap("abc PRIV!ATE and more", 11, ["PRIV!ATE"]) == "abc ***"  # '!' breaks the token run; the prefix rule catches it
     assert _cap("abc def ghi", 9, ["PRIV!ATE"]) == "abc def ***"  # a cut word is masked too: it may be a token's head
     assert _cap("short", 99, ["x" * 20]) == "short"
+
+
+# ---- slice B1: getDoc's absence, money as Decimal, one connection per run ----------------------
+
+
+
+
+def doc_vendor(docs, fail=None):
+    """createSession, then getDoc answering from `docs` (stockID -> body), "Stock not found" as seen
+    live (500, 18.11 and 22.11), or a `fail` response for the ids it names."""
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        sid = int(json.loads(request.content)["stockID"])
+        if fail and sid in fail:
+            return fail[sid]
+        if sid in docs:
+            return httpx.Response(200, content=docs[sid].encode() if isinstance(docs[sid], str) else json.dumps(docs[sid]).encode())
+        return httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Stock not found"}})
+
+    return httpx.MockTransport(handler), seen
+
+
+
+
+def test_stock_not_found_is_an_absence_and_anything_else_a_failure(clock):
+    transport, _ = doc_vendor({7: {"DocumentDetails": [[{"StockID": 7}], []]}},
+                              fail={8: httpx.Response(502, text="Bad Gateway"), 9: httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Data not found"}})})
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=transport, clock=clock)
+    assert c.get_doc(7) == {"DocumentDetails": [[{"StockID": 7}], []]}
+    assert c.get_doc(1) is NOT_FOUND and not NOT_FOUND
+    for sid in (8, 9):
+        with pytest.raises(WizError) as err:
+            c.get_doc(sid)
+        assert err.value.kind == "http_error"
+
+
+def test_money_arrives_as_decimal_never_a_float(clock):
+    body = '{"DocumentDetails": [[{"Tftal": 650.0, "tftalvat": 550.85, "vatprc": 18}], [{"Price": 0.1, "Quantity": 3}]]}'
+    transport, _ = doc_vendor({5: body})
+    doc = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=transport, clock=clock).get_doc(5)
+    header, line = doc["DocumentDetails"][0][0], doc["DocumentDetails"][1][0]
+    assert header["Tftal"] == Decimal("650.0") and isinstance(header["tftalvat"], Decimal)
+    assert line["Price"] * line["Quantity"] == Decimal("0.3")  # a float would give 0.30000000000000004
+    assert header["vatprc"] == 18 and isinstance(header["vatprc"], int)
+
+
+def test_a_run_holds_one_connection_and_other_threads_keep_their_own(clock, monkeypatch):
+    import threading
+
+    transport, _ = doc_vendor({n: {"DocumentDetails": [[{"StockID": n}], []]} for n in range(1, 6)})
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=transport, clock=clock)
+    made = []
+    original = WizClient._client
+
+    def counting(self, timeout=30.0):
+        made.append(threading.current_thread().name)
+        return original(self, timeout)
+
+    monkeypatch.setattr(WizClient, "_client", counting)
+    with c.connection():
+        for n in range(1, 6):
+            c.get_doc(n)
+        with c.connection():  # nested: the same one
+            c.get_doc(1)
+        other = threading.Thread(target=lambda: c.get_doc(2), name="other")
+        other.start()
+        other.join()
+    assert made.count("MainThread") == 1  # createSession and six reads on one connection
+    assert made.count("other") == 1
+    c.get_doc(3)  # after the run: a connection per call again
+    assert made.count("MainThread") == 2

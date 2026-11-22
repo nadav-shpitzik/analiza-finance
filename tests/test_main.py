@@ -3,13 +3,12 @@ import shutil
 from pathlib import Path
 
 import httpx
-import psycopg
 from fastapi.testclient import TestClient
 
 from app import config, main
 from app.main import deploy_build, summarize_companies, summarize_triggers
 from app.wizcloud import WizClient
-from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, FakeStore, dump, needs_pg
+from tests.conftest import KEY, SESSION, TEST_DATABASE_URL, FakeStore, all_tables, drop_all, dump, needs_pg
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -267,14 +266,13 @@ def test_the_build_ships_this_repo_and_guards_the_schema():
 def test_the_deployment_never_creates_its_schema_and_says_what_is_missing(app_client, fake, clock, monkeypatch):
     """Production's schema comes only from a Republish (app/migrate.py). A database that missed the
     development step shows it in /health and /check, and the read of the books goes on."""
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-        conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
+    drop_all(TEST_DATABASE_URL)
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
     try:
         with TestClient(main.app) as c:
             store = c.get("/health").json()["store"]
-            assert (store["ok"], store["missing_columns"]) == (False, ["wiz_sessions"])
-            assert store["tables"] == {"wiz_sessions": "absent", "schema_migrations": "absent"}
+            assert store["ok"] is False and store["missing_columns"] == [t for t in all_tables() if t != "schema_migrations"]
+            assert store["tables"] == {t: "absent" for t in all_tables()}
             check = c.get("/check")
             assert check.status_code == 200
             assert check.json()["session"]["store_error"] == {"ok": False, "kind": "store_schema", "detail": "42P01"}
@@ -288,13 +286,12 @@ def test_the_deployment_never_creates_its_schema_and_says_what_is_missing(app_cl
             h = c.get("/health")
         store = h.json()["store"]
         assert store["ok"] is True and store["missing_columns"] == []
-        assert store["tables"] == {"wiz_sessions": "present", "schema_migrations": "present"}
+        assert store["tables"] == {t: "present" for t in all_tables()}
         assert store["session"]["age_s"] == 30 and store["session"]["shape"] == "text"
         assert SESSION not in h.text and KEY not in h.text
     finally:
         main.app.state.build = None
-        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
-            conn.execute("DROP TABLE IF EXISTS wiz_sessions, schema_migrations")
+        drop_all(TEST_DATABASE_URL)
 
 
 def test_the_session_test_reads_only_and_prints_no_session(fake):
