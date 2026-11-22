@@ -7,8 +7,8 @@ A run, inside its time box:
    MISSES_IN_A_ROW ids in a row hold no document, then probes far ahead (+64 ... +1024) so a jump in ids is
    found. A hit there is saved, every id it jumped over is put in books_retry and read now, as time allows,
    and the frontier goes on from the hit. A company with nothing held and no run that ever reached the end
-   starts at its known first id and tolerates FIRST_RUN_MISSES misses (Analiza's ids start near 100); after
-   one complete run, an empty company (Demo) gets the plain frontier.
+   starts at its known first id and tolerates FIRST_RUN_MISSES misses; after one complete run, an empty
+   company (Demo) gets the plain frontier.
 
 A read that fails - anything but "Stock not found", an answer that is not a document or names another id,
 an answer the parser cannot read, a document the database refuses - is a failed read: counted by kind, put
@@ -19,7 +19,8 @@ answered, nothing failed and nothing waits in books_retry.
 
 What `complete` cannot promise: a document after a gap of more than MISSES_IN_A_ROW empty ids, short of the
 first far probe, is found only once a probe lands on its run of ids - or by the weekly sweep (B2), which reads
-every id. books-check prints the largest gap seen in the real books, so the window can be judged.
+every id. books-check prints the largest gap in the real books: 7 empty ids in Analiza (22.11), so the
+window of 50 has a wide margin.
 
 Every document is saved as it is read, every read is bounded by what is left of the box, and the run's row
 is finished whatever happens.
@@ -43,8 +44,8 @@ FAR_PROBES = (64, 128, 256, 512, 1024)
 FAILURES_IN_A_ROW = 3
 MARGIN_S = 1.0
 # Where a company's ids begin, so the first run does not read a long empty stretch (spec §4.2.1).
-# Analiza: ids 1-99 hold nothing and documents start near 100 (18.11; the first full copy, 22.11, read
-# from 1 with the wide frontier). Demo: no document at any id probed (1-100 on 18.11, up to 1,000,000 on 22.11).
+# Analiza: the first document is at id 3 (the full copy, 22.11). Demo: no document at any id probed
+# (1-100 on 18.11, up to 1,000,000 on 22.11).
 FIRST_ID = {"wizdb2245n5": 1, "wizdb2245n4": 1}
 OUT_OF_TIME = "out_of_time"
 
