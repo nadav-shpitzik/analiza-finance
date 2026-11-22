@@ -65,6 +65,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   only (`scripts/books_check.py`): series, what the cleaning cost, id gaps, what a tick reads in its box.
   **Demo holds no documents** (every id probed, 22.11). The cleaning judges a number whole (`app/books/clean.py`'s
   docstring is the rule); a new text field goes through it, and a new number shape comes with its test.
+- **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
+  `query` is refused); `app/recon/reading.py` holds the profile, `NEVER_READ` (ID numbers, a sole proprietor's business number,
+  bank details: never in a profile) and `monday_side`, the guard every rule that matches the books to monday goes through.
+  `MONDAY_TOKEN` is a Replit Secret, reported as set or not.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
