@@ -1129,3 +1129,38 @@ def test_the_message_says_back_to_ok_only_on_the_way_back():
     back = {"reasons": [], "alert": True}
     assert main.tick_message("demo", quiet) == "ספרי חשבשבת (demo): תקין."
     assert main.tick_message("demo", back) == "ספרי חשבשבת (demo): חזר לתקין."
+
+
+# ---- the alert goes by email (Nadav 22.11: the Discord server is out of use; ADR-0178's shape) ---------------------
+
+
+@needs_pg
+def test_an_alert_carries_the_email_the_service_composed(books_app):
+    """The service decides and composes the email, Make only sends it (ADR-0178): a subject and an RTL body, counts
+    and a closed vocabulary only, never a value from the books."""
+    client, vendor = books_app
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+    vendor.fail.update({sid: httpx.Response(502, text="Bad Gateway") for sid in range(0, 2000)})
+    down = client.post("/api/books/tick", headers=auth).json()
+    email = down["email"]
+    assert down["alert"] is True and email["subject"] == "ספרי חשבשבת (demo): WizCloud לא עונה"
+    assert 'dir="rtl"' in email["html"] and down["message"] in email["html"] and "/health" in email["html"]
+    for leak in ("ישראל", "50105", "650", "קורס", SYNC_KEY):
+        assert leak not in json.dumps(down, ensure_ascii=False)
+    vendor.fail.clear()
+    back = client.post("/api/books/tick", headers=auth).json()
+    assert back["alert"] is True and back["email"]["subject"] == "ספרי חשבשבת (demo): חזר לתקין"
+
+
+@needs_pg
+def test_an_alert_test_reads_nothing_and_writes_nothing(books_app):
+    """?alert_test=1, behind the key: an alert with its email and nothing else, so the email path is seen live before
+    the scenario is switched on."""
+    client, vendor = books_app
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+    assert client.post("/api/books/tick?alert_test=1").status_code == 401
+    body = client.post("/api/books/tick?alert_test=1", headers=auth).json()
+    assert body["test"] is True and body["alert"] is True and body["ok"] is True
+    assert body["email"]["subject"] == "ספרי חשבשבת (demo): בדיקת התראה" and vendor.reads == []
+    with psycopg.connect(main.config.load().database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM books_sync_runs").fetchone()[0] == 0

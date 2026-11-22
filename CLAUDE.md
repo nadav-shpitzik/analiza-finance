@@ -56,7 +56,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   log. It prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
 - **The books copy (B1) and its tick (B2):** `app/books/` (clean, parse, store, sync). A tick is `POST /api/books/tick`
   with `Authorization: Bearer <BOOKS_SYNC_KEY>` (Replit Secret; Make's keychain), boxed at 60 s from the request's
-  arrival, always 200 with `ok`, `reasons`, `alert` and a Hebrew `message` for Discord; the phases are in
+  arrival, always 200 with `ok`, `reasons`, `alert`, a Hebrew `message` and the `email` Make sends to Nadav (ADR-0178's
+  shape; `?alert_test=1` is a test alert that reads and writes nothing); the phases are in
   `app/books/sync.py`'s docstring. The detail is `GET /api/books/status` behind the same key. The public `/health`
   says only whether the last run worked and why not, how many numbers are missing and whether the key is `ok` - no
   count and no number of documents (Nadav 19.11: the deployment is public). `books-check.yml` (inputs `company`,

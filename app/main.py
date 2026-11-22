@@ -241,7 +241,7 @@ def store_health(cfg: config.Config, now: float) -> dict:
 # queries and the answer.
 REQUEST_BOX_S = 60
 FINISH_RESERVE_S = 4
-# What Make posts to Discord when `alert` is true: one line, counts only, never a number or a name from the books.
+# The line an alert says (in `message` and in the email): counts only, never a number or a name from the books.
 REASON_TEXT = {
     "wizcloud_failing": "WizCloud לא עונה: שלוש קריאות נכשלו ברצף",
     "canary": "מסמך הביקורת לא נקרא, אז שום 'לא נמצא' לא נרשם בסבב",
@@ -286,8 +286,51 @@ def _books_store(cfg: config.Config):
     return BooksStore(cfg.database_url)
 
 
+# The email's subject names the reasons in a few words; the body carries the message line (ADR-0178's shape: the service
+# composes, Make only sends; Nadav 22.11: by email, to him, while the Discord server is out of use).
+SUBJECT_TEXT = {
+    "wizcloud_failing": "WizCloud לא עונה",
+    "canary": "מסמך הביקורת לא נמצא",
+    "holes": "חור במספור",
+    "missing_valid": "מסמך תקף חסר",
+    "stuck": "קריאה תקועה יממה",
+    "crashed": "הסבב נפל",
+}
+
+
+def tick_email(company: str, summary: dict, message: str, base_url: str) -> dict:
+    """The alert email: a subject and an RTL body. Counts and a closed vocabulary only, never a value from the books."""
+    from html import escape
+
+    head = f"ספרי חשבשבת ({company})"
+    reasons = summary.get("reasons") or []
+    if summary.get("test"):
+        subject = f"{head}: בדיקת התראה"
+    elif reasons:
+        subject = f"{head}: " + ", ".join(SUBJECT_TEXT.get(r, r) for r in reasons)
+    else:
+        subject = f"{head}: חזר לתקין" if summary.get("alert") else f"{head}: תקין"
+    items = []
+    if summary.get("run_id") is not None:
+        items.append(f"סבב {summary['run_id']}: {summary.get('probed', 0)} קריאות ב-{summary.get('elapsed_s', 0)} שניות")
+    if summary.get("catching_up"):
+        items.append("העותק עוד משלים את ההעתקה: חור במספור לא נשפט עד שהחזית מגיעה לסוף")
+    health = base_url.rstrip("/") + "/health"
+    body = f"<p>{escape(message)}</p>"
+    if items:
+        body += "<ul>" + "".join(f"<li>{escape(i)}</li>" for i in items) + "</ul>"
+    body += (f'<p>המצב בכל רגע: <a href="{escape(health)}">{escape(health)}</a>. '
+             "הפירוט, מאחורי המפתח: <code>/api/books/status</code>.</p>")
+    return {"subject": subject, "html": f'<div dir="rtl">{body}</div>'}
+
+
+def _base_url(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{proto}://{request.url.netloc}"
+
+
 def tick_message(company: str, summary: dict) -> str:
-    """The line Make posts to Discord: the reasons in Hebrew, or the way back to ok (only when it is one: an alert)."""
+    """The alert's line: the reasons in Hebrew, or the way back to ok (only when it is one: an alert)."""
     head = f"ספרי חשבשבת ({company})"
     if not summary.get("reasons"):
         return f"{head}: חזר לתקין." if summary.get("alert") else f"{head}: תקין."
@@ -300,13 +343,19 @@ def tick_message(company: str, summary: dict) -> str:
 def books_tick(request: Request) -> JSONResponse:
     """One tick of the books copy for the configured company, boxed at REQUEST_BOX_S from the request's arrival. Always
     200, as Make needs (spec §2.3): ok false with `reasons` when WizCloud fails or the copy has a problem, `skipped`
-    when another tick of the company holds the lock, and `alert` (with `message`, one Hebrew line) when the reasons
-    changed since the last tick - what Make posts to Discord. Counts only, no values."""
+    when another tick of the company holds the lock, and `alert` when the reasons changed since the last tick, with
+    `message` (one Hebrew line) and `email` (subject and body) - what Make sends to Nadav (22.11; ADR-0178's shape).
+    `?alert_test=1` answers a test alert and reads and writes nothing. Counts only, no values."""
     started = time.monotonic()
     cfg = config.load()
     refusal = _sync_key_refusal(request, cfg)
     if refusal is not None:
         return refusal
+    base = _base_url(request)
+    if request.query_params.get("alert_test") == "1":  # the email path, seen live: nothing read, nothing written
+        test = {"ok": True, "skipped": False, "test": True, "alert": True, "reasons": []}
+        message = f"ספרי חשבשבת ({cfg.company}): בדיקה של התראות הספרים, אפשר להתעלם."
+        return JSONResponse({**test, "message": message, "email": tick_email(cfg.company, test, message, base)})
     from .books.sync import run_once
 
     state = request.app.state
@@ -326,13 +375,16 @@ def books_tick(request: Request) -> JSONResponse:
             if alert is None:  # the database is not there either: remembered by this process
                 state.books_unrecorded_crash = True
                 alert = True
-        return JSONResponse({"ok": False, "skipped": False, "alert": alert, "reasons": ["crashed"],
-                             "error": type(exc).__name__, "detail": getattr(exc, "detail", None),
-                             "message": f"ספרי חשבשבת ({cfg.company}): הסבב נפל ({type(exc).__name__})."})
+        crashed = {"ok": False, "skipped": False, "alert": alert, "reasons": ["crashed"]}
+        message = f"ספרי חשבשבת ({cfg.company}): הסבב נפל ({type(exc).__name__})."
+        return JSONResponse({**crashed, "error": type(exc).__name__, "detail": getattr(exc, "detail", None),
+                             "message": message, "email": tick_email(cfg.company, crashed, message, base)})
     if getattr(state, "books_unrecorded_crash", False):
         state.books_unrecorded_crash = False
         summary["alert"] = True  # the crash was said and no row remembers it: say what came after
-    return JSONResponse({"skipped": False, **summary, "message": tick_message(cfg.company, summary),
+    message = tick_message(cfg.company, summary)
+    return JSONResponse({"skipped": False, **summary, "message": message,
+                         "email": tick_email(cfg.company, summary, message, base),
                          "request_s": round(time.monotonic() - started, 1)})
 
 
