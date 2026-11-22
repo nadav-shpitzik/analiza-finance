@@ -169,17 +169,15 @@ class BooksStore:
         }
 
     def mark_failed(self, company: str, stock_id: int, kind: str) -> None:
+        """A failed read. An id queued as jumped (attempts 0) fails for the first time now: its first failure is now,
+        not when it was queued (fourth review 22.11)."""
         with _guard():
             self._conn.execute(
                 "INSERT INTO books_retry (company, stock_id, kind) VALUES (%s, %s, %s) ON CONFLICT (company, stock_id) "
-                "DO UPDATE SET kind = EXCLUDED.kind, attempts = books_retry.attempts + 1, last_failed_at = now()",
+                "DO UPDATE SET kind = EXCLUDED.kind, attempts = books_retry.attempts + 1, last_failed_at = now(), "
+                "first_failed_at = CASE WHEN books_retry.attempts = 0 THEN now() ELSE books_retry.first_failed_at END",
                 (company, stock_id, kind),
             )
-
-    def queue_retry(self, company: str, stock_ids: list, kind: str) -> None:
-        """Ids to read first in the next run, never read yet: attempts 0. A row already there keeps its kind."""
-        with _guard():
-            self._conn.execute(_QUEUE, (company, list(stock_ids), kind))
 
     def clear_retry(self, company: str, stock_id: int) -> None:
         with _guard():
@@ -274,12 +272,14 @@ class BooksStore:
                 "SELECT stock_id, status FROM books_documents WHERE company = %s AND gone_at IS NULL", (company,)).fetchall())
 
     def canaries(self, company: str, n: int) -> list:
-        """The oldest valid documents held and not missing: what a tick reads first to know WizCloud answers for
-        this company (spec §4.2.4)."""
+        """The oldest valid documents held, not missing and not waiting in books_retry: what a tick reads first to know
+        WizCloud answers for this company (spec §4.2.4). Leaving out what failed keeps an unreadable document from being
+        a canary for good (fourth review 22.11)."""
         with _guard():
             return [r[0] for r in self._conn.execute(
-                "SELECT stock_id FROM books_documents WHERE company = %s AND gone_at IS NULL AND missing_since IS NULL "
-                f"AND status = {VALID_STATUS} ORDER BY stock_id LIMIT %s", (company, n)).fetchall()]
+                "SELECT d.stock_id FROM books_documents d WHERE d.company = %s AND d.gone_at IS NULL AND d.missing_since IS NULL "
+                f"AND d.status = {VALID_STATUS} AND NOT EXISTS (SELECT 1 FROM books_retry r WHERE r.company = d.company "
+                "AND r.stock_id = d.stock_id) ORDER BY d.stock_id LIMIT %s", (company, n)).fetchall()]
 
     def draft_ids(self, company: str) -> list:
         """Every draft held, the one read longest ago first."""
@@ -345,13 +345,17 @@ class BooksStore:
 
     # ---- the weekly sweep's position ------------------------------------------------------------------
     def sweep_state(self, company: str) -> Optional[dict]:
+        """Where the sweep stands. `ended`: the pass that began at pass_started_at has ended (fourth review 22.11: an
+        id above the place where a pass ended is a new document, read by the frontier - not more of that pass)."""
         with _guard():
             row = self._conn.execute(
-                "SELECT next_id, extract(epoch FROM now() - pass_started_at), last_pass_ended_at, passes FROM books_sweep "
-                "WHERE company = %s", (company,)).fetchone()
+                "SELECT next_id, extract(epoch FROM now() - pass_started_at), last_pass_ended_at, passes, "
+                "coalesce(last_pass_ended_at >= pass_started_at, false) FROM books_sweep WHERE company = %s",
+                (company,)).fetchone()
         if row is None:
             return None
-        return {"next_id": row[0], "pass_age_s": float(row[1]), "last_pass_ended_at": row[2], "passes": row[3]}
+        return {"next_id": row[0], "pass_age_s": float(row[1]), "last_pass_ended_at": row[2], "passes": row[3],
+                "ended": row[4]}
 
     def save_sweep(self, company: str, next_id: int, *, new_pass: bool, ended: bool) -> None:
         with _guard():
@@ -370,7 +374,7 @@ class BooksStore:
             return None
         ended = state["last_pass_ended_at"]
         return {"next_id": state["next_id"], "pass_age_h": round(state["pass_age_s"] / 3600, 1), "passes": state["passes"],
-                "last_pass_ended_at": ended.isoformat(timespec="seconds") if ended else None}
+                "pass_ended": state["ended"], "last_pass_ended_at": ended.isoformat(timespec="seconds") if ended else None}
 
     # ---- what /health and the status route say ---------------------------------------------------
     def last_run(self, company: str) -> Optional[dict]:
@@ -400,6 +404,25 @@ class BooksStore:
                 (company,),
             ).fetchall()
         return summarize_series(rows)
+
+
+def record_crash(url: str, company: str, trigger: str, note: str, connect_timeout_s: int = 3) -> Optional[bool]:
+    """Best effort, on a connection of its own, for a tick that crashed before its run's row was written: a finished
+    row that says so, so the next tick knows to say the way back (fourth review 22.11). Returns whether the last
+    finished run said otherwise (an alert), or None when the database could not be reached."""
+    import psycopg
+
+    try:
+        with psycopg.connect(url, autocommit=True, connect_timeout=connect_timeout_s) as conn:
+            row = conn.execute(
+                "SELECT reasons FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL ORDER BY run_id DESC LIMIT 1",
+                (company,)).fetchone()
+            conn.execute(
+                "INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok, note, reasons) "
+                "VALUES (%s, %s, now(), false, false, %s, %s)", (company, trigger, note, ["crashed"]))
+        return row is None or list(row[0] or []) != ["crashed"]
+    except Exception:  # noqa: BLE001 - best effort: the caller keeps the crash in memory instead
+        return None
 
 
 def summarize_series(rows) -> list:

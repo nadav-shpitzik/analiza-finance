@@ -76,7 +76,7 @@ MARGIN_S = 1.0
 FIRST_ID = {"wizdb2245n5": 1, "wizdb2245n4": 1}
 OUT_OF_TIME = "out_of_time"
 JUMPED = "jumped"  # the kind of a books_retry row for an id never read: a far probe or a retried id jumped over it
-CANARIES = 2
+CANARIES = 5  # read in turn until one answers (fourth review 22.11: two deleted ones blinded every tick)
 RECENT_HELD = 300
 RECENT_PER_TICK = 100
 MISSING_CONFIRM_S = 3600  # two misses at least an hour apart (spec §4.2.5)
@@ -124,6 +124,7 @@ class _Run:
         self.trust_absence = False  # until the canary answered: a 'not found' changes nothing before that
         self.gone_now = 0
         self.prev_reasons: Optional[list] = None
+        self.walk_end: Optional[int] = None  # the first id the frontier's last walk did not read
 
     # ---- time ------------------------------------------------------------------------------------------
     def left(self) -> float:
@@ -283,6 +284,7 @@ class _Run:
             sid += 1  # a failed read is neither a document nor a miss: it waits in books_retry
             if self.failing:
                 return last_doc, sid, False
+        self.walk_end = sid
         return last_doc, sid, True
 
     def probe(self, top: int, next_id: int) -> tuple:
@@ -360,17 +362,15 @@ class _Run:
                           "no 'not found' is trusted in this tick")
 
     def weekly_sweep(self) -> None:
-        """Every id from the first to the high-water mark, from the saved position, in what is left of the box."""
+        """Every id from the first to the high-water mark, from the saved position, in what is left of the box. A pass
+        that ended waits a week from its start, whatever new documents came meanwhile (the frontier reads those)."""
         if self.high is None:
             return
         state = self.store.sweep_state(self.company)
-        new_pass = state is None or (state["next_id"] > self.high and state["pass_age_s"] >= SWEEP_EVERY_S)
-        if new_pass:
-            sid = self.base
-        elif state["next_id"] > self.high:
+        if state is not None and state["ended"] and state["pass_age_s"] < SWEEP_EVERY_S:
             return  # this week's pass is done
-        else:
-            sid = state["next_id"]
+        new_pass = state is None or state["ended"]
+        sid = self.base if new_pass else state["next_id"]
         top = self.high
         while sid <= top:
             if sid in self.seen:
@@ -400,12 +400,16 @@ class _Run:
             reasons.append("wizcloud_failing")
         if s["canary"] == "absent":
             reasons.append("canary")
+        s["holes"] = sum(x["holes"] for x in self.store.series(self.company))
         if reached:
-            s["holes"] = sum(x["holes"] for x in self.store.series(self.company))
             if s["holes"]:
                 reasons.append("holes")
         else:
             s["catching_up"] = not self.failing
+            # Not judged afresh, but what the last tick knew stands: a tick cut short is no news that a hole closed
+            # (fourth review 22.11: one failed far probe posted 'back to ok' while the hole was there).
+            if s["holes"] and "holes" in (self.prev_reasons or []):
+                reasons.append("holes")
         s["missing_valid"] = self.store.missing_summary(self.company, MISSING_CONFIRM_S)["valid_confirmed"]
         if s["missing_valid"]:
             reasons.append("missing_valid")
@@ -436,6 +440,11 @@ class _Run:
         reached = going and self.frontier()  # 3. the frontier and the far probes
         if not self.stopped():  # 4. what failed before, after the frontier
             self.retry_failed()
+        if reached and self.high is not None and self.walk_end is not None and self.high >= self.walk_end:
+            # a retried id held a document past where the walk ended: documents may follow it, and the frontier walks
+            # on from it next tick (fourth review 22.11: the run said complete)
+            reached = False
+            self.notes.append("a retried id held a document past the frontier: it walks on from there next tick")
         if tick and not self.stopped():  # 5. the drafts
             self.sweep(self.store.draft_ids(self.company), "drafts")
         if tick and not self.stopped():  # 6. what went missing, read again to confirm
@@ -473,5 +482,7 @@ def run_once(client, store, company: str, *, trigger: str, box_s: float,
         run.summary["reasons"] = ["crashed"]
         run.notes.append(f"the run stopped on {type(exc).__name__}")
         run.finish(quiet=True)
+        # A crash that repeats is said once, like any reason (fourth review 22.11).
+        exc.books_alert = set(run.prev_reasons or []) != {"crashed"}
         raise
     return run.finish()

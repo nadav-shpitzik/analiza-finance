@@ -78,6 +78,7 @@ _IGNORABLE = frozenset(
 _DASHES = "-‐‑‒–—−־"
 _REF = r"[1-9]\d{4}"
 _RE_REF = re.compile(rf"^{_REF}$")
+_RE_REF_INSIDE = re.compile(rf"(?<![0-9]){_REF}(?![0-9])")
 _RE_RANGE = re.compile(rf"^({_REF})[{_DASHES}](\d{{5}}|\d{{1,3}})$")
 _RE_LIST = re.compile(rf"^{_REF}(?:[,/;+&]{_REF})+$")
 # A list cut by the field's width: two whole numbers at least, then a stub (third review 22.11). Only as one
@@ -92,12 +93,14 @@ _RE_AMOUNT = re.compile(r"^(?:0|[1-9]\d{0,2})(?:,\d{3})+(?:\.\d{1,2})?$|^(?:0|[1
 _RE_AMOUNT_STRONG = re.compile(r"^[1-9][\d,]*\d{2}\.\d{2}$")  # 100.00 and up, two decimal places
 _AT_WORDS = re.compile(r"[(\[{<] ?(?:at|@|שטרודל) ?[)\]}>]", re.IGNORECASE)
 _AT_HEBREW = re.compile(r"(?<=[A-Za-z0-9._%+'-]) ?שטרודל ?(?=[A-Za-z0-9])")
-# Markup that hides a separator between digits (third review 22.11): line-break and formatting tags, and an
-# escape written as text. Entities go through html.unescape.
-_TAGS = re.compile(r"</?(?:br|p|div|span|b|i|u|strong|em|font|li|ul|ol|tr|td|th|table|tbody|thead)\b[^<>]{0,200}>",
-                   re.IGNORECASE)
+# Markup that hides a separator between digits (third review 22.11): any tag but <at> (the fourth review found
+# <wbr>, <sup>, <hr>, <a ...>, <o:p> and comments kept IDs whole when only a list of tags was undone), and an escape
+# written as text. Entities go through html.unescape.
+_TAGS = re.compile(r"</?(?!at\b)[A-Za-z][A-Za-z0-9:]{0,20}\b[^<>]{0,200}>|<!--[^<>]{0,200}-->", re.IGNORECASE)
 _ESCAPED = re.compile(r"\\[nrt]")
 _LAYOUT = (re.compile(r"(?<=[0-9])ץ(?=[0-9])"), re.compile(r"(?<=[0-9])ת(?=[0-9])"))
+# The Hebrew layout's '.' and ',' are marks in a join, not letters: 054ת 987ת 6543 is 054, 987, 6543 (fourth review).
+_LAYOUT_KEYS = frozenset("ץת")
 _ADDRESS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._%+-'")
 _DOMAIN = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 # The shapes a piece of a longer number may have. A piece outside them masks the number.
@@ -185,7 +188,7 @@ def _numbers(text: str):
                 ch = text[k]
                 if ch == " ":
                     space = True
-                elif ch.isalpha():
+                elif ch.isalpha() and ch not in _LAYOUT_KEYS:
                     if letter:
                         joins = False
                         break
@@ -298,9 +301,17 @@ def _refs_of(kind: str, core: str) -> list:
 
 
 def _cut_list(core: str) -> Optional[str]:
-    """The whole numbers of a list cut by the field's width (50887,50888,508 -> 50887,50888), or None."""
+    """The whole numbers of a list cut by the field's width (50887,50888,508 -> 50887,50888), or None. The stub must
+    begin a number within MAX_RANGE of the last whole one, as the list's next number would: 50347,51234,5678 is no cut
+    list but an ID's end (fourth review 22.11)."""
     m = _RE_LIST_CUT.match(core)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    last = int(re.findall(_REF, m.group(1))[-1])
+    stub = core[len(m.group(1)) + 1:]
+    scale = 10 ** (5 - len(stub))
+    low, high = int(stub) * scale, (int(stub) + 1) * scale - 1  # every five-digit number this stub begins
+    return m.group(1) if low <= last + MAX_RANGE and high >= last - MAX_RANGE else None
 
 
 def _process(text: str, stats: Optional[dict]) -> tuple:
@@ -339,6 +350,9 @@ def _process(text: str, stats: Optional[dict]) -> tuple:
         if stats is not None:
             stats["numbers_masked"] = stats.get("numbers_masked", 0) + 1
             lost = sum(len(_refs_of(k, c)) for k, _, c in pieces if k in REF_SHAPES)
+            if any(ch.isalpha() and ch not in _LAYOUT_KEYS for ch in text[start:end]):
+                # a reference glued to a letter sits inside a piece of no shape: counted by its digits (fourth review)
+                reason, lost = "letter", len(_RE_REF_INSIDE.findall(text[start:end]))
             if lost:
                 by = stats.setdefault("refs_lost", {})
                 by[reason] = by.get(reason, 0) + lost

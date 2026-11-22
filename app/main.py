@@ -318,9 +318,20 @@ def books_tick(request: Request) -> JSONResponse:
             box = REQUEST_BOX_S - FINISH_RESERVE_S - (time.monotonic() - started)
             summary = run_once(get_client(state, cfg), store, cfg.db, trigger="http", box_s=box)
     except Exception as exc:  # noqa: BLE001 - a 200 with the class, never the text; Make reruns a 5xx
-        return JSONResponse({"ok": False, "skipped": False, "alert": True, "reasons": ["crashed"],
+        alert = getattr(exc, "books_alert", None)
+        if alert is None:  # before the run's own row: say it in a row of its own, so the way back is said too
+            from .books.store import record_crash
+
+            alert = record_crash(cfg.database_url, cfg.db, "http", f"the tick stopped on {type(exc).__name__}")
+            if alert is None:  # the database is not there either: remembered by this process
+                state.books_unrecorded_crash = True
+                alert = True
+        return JSONResponse({"ok": False, "skipped": False, "alert": alert, "reasons": ["crashed"],
                              "error": type(exc).__name__, "detail": getattr(exc, "detail", None),
                              "message": f"ספרי חשבשבת ({cfg.company}): הסבב נפל ({type(exc).__name__})."})
+    if getattr(state, "books_unrecorded_crash", False):
+        state.books_unrecorded_crash = False
+        summary["alert"] = True  # the crash was said and no row remembers it: say what came after
     return JSONResponse({"skipped": False, **summary, "message": tick_message(cfg.company, summary),
                          "request_s": round(time.monotonic() - started, 1)})
 

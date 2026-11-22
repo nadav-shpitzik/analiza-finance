@@ -332,3 +332,27 @@ def test_the_scans_never_read_more_than_the_bound_after_nfkc(monkeypatch):
     clean("ﷺ" * module.MAX_RAW, stats)
     clean("ﷺ" * 10_000, stats)
     assert max(seen) <= module.MAX_RAW and stats["fields_cut"] == 2
+
+
+# ---- the fourth review of 22.11 (on ea952e0) ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw", [
+    "עח 50347,51234,5678",  # a stub after two whole numbers that no list would reach: an ID's end (51234,5678)
+    "ת.ז 12345<wbr>6789", "ת.ז 1234<sup>56789</sup>", "ת.ז 12345<hr>6789", "ת.ז 12345<o:p>6789",
+    "ת.ז 12345<a href=x>6789</a>", "ת.ז 12345<!-- -->6789",
+    "טל 054ת 987ת 6543", "ת.ז 123ץ 456ץ 789", "ת.ז 12345ץץ6789",
+])
+def test_markup_and_the_hebrew_layout_around_a_space_do_not_split_a_number(raw):
+    """Finding 5: tags outside the list, ץ and ת beside a space or doubled, and the cut-list rule kept IDs whole."""
+    cleaned, refs, masked = clean(raw)
+    assert masked >= 1 and "#" in cleaned, (cleaned, refs)
+    assert not any(r in ("51234", "12345", "56789") for r in refs), refs
+
+
+@pytest.mark.parametrize("raw,lost", [("חשבונית 50347ב-16.08.2026", 1), ("זיכוי 50347ו50348", 2), ("2x50347", 1)])
+def test_a_reference_masked_with_a_letter_is_counted_as_lost(raw, lost):
+    """Finding 6: refs_lost counted only pieces with the shape of a reference, so a reference glued to a letter was
+    lost without a trace in books-check."""
+    stats = {}
+    clean(raw, stats)
+    assert sum(stats.get("refs_lost", {}).values()) == lost, stats

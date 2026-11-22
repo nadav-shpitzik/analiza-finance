@@ -722,8 +722,10 @@ def test_a_retried_id_found_above_the_frontier_brings_the_ids_below_it(pg, clock
     vendor.fail.clear()
     vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(111, 116)})  # so the probes move past 174
     third = run(vendor, pg, clock)
-    assert held_ids(pg) == list(range(100, 116)) + list(range(170, 175)) and third["complete"] is True
-    assert third["queued"] == 8  # 166-173: the walk read up to 165
+    assert held_ids(pg) == list(range(100, 116)) + list(range(170, 175)) and third["queued"] == 8  # 166-173
+    # 174 lies past where the walk ended (165): documents may follow it, so the run is not complete (fourth review)
+    assert third["complete"] is False and "past the frontier" in third["note"]
+    assert run(vendor, pg, clock)["complete"] is True
 
 
 @needs_pg
@@ -901,7 +903,7 @@ def test_a_hole_is_judged_only_once_the_frontier_reached_the_end(pg, clock, monk
     docs[110] = document(110, 50300)  # a number far ahead: 50110-50299 are missing while 110 is held
     vendor = Vendor(docs)
     catching = tick(vendor, pg, clock, box_s=15.0, monotonic=lambda: float(len(vendor.reads)))
-    assert catching["catching_up"] is True and catching["holes"] is None and catching["ok"] is True
+    assert catching["catching_up"] is True and catching["holes"] > 0 and catching["ok"] is True  # counted, not judged
     caught = tick(vendor, pg, clock)
     assert caught["holes"] > 0 and caught["reasons"] == ["holes"] and caught["ok"] is False
 
@@ -986,3 +988,135 @@ def test_a_canary_that_went_missing_is_missed_once_the_next_one_answers(pg, cloc
     assert second["canary"] == "ok" and second["missing"] == 1
     age_misses(pg)
     assert tick(vendor, pg, clock)["missing_valid"] == 1
+
+
+# ---- the fourth review of 22.11 (on ea952e0): each test failed there -------------------------------------------
+
+STUCK_500 = STUCK["vendor_error"]
+
+
+def sweep_row(url):
+    with psycopg.connect(url) as conn:
+        return conn.execute("SELECT next_id, passes FROM books_sweep").fetchone()
+
+
+@needs_pg
+def test_two_deleted_canaries_do_not_blind_every_tick(pg, clock, monkeypatch):
+    """Finding 1: the canaries were always the two oldest valid documents, and only a canary that answered could have
+    them marked missing - so two deleted ones left every later tick blind: no miss, no draft gone, for good."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 110)], (110, 0)))
+    tick(vendor, pg, clock)
+    del vendor.docs[100], vendor.docs[101], vendor.docs[110]  # the two oldest valid documents, and a draft
+    first = tick(vendor, pg, clock)
+    assert first["canary"] == "ok" and first["missing"] == 3
+    age_misses(pg)
+    second = tick(vendor, pg, clock)
+    assert second["gone"] == 1 and second["missing_valid"] == 2 and second["reasons"] == ["missing_valid"]
+
+
+@needs_pg
+def test_canaries_that_fail_on_every_read_are_not_read_as_canaries(pg, clock, monkeypatch):
+    """Finding 1: two canaries the vendor cannot render made every tick trust no absence, while it said ok."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books((100, 1), (101, 1), (102, 1), (103, 0), (104, 1)))
+    tick(vendor, pg, clock)
+    vendor.fail.update({100: STUCK_500, 101: STUCK_500})
+    del vendor.docs[103]
+    tick(vendor, pg, clock)  # 100 and 101 fail and wait in books_retry
+    second = tick(vendor, pg, clock)
+    assert second["canary"] == "ok" and second["missing"] == 1  # the draft's miss is recorded
+    age_misses(pg)
+    assert tick(vendor, pg, clock)["gone"] == 1
+
+
+@needs_pg
+def test_a_tick_that_does_not_reach_the_end_keeps_the_hole_it_knew(pg, clock, monkeypatch):
+    """Finding 2: holes were judged only when the frontier reached the end, so one failed far probe dropped the
+    reason - ok, alert, and 'back to ok' posted while the hole was still there."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    docs = books(*[(sid, 1) for sid in range(100, 140)])
+    docs[110] = document(110, 50300)
+    vendor = Vendor(docs)
+    assert tick(vendor, pg, clock)["reasons"] == ["holes"]
+    vendor.fail[139 + 64] = httpx.Response(502, text="Bad Gateway")
+    second = tick(vendor, pg, clock)
+    assert second["reasons"] == ["holes"] and second["ok"] is False and second["alert"] is False
+    assert second["holes"] > 0
+
+
+@needs_pg
+def test_a_new_document_is_not_a_new_pass_of_the_sweep(pg, clock, monkeypatch):
+    """Finding 3: after a pass ended, each new document made the sweep 'go on' over ids it had read, end again and
+    count a pass."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    monkeypatch.setattr(sync, "RECENT_PER_TICK", 0)
+    all_docs = books(*[(sid, 1) for sid in range(100, 150)])
+    vendor = Vendor({sid: all_docs[sid] for sid in range(100, 140)})
+    tick(vendor, pg, clock)
+    for sid in (140, 141, 142):
+        vendor.docs[sid] = all_docs[sid]
+        assert tick(vendor, pg, clock)["sweep"] is None  # this week's pass is done
+    assert sweep_row(pg)[1] == 1
+
+
+@needs_pg
+def test_a_week_later_the_sweep_begins_again_while_documents_keep_coming(pg, clock, monkeypatch):
+    """Finding 3: a new document in every tick held the next pass back for good."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    monkeypatch.setattr(sync, "RECENT_PER_TICK", 0)
+    all_docs = books(*[(sid, 1) for sid in range(100, 150)])
+    vendor = Vendor({sid: all_docs[sid] for sid in range(100, 140)})
+    tick(vendor, pg, clock)
+    with psycopg.connect(pg) as conn:
+        conn.execute("UPDATE books_sweep SET pass_started_at = now() - interval '8 days'")
+    vendor.docs[140] = all_docs[140]
+    assert tick(vendor, pg, clock)["sweep"]["new_pass"] is True
+
+
+@needs_pg
+def test_a_crash_that_repeats_alerts_once(books_app, monkeypatch):
+    """Finding 4: every crash answered alert true, so one that repeats posted to Discord every hour."""
+    client, _ = books_app
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+
+    def boom(self, company, n):
+        raise RuntimeError("a bug in a phase")
+
+    monkeypatch.setattr(books_store.BooksStore, "canaries", boom)
+    first = client.post("/api/books/tick", headers=auth).json()
+    second = client.post("/api/books/tick", headers=auth).json()
+    assert first["alert"] is True and second["alert"] is False and second["reasons"] == ["crashed"]
+
+
+@needs_pg
+def test_the_way_back_from_a_crash_before_the_run_is_said(books_app, monkeypatch):
+    """Finding 4: a crash before the run's row was written left no row, so the next good tick compared with the run
+    before the crash and said nothing - Discord's last word stayed 'it crashed'."""
+    client, _ = books_app
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+    assert client.post("/api/books/tick", headers=auth).json()["alert"] is False
+    real = books_store.BooksStore.start_run
+
+    def broken(self, company, trigger, from_id):
+        raise books_store.BooksStoreError("57P01")
+
+    monkeypatch.setattr(books_store.BooksStore, "start_run", broken)
+    down = client.post("/api/books/tick", headers=auth).json()
+    monkeypatch.setattr(books_store.BooksStore, "start_run", real)
+    back = client.post("/api/books/tick", headers=auth).json()
+    assert down["alert"] is True and back["alert"] is True and back["message"].endswith("חזר לתקין.")
+
+
+@needs_pg
+def test_an_id_queued_as_jumped_is_stuck_from_its_first_failure_not_from_its_queueing(pg, clock, monkeypatch):
+    """The review's minor note: first_failed_at of a jumped id was the time it was queued."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 106)]))
+    tick(vendor, pg, clock)
+    with psycopg.connect(pg) as conn:
+        conn.execute("INSERT INTO books_retry (company, stock_id, kind, attempts, first_failed_at) "
+                     "VALUES (%s, 103, 'jumped', 0, now() - interval '3 days')", (DEMO,))
+    vendor.fail[103] = STUCK_500
+    tick(vendor, pg, clock)
+    assert tick(vendor, pg, clock)["stuck_day"] == 0  # failed twice today: not a day yet
