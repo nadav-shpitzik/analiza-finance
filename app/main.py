@@ -287,10 +287,10 @@ def _books_store(cfg: config.Config):
 
 
 def tick_message(company: str, summary: dict) -> str:
-    """The line Make posts to Discord: the reasons in Hebrew, or the way back to ok."""
+    """The line Make posts to Discord: the reasons in Hebrew, or the way back to ok (only when it is one: an alert)."""
     head = f"ספרי חשבשבת ({company})"
     if not summary.get("reasons"):
-        return f"{head}: חזר לתקין."
+        return f"{head}: חזר לתקין." if summary.get("alert") else f"{head}: תקין."
     parts = [REASON_TEXT.get(r, r).format(**{k: summary.get(k) for k in ("holes", "missing_valid", "stuck_day")})
              for r in summary["reasons"]]
     return f"{head}: " + "; ".join(parts) + "."

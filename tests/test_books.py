@@ -1120,3 +1120,12 @@ def test_an_id_queued_as_jumped_is_stuck_from_its_first_failure_not_from_its_que
     vendor.fail[103] = STUCK_500
     tick(vendor, pg, clock)
     assert tick(vendor, pg, clock)["stuck_day"] == 0  # failed twice today: not a day yet
+
+
+def test_the_message_says_back_to_ok_only_on_the_way_back():
+    """Seen on Demo 22.11 (run 2): a tick with nothing wrong before or now said 'חזר לתקין' - harmless, since Make posts
+    only on an alert, but a false sentence in the answer."""
+    quiet = {"reasons": [], "alert": False}
+    back = {"reasons": [], "alert": True}
+    assert main.tick_message("demo", quiet) == "ספרי חשבשבת (demo): תקין."
+    assert main.tick_message("demo", back) == "ספרי חשבשבת (demo): חזר לתקין."
