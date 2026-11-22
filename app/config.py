@@ -36,6 +36,9 @@ class Config:
     database_url: str = field(default="", repr=False)
     # The key Make sends to run a tick of the books copy (spec §2.4), in a Make keychain, never inline.
     books_sync_key: str = field(default="", repr=False)
+    # monday's API token (a Replit Secret): the same monday user as analiza-metrics' token (the desk move plan §2). The
+    # reader only reads (app/monday/client.py refuses a mutation); reported as set or not, never shown.
+    monday_token: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -65,5 +68,6 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
         problems=tuple(problems),
         database_url=(env.get("DATABASE_URL") or "").strip(),
         books_sync_key=(env.get("BOOKS_SYNC_KEY") or "").strip(),
+        monday_token=(env.get("MONDAY_TOKEN") or "").strip(),
     )
 

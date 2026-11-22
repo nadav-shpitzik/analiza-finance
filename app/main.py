@@ -62,6 +62,7 @@ app = FastAPI(title=SERVICE, docs_url=None, redoc_url=None, openapi_url=None, li
 app.state.transport = None  # tests put an httpx.MockTransport here
 app.state.clock = time.time
 app.state.store_factory = None  # tests put a fake here; None is Postgres when DATABASE_URL is set
+app.state.monday_transport = None  # tests put an httpx.MockTransport for monday here
 app.state.client = None
 app.state.client_ident = None
 app.state.build = None
@@ -117,6 +118,7 @@ def health(request: Request) -> dict:
     last = _cache["result"]
     store = store_health(cfg, state.clock())
     books = store.pop("books_glance", None)
+    recon = store.pop("recon_glance", None)
     return {
         "service": SERVICE,
         "ok": True,
@@ -134,6 +136,7 @@ def health(request: Request) -> dict:
         },
         "store": store,
         "books": {"sync_key": sync_key_state(cfg), **(books or {})},
+        "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
@@ -160,7 +163,15 @@ def _read_store(cfg: config.Config) -> dict:
                 books = _books_glance(cur, cfg.db)
             except Exception as exc:  # noqa: BLE001 - the class only
                 books = {"error": type(exc).__name__}
-    return {**state, "times": times, "books": books}
+        recon = None
+        if state["tables"].get("recon_readings") == "present":
+            try:  # its own try, like the books: a reading problem never blanks the store block
+                from .recon.store import reading_glance
+
+                recon = reading_glance(cur)
+            except Exception as exc:  # noqa: BLE001 - the class only
+                recon = {"error": type(exc).__name__}
+    return {**state, "times": times, "books": books, "recon": recon}
 
 
 def _books_glance(cur, company: str) -> dict:
@@ -226,6 +237,7 @@ def store_health(cfg: config.Config, now: float) -> dict:
                 "session": describe(read["times"], now),
                 "read_at": _now_iso(read_at),
                 "books_glance": read.get("books"),
+                "recon_glance": read.get("recon"),
             }
     except Exception as exc:  # noqa: BLE001 - /health never raises
         out = {"configured": True, "ok": False, "error": type(exc).__name__}
@@ -411,6 +423,78 @@ def books_status(request: Request) -> JSONResponse:
                                  "sweep": s.sweep_summary(cfg.db)})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
+
+
+# ---- the reconciliation's reading of monday (backlog 0301 R0): behind the sync key --------------------------------
+
+def _monday_reader(state: Any, cfg: config.Config):
+    from .monday.client import MondayReader
+
+    if state.monday_transport is not None:  # tests
+        import httpx
+
+        return MondayReader(cfg.monday_token, client=httpx.Client(transport=state.monday_transport))
+    return MondayReader(cfg.monday_token)
+
+
+def _reading_answer(reading: dict) -> dict:
+    """Counts only: per board its items_count, the rows read and the distinct ids. Never a row, never a name."""
+    return {"ok": bool(reading.get("complete")), "skipped": False, "complete": bool(reading.get("complete")),
+            "error": reading.get("error"), "detail": reading.get("detail"), "read_at": reading.get("read_at"),
+            "checks": reading.get("checks") or {}, "calls": reading.get("calls"), "seconds": reading.get("seconds"),
+            "rules": None}
+
+
+@app.post("/api/recon/run")
+def recon_run(request: Request) -> JSONResponse:
+    """R0: reads the reconciliation's profile of monday whole (app/recon/reading.py), checks every board against its
+    items_count, and keeps the reading (recon_readings). The rules (R1-R5) come later, on this route. Boxed like the
+    tick; always 200, with ok false and a closed code when it did not read every board."""
+    started = time.monotonic()
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    missing = [name for name, value in (("MONDAY_TOKEN", cfg.monday_token), ("DATABASE_URL", cfg.database_url)) if not value]
+    if missing:
+        return JSONResponse({"ok": False, "skipped": False, "error": "not_configured", "detail": f"{', '.join(missing)} not set"})
+    from .recon.reading import read_profile
+    from .recon.store import ReconStoreError, UnsafeBody, reading_lock, save_reading
+
+    try:
+        with reading_lock(cfg.database_url) as held:
+            if not held:
+                return JSONResponse({"ok": True, "skipped": True, "detail": "another reading is running"})
+            reader = _monday_reader(request.app.state, cfg)
+            reader.deadline = started + REQUEST_BOX_S - FINISH_RESERVE_S
+            reading = read_profile(reader)
+            save_reading(cfg.database_url, reading)
+    except ReconStoreError as exc:
+        return JSONResponse({"ok": False, "skipped": False, "error": "store", "detail": exc.detail})
+    except UnsafeBody:
+        return JSONResponse({"ok": False, "skipped": False, "error": "unsafe_body", "detail": None})
+    except Exception as exc:  # noqa: BLE001 - said by class, never past the route
+        return JSONResponse({"ok": False, "skipped": False, "error": "crashed", "detail": type(exc).__name__})
+    return JSONResponse({**_reading_answer(reading), "request_s": round(time.monotonic() - started, 1)})
+
+
+@app.get("/api/recon/status")
+def recon_status(request: Request) -> JSONResponse:
+    """The last reading's counts and when it was, behind the sync key. Never its rows."""
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    if not cfg.database_url:
+        return JSONResponse({"ok": False, "error": "not_configured", "detail": "DATABASE_URL not set"})
+    from .recon.store import ReconStoreError, load_reading
+
+    try:
+        reading = load_reading(cfg.database_url, body=False)
+    except ReconStoreError as exc:
+        return JSONResponse({"ok": False, "error": "store", "detail": exc.detail})
+    return JSONResponse({"ok": True, "monday_token_set": bool(cfg.monday_token),
+                         "reading": None if reading is None else _reading_answer(reading)})
 
 
 @app.get("/check")
