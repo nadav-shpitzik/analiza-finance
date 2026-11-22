@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Iterator, Optional
 
 from .doctypes import INFERRED, VALID_STATUS, role
-from .parse import DOCUMENT_COLUMNS, LINE_COLUMNS
+from .parse import DOCUMENT_COLUMNS, LINE_COLUMNS, line_key
 
 CONNECT_TIMEOUT_S = 10
 STATEMENT_TIMEOUT = "15s"
@@ -24,6 +24,7 @@ BOOKS_TABLES = {
         "content_hash", "fields_seen", "first_seen_at", "last_read_at", "last_changed_at", "gone_at", "gone_confirmed_by"),
     "books_lines": ("company", "stock_id") + LINE_COLUMNS,
     "books_document_events": ("event_id", "company", "stock_id", "run_id", "kind", "fields", "at"),
+    "books_retry": ("company", "stock_id", "kind", "attempts", "first_failed_at", "last_failed_at"),
     "books_sync_runs": ("run_id", "company", "trigger", "started_at", "finished_at", "from_id", "to_id", "probed", "found",
                         "added", "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note"),
 }
@@ -110,6 +111,38 @@ class BooksStore:
                  summary["complete"], summary["ok"], summary.get("note"), run_id),
             )
 
+    def ever_completed(self, company: str) -> bool:
+        """Whether a run of this company ever reached the end: after that, a run starting with nothing
+        held (Demo) uses the plain frontier, not the first run's wide one."""
+        with _guard():
+            return self._conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM books_sync_runs WHERE company = %s AND complete)", (company,)
+            ).fetchone()[0]
+
+    # ---- reads to try again ------------------------------------------------------------------------
+    def retry_ids(self, company: str) -> list:
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                "SELECT stock_id FROM books_retry WHERE company = %s ORDER BY stock_id", (company,)).fetchall()]
+
+    def mark_failed(self, company: str, stock_id: int, kind: str) -> None:
+        with _guard():
+            self._conn.execute(
+                "INSERT INTO books_retry (company, stock_id, kind) VALUES (%s, %s, %s) ON CONFLICT (company, stock_id) "
+                "DO UPDATE SET kind = EXCLUDED.kind, attempts = books_retry.attempts + 1, last_failed_at = now()",
+                (company, stock_id, kind),
+            )
+
+    def clear_retry(self, company: str, stock_id: int) -> None:
+        with _guard():
+            self._conn.execute("DELETE FROM books_retry WHERE company = %s AND stock_id = %s", (company, stock_id))
+
+    def held_ids(self, company: str) -> list:
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                "SELECT stock_id FROM books_documents WHERE company = %s AND gone_at IS NULL ORDER BY stock_id",
+                (company,)).fetchall()]
+
     def high_water(self, company: str) -> Optional[int]:
         with _guard():
             return self._conn.execute(
@@ -144,6 +177,11 @@ class BooksStore:
             else:
                 old = dict(zip(DOCUMENT_COLUMNS, row[1:]))
                 fields = sorted(c for c in DOCUMENT_COLUMNS if _differs(old.get(c), doc.get(c)))
+                cur.execute(f"SELECT {', '.join(LINE_COLUMNS)} FROM books_lines WHERE company = %s AND stock_id = %s",
+                            (company, doc["stock_id"]))
+                old_lines = sorted(line_key(dict(zip(LINE_COLUMNS, r))) for r in cur.fetchall())
+                if old_lines != sorted(line_key(line) for line in lines):
+                    fields.append("lines")
                 sets = ", ".join(f"{c} = %s" for c in cols[1:])
                 cur.execute(
                     f"UPDATE books_documents SET {sets}, last_read_at = now(), last_changed_at = now() "
@@ -152,8 +190,6 @@ class BooksStore:
                 )
                 cur.execute("DELETE FROM books_lines WHERE company = %s AND stock_id = %s", (company, doc["stock_id"]))
                 kind = "status_changed" if "status" in fields else "changed"
-                if not fields:
-                    fields = ["lines"]
             for line in lines:
                 lcols = ("company", "stock_id") + LINE_COLUMNS
                 cur.execute(
@@ -203,8 +239,9 @@ def summarize_series(rows) -> list:
     for doc_type, number, status in rows:
         entry = by_type.setdefault(doc_type, {"valid": [], "drafts": 0, "other_status": 0, "not_numeric": 0})
         if status == VALID_STATUS:
-            if number is not None and str(number).isdigit():
-                entry["valid"].append(int(number))
+            text = str(number) if number is not None else ""
+            if text.isascii() and text.isdigit():
+                entry["valid"].append(int(text))
             else:
                 entry["not_numeric"] += 1
         elif status == 0:
@@ -216,7 +253,16 @@ def summarize_series(rows) -> list:
         e = by_type[doc_type]
         numbers = sorted(e["valid"])
         unique = sorted(set(numbers))
-        holes = sorted(set(range(unique[0], unique[-1] + 1)) - set(unique)) if unique else []
+        # Holes as the gaps between consecutive numbers: no set of the whole range (review 22.11 - one
+        # mistyped number made it gigabytes on a public URL).
+        hole_count, holes = 0, []
+        for a, b in zip(unique, unique[1:]):
+            gap = b - a - 1
+            if gap > 0:
+                hole_count += gap
+                room = HOLES_SAMPLE - len(holes)
+                if room > 0:
+                    holes.extend(range(a + 1, a + 1 + min(gap, room)))
         out.append({
             "doc_type": doc_type,
             "role": role(doc_type),
@@ -224,7 +270,7 @@ def summarize_series(rows) -> list:
             "valid": len(numbers),
             "first": unique[0] if unique else None,
             "last": unique[-1] if unique else None,
-            "holes": len(holes),
+            "holes": hole_count,
             "holes_sample": holes[:HOLES_SAMPLE],
             "duplicates": len(numbers) - len(unique),
             "drafts": e["drafts"],

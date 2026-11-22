@@ -72,6 +72,18 @@ CREATE TABLE IF NOT EXISTS books_document_events (
 );
 CREATE INDEX IF NOT EXISTS books_document_events_document ON books_document_events (company, stock_id);
 
+-- A read that failed (anything but "Stock not found", or a document the database refused): read again first
+-- by the next run, so no id is skipped for good (review 22.11). Cleared when the id is read.
+CREATE TABLE IF NOT EXISTS books_retry (
+  company          text        NOT NULL,
+  stock_id         bigint      NOT NULL,
+  kind             text        NOT NULL,
+  attempts         integer     NOT NULL DEFAULT 1,
+  first_failed_at  timestamptz NOT NULL DEFAULT now(),
+  last_failed_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (company, stock_id)
+);
+
 CREATE TABLE IF NOT EXISTS books_sync_runs (
   run_id       bigserial   PRIMARY KEY,
   company      text        NOT NULL,

@@ -344,15 +344,22 @@ class WizClient:
         return opened
 
     # ---- calls -------------------------------------------------------------
-    def call(self, path: str, body: Any = None, *, retry: bool = True) -> Any:
+    def call(self, path: str, body: Any = None, *, retry: bool = True, deadline: Optional[float] = None) -> Any:
         """POST to one read path and return the parsed JSON body. A rejected session gets one fresh
-        try, unless `retry` is False (scripts/live_check.py's session test needs to see the refusal)."""
+        try, unless `retry` is False (scripts/live_check.py's session test needs to see the refusal).
+        `deadline` (time.monotonic) bounds every attempt, so a run's time box bounds its reads too."""
         if path not in READ_PATHS:
             raise WizError("forbidden_path", f"{path!r} is not a read path")
         rejected: Optional[Session] = None
         for attempt in (1, 2, 3):
             sess = self.session(rejected=rejected)
-            resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body)
+            timeout: Any = TIMEOUT_S
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0.5:
+                    raise WizError("network", "the time box ran out")
+                timeout = min(TIMEOUT_S, left)
+            resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body, timeout=timeout)
             data, err = read_envelope(resp)
             if err is None:
                 return data
@@ -376,10 +383,10 @@ class WizClient:
     def export_report(self, datafile: str, parameters: Optional[list] = None) -> Any:
         return self.call("ExportDataApi/exportData", {"datafile": datafile, "parameters": parameters or []})
 
-    def get_doc(self, stock_id: int) -> Any:
+    def get_doc(self, stock_id: int, deadline: Optional[float] = None) -> Any:
         """One document by its internal id, or NOT_FOUND. Money arrives as Decimal (read_envelope)."""
         try:
-            return self.call("invApi/getDoc", {"stockID": int(stock_id)})
+            return self.call("invApi/getDoc", {"stockID": int(stock_id)}, deadline=deadline)
         except WizError as exc:
             if exc.kind == "http_error" and is_not_found(exc.message):
                 return NOT_FOUND

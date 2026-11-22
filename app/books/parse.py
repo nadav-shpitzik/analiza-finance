@@ -23,7 +23,7 @@ NO_DATE = date(1990, 1, 1)
 HEADER = {
     "stockid": ("stock_id", "int"),
     "documentid": ("doc_type", "int"),
-    "docnumber": ("doc_number", "str"),
+    "docnumber": ("doc_number", "number"),
     "status": ("status", "int"),
     "valuedate": ("value_date", "date"),
     "issuedate": ("issue_date", "date"),
@@ -35,13 +35,13 @@ HEADER = {
     "tftalvat": ("total_excl", "money"),
     "tftalvatfree": ("total_vat_free", "money"),
     "vatprc": ("vat_pct", "money"),
-    "currency": ("currency", "str"),
+    "currency": ("currency", "code"),
     "reference": ("reference", "text"),
     "remarks": ("remarks", "text"),
     "details": ("details", "text"),
     "email": ("email_domain", "domain"),
     "taxapinumber": ("tax_api_number_present", "present"),
-    "batch": ("batch", "str"),
+    "batch": ("batch", "code"),
 }
 LINE = {
     "moveid": ("move_id", "int"),
@@ -54,7 +54,7 @@ LINE = {
     "price": ("price", "money"),
     "tftal": ("total_excl", "money"),
     "vatexempt": ("vat_exempt", "bool"),
-    "currencycode": ("currency_code", "str"),
+    "currencycode": ("currency_code", "code"),
     "status": ("status", "int"),
 }
 # Never stored, whatever they hold (spec §3.2). Listed so a test can prove it.
@@ -131,10 +131,18 @@ def _read(value: Any, how: str, stats: dict) -> Any:
         return _money(value)
     if how == "date":
         return _date(value)
-    if how == "str":
-        return None if value is None or str(value).strip() == "" else str(value).strip()
+    if how == "number":  # a document number: ASCII digits only, or nothing
+        text = str(value).strip() if value is not None else ""
+        return text if text.isascii() and text.isdigit() and len(text) <= 12 else None
+    if how == "code":  # a short code (currency, batch): cleaned like any text, and capped
+        cleaned, _refs, masked = clean(None if value is None else str(value))
+        stats["masked"] = stats.get("masked", 0) + masked
+        return cleaned[:20] if cleaned else None
     if how == "bool":
-        return None if value is None else bool(value)
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower() if value is not None else ""
+        return {"1": True, "true": True, "0": False, "false": False}.get(text)
     if how == "present":
         return value not in (None, "", 0, "0")
     if how == "domain":
@@ -159,7 +167,7 @@ def document_rows(body: Any) -> tuple:
     # Document numbers cited in the document's remarks and details and in its lines' details, read
     # before masking (spec §3.4 step 1): how a credit names the invoice it cancels.
     lower = {str(k).lower(): v for k, v in header.items()}
-    raw = [lower.get("remarks"), lower.get("details")]
+    raw = [lower.get("remarks"), lower.get("details"), lower.get("reference")]
     raw += [{str(k).lower(): v for k, v in line.items()}.get("details") for line in lines]
     doc["refs_in_text"] = sorted({r for text in raw if text is not None for r in extract_refs(str(text))})
     line_rows = []
@@ -169,8 +177,10 @@ def document_rows(body: Any) -> tuple:
         stats["masked"] = stats.get("masked", 0) + line_stats.get("masked", 0)
         if row["move_id"] is not None:
             line_rows.append(row)
-    seen = sorted({str(k) for k in header} | {str(k) for line in lines for k in line})
-    doc["fields_seen"] = seen
+    # The vendor's field names, as names only: a key that is not a plain identifier is counted, never kept.
+    keys = {str(k) for k in header} | {str(k) for line in lines for k in line}
+    doc["fields_seen"] = sorted(k for k in keys if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", k))
+    stats["fields_unnamed"] = len(keys) - len(doc["fields_seen"])
     if doc["stock_id"] is None:
         raise ParseError("no StockID in the header")
     doc["content_hash"] = content_hash(doc, line_rows)
@@ -178,10 +188,26 @@ def document_rows(body: Any) -> tuple:
     return doc, line_rows, stats
 
 
+def canonical(value: Any) -> Any:
+    """One spelling per value, so 650, 650.0 and 650.00 hash alike (review 22.11)."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, Decimal)):
+        d = Decimal(value).normalize()
+        return format(d, "f")
+    if isinstance(value, (list, tuple)):
+        return [canonical(v) for v in value]
+    return str(value)
+
+
+def line_key(line: dict) -> tuple:
+    return tuple(canonical(line.get(k)) for k in LINE_COLUMNS)
+
+
 def content_hash(doc: dict, lines: list) -> str:
     """What the copy holds of a document, as a hash: equal hashes, nothing to write (spec §4.1)."""
     payload = {
-        "doc": {k: doc.get(k) for k in DOCUMENT_COLUMNS},
-        "lines": sorted(({k: line.get(k) for k in LINE_COLUMNS} for line in lines), key=lambda x: (x.get("move_id") or 0)),
+        "doc": {k: canonical(doc.get(k)) for k in DOCUMENT_COLUMNS},
+        "lines": sorted((list(line_key(line)) for line in lines), key=lambda x: str(x)),
     }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()

@@ -1,7 +1,9 @@
 """A manual, read-only check of the books copy against WizCloud (backlog 0301, B1's acceptance), run by
 .github/workflows/books-check.yml into a throwaway Postgres that lives only inside the job.
 
-Two runs: the first copies the company's documents, the second must add and change nothing. Printed:
+Two runs: the first copies the company's documents; the second re-reads every document held and must find
+each one unchanged, add nothing, and fail no read (review 22.11: a second run that reads nothing proves
+nothing). Printed:
 the runs' counts, the series (document type, valid documents, first and last number, holes and up to ten
 missing numbers), how many text fields were masked, and the field names the vendor sent. Never a name,
 a text, an amount, a date or a card.
@@ -21,8 +23,8 @@ from app.books import sync  # noqa: E402
 from app.books.store import BooksStore  # noqa: E402
 from app.wizcloud import WizClient  # noqa: E402
 
-RUN_KEYS = ("from_id", "to_id", "probed", "found", "added", "changed", "absent", "failed", "masked", "far_hits",
-            "complete", "ok", "note", "elapsed_s")
+RUN_KEYS = ("from_id", "to_id", "probed", "found", "added", "changed", "unchanged", "absent", "failed", "masked",
+            "far_hits", "retried", "reread", "held_absent", "complete", "ok", "note", "elapsed_s")
 
 
 def main() -> int:
@@ -37,7 +39,7 @@ def main() -> int:
     runs = []
     for n in (1, 2):
         with store.session(cfg.db) as s:
-            runs.append(sync.run_once(client, s, cfg.db, trigger=f"books-check-{n}", box_s=box_s))
+            runs.append(sync.run_once(client, s, cfg.db, trigger=f"books-check-{n}", box_s=box_s, reread_held=n == 2))
     with store.session(cfg.db + ":status") as s:
         conn = s._conn
         series = s.series(cfg.db)
@@ -48,7 +50,13 @@ def main() -> int:
         lines = conn.execute("SELECT count(*), count(base_move_id) FROM books_lines WHERE company = %s", (cfg.db,)).fetchone()
         fields = sorted(r[0] for r in conn.execute(
             "SELECT DISTINCT unnest(fields_seen) FROM books_documents WHERE company = %s", (cfg.db,)).fetchall())
-    accepted = bool(runs[0]["ok"] and runs[0]["complete"] and runs[1]["ok"] and runs[1]["added"] == 0 and runs[1]["changed"] == 0)
+    first, second = runs
+    accepted = bool(
+        first["ok"] and first["complete"] and not first["failed"]
+        and second["ok"] and second["complete"] and not second["failed"]
+        and second["added"] == 0 and second["changed"] == 0
+        and second["reread"] == counts[0] and second["unchanged"] == counts[0] and second["held_absent"] == 0
+    )
     out = {
         "code_sha": os.environ.get("GITHUB_SHA"),
         "company": cfg.company,

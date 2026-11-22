@@ -64,9 +64,9 @@ def test_references_are_read_before_masking_and_never_from_a_longer_number(raw, 
     assert extract_refs(raw) == refs
 
 
-def test_a_range_is_masked_in_the_text_and_kept_as_a_reference():
-    cleaned, refs, _ = clean("עח: 50887-50891")
-    assert cleaned == "עח: #" and refs == ["50887-50891"]  # spec §3.4: which is why step 1 comes first
+def test_a_range_is_kept_in_the_text_and_as_a_reference():
+    cleaned, refs, masked = clean("עח: 50887-50891")
+    assert cleaned == "עח: 50887-50891" and refs == ["50887-50891"] and masked == 0
 
 
 def test_email_domain_keeps_the_domain_only():
@@ -77,3 +77,46 @@ def test_email_domain_keeps_the_domain_only():
 def test_clean_of_nothing():
     assert clean(None) == (None, [], 0)
     assert clean("   ") == (None, [], 0)
+
+
+# ---- the review of 22.11: formats that slipped past, and references that were lost -------------------
+
+BYPASSES = [
+    ("טל 050.123.4567", "a phone with dots"),
+    ("ת.ז 123.456.789", "an ID with dots"),
+    ("ת.ז 123\u05be456\u05be789", "an ID with the Hebrew maqaf"),
+    ("טל 050\u05be123\u05be4567", "a phone with the Hebrew maqaf"),
+    ("ת.ז 123\u00ad456\u00ad789", "an ID split by soft hyphens (invisible)"),
+    ("ת.ז 123\u061c456\u061c789", "an ID split by Arabic letter marks (invisible)"),
+    ("ת.ז 123\u2028456\u2028789", "an ID split by line separators"),
+    ("ת.ז 1234\n56789", "an ID across a newline"),
+    ("כרטיס 4580/1234/5678/9012", "a card with slashes"),
+    ("טל 05012 34567", "a phone in two five-digit halves"),
+    ("ת.ז 51234 5678", "an ID as five and four digits"),
+    ("16.08.2026 050-1234567", "a phone after a date"),
+    ("1,234,567.89", "a number past a million"),
+]
+
+
+@pytest.mark.parametrize("raw,why", BYPASSES, ids=[b[1] for b in BYPASSES])
+def test_no_format_of_a_personal_number_slips_past(raw, why):
+    cleaned, refs, masked = clean(raw)
+    assert masked >= 1 and refs == [], why
+    digits = "".join(ch for ch in cleaned if ch.isdigit())
+    assert len(digits) < 6 or digits == "16082026", (why, cleaned)
+
+
+@pytest.mark.parametrize("raw,text,refs", [
+    ("עח 50347 16.08.2026", "עח 50347 16.08.2026", ["50347"]),
+    ("עח 50347 1/3", "עח 50347 1/3", ["50347"]),
+    ("זיכוי ל-50887 2 תשלומים", "זיכוי ל-50887 2 תשלומים", ["50887"]),
+    ("סך 1,170.00 עח 50347", "סך 1,170.00 עח 50347", ["50347"]),
+])
+def test_a_reference_next_to_a_date_or_a_small_number_is_kept(raw, text, refs):
+    cleaned, got, masked = clean(raw)
+    assert (cleaned, got, masked) == (text, refs, 0)
+
+
+def test_control_characters_and_cut_emoji_never_reach_the_database():
+    assert clean("a\x00b\x07c") == ("a b c", [], 0)
+    assert clean("emoji \ud83d cut")[0] == "emoji cut"

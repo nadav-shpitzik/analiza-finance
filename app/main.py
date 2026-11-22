@@ -154,7 +154,12 @@ def _read_store(cfg: config.Config) -> dict:
         cur.execute(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'")
         state = schema_state(cur)
         times = saved_times(cur, cfg.server, cfg.db) if state["tables"].get(TABLE) == "present" and cfg.db else None
-        books = _books_glance(cur, cfg.db) if state["tables"].get("books_sync_runs") == "present" and cfg.db else None
+        books = None
+        if state["tables"].get("books_sync_runs") == "present" and cfg.db:
+            try:  # its own try: a books problem never blanks the store block (review 22.11)
+                books = _books_glance(cur, cfg.db)
+            except Exception as exc:  # noqa: BLE001 - the class only
+                books = {"error": type(exc).__name__}
     return {**state, "times": times, "books": books}
 
 
@@ -231,9 +236,14 @@ def store_health(cfg: config.Config, now: float) -> dict:
 BOOKS_BOX_S = 45  # Make's window is 300 s and the spec boxes the whole request at 60 (§2.3); B2 tunes it
 
 
+SYNC_KEY_MIN = 24
+
+
 def _sync_key_refusal(request: Request, cfg: config.Config) -> Optional[JSONResponse]:
     if not cfg.books_sync_key:
         return JSONResponse({"ok": False, "error": "BOOKS_SYNC_KEY is not set"}, status_code=503)
+    if len(cfg.books_sync_key) < SYNC_KEY_MIN:
+        return JSONResponse({"ok": False, "error": f"BOOKS_SYNC_KEY is too short (at least {SYNC_KEY_MIN} characters)"}, status_code=503)
     sent = request.headers.get("authorization", "")
     expected = f"Bearer {cfg.books_sync_key}"
     if not hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8")):

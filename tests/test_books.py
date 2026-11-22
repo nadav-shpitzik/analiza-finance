@@ -68,10 +68,10 @@ def test_a_document_is_read_through_the_allowlist_and_cleaned():
     assert doc["total_incl"] == Decimal("650.0") and isinstance(doc["total_excl"], Decimal)
     assert str(doc["value_date"]) == "2026-08-16" and doc["pay_date"] is None  # 1990-01-01 is "no date"
     assert doc["account_name"] == "ישראל ישראלי ת.ז #"
-    assert doc["remarks"] == "עח: #, טל #" and doc["refs_in_text"] == ["50887-50891"]
+    assert doc["remarks"] == "עח: 50887-50891, טל #" and doc["refs_in_text"] == ["50347", "50887-50891"]
     assert doc["email_domain"] == "example.co.il" and doc["tax_api_number_present"] is False
     assert lines[0]["move_id"] == 22000 and lines[0]["base_move_id"] is None and lines[0]["item_name"] == "קורס פייתון"
-    assert stats["masked"] == 3  # the ID, the phone, and the range (kept as a reference)
+    assert stats["masked"] == 2  # the ID in the name and the phone in the remarks
     assert "Address" in doc["fields_seen"] and "Phone" in doc["fields_seen"]  # seen by name, never by value
     text = dump({k: str(v) for k, v in doc.items()}) + dump([{k: str(v) for k, v in x.items()} for x in lines])
     for leak in ("123456789", "050-1234567", "1234567", "7654321", "רחוב הרצל", "תל אביב", "israel@", "israel"):
@@ -265,3 +265,153 @@ def test_a_tick_copies_and_says_counts_only(books_app, clock):
     assert books["sync_key_set"] is True and books["holes"] == 0 and books["series"] == 1
     assert books["last_run"]["ok"] is True and books["last_run"]["complete"] is True
     assert "50100" not in health.text and "50109" not in health.text and SYNC_KEY not in health.text
+
+
+# ---- the review of 22.11 -----------------------------------------------------------------------------
+
+
+@needs_pg
+def test_a_read_that_failed_is_read_again_and_the_run_is_not_complete_until_then(pg, clock, monkeypatch):
+    """Finding 2: one 502 each at 101, 103, 105 used to be skipped for good, with ok and complete true."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    bad = httpx.Response(502, text="Bad Gateway")
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)}, fail={101: bad, 103: bad, 105: bad})
+    first = run(vendor, pg, clock)
+    assert first["ok"] is True and first["complete"] is False and first["failed"] == {"http_error": 3}
+    assert first["added"] == 8 and "3 ids wait for a retry" in first["note"]
+    vendor.fail.clear()
+    second = run(vendor, pg, clock)
+    assert (second["retried"], second["added"], second["complete"], second["failed"]) == (3, 3, True, {})
+    with psycopg.connect(pg) as conn:
+        assert conn.execute("SELECT count(*) FROM books_documents").fetchone()[0] == 11
+        assert conn.execute("SELECT count(*) FROM books_retry").fetchone()[0] == 0
+
+
+@needs_pg
+def test_a_far_probe_that_failed_is_not_a_miss(pg, clock, monkeypatch):
+    """Finding 2: the +64 probe failed over seven documents and the run said complete."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 90)
+    monkeypatch.setattr(sync, "FIRST_RUN_MISSES", 50)  # so 164 lies past the frontier, where only a probe reaches
+    docs = {100: document(100, 50100)}
+    docs.update({sid: document(sid, 50000 + sid) for sid in range(164, 171)})
+    vendor = Vendor(docs, fail={164: httpx.Response(502, text="Bad Gateway")})
+    first = run(vendor, pg, clock)
+    assert first["complete"] is False and "a far probe failed" in first["note"] and first["added"] == 1
+    vendor.fail.clear()
+    second = run(vendor, pg, clock)
+    assert second["added"] == 7 and second["complete"] is True
+
+
+@needs_pg
+def test_a_document_the_database_refuses_is_retried_and_the_run_goes_on(pg, clock, monkeypatch):
+    """Finding 4: one refused document blocked the copy for good and left the run row unfinished."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 106)})
+    from app.books import store as books_store
+
+    real_save = books_store.BooksStore.save
+
+    def refuse_102(self, company, run_id, doc, lines):
+        if doc["stock_id"] == 102:
+            raise books_store.BooksStoreError("22021")
+        return real_save(self, company, run_id, doc, lines)
+
+    monkeypatch.setattr(books_store.BooksStore, "save", refuse_102)
+    first = run(vendor, pg, clock)
+    assert first["added"] == 5 and first["failed"] == {"store_refused": 1} and first["complete"] is False
+    assert "the database refused a document (22021)" in first["note"]
+    monkeypatch.setattr(books_store.BooksStore, "save", real_save)
+    assert run(vendor, pg, clock)["added"] == 1
+
+
+@needs_pg
+def test_a_run_that_crashes_is_still_finished_in_the_log(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({100: document(100, 50100)})
+    from app.books import parse as books_parse
+
+    def boom(body):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(sync, "document_rows", boom)
+    with pytest.raises(RuntimeError):
+        run(vendor, pg, clock)
+    with psycopg.connect(pg) as conn:
+        row = conn.execute("SELECT finished_at IS NOT NULL, ok, complete, note FROM books_sync_runs").fetchone()
+    assert row[:3] == (True, False, False) and "the run stopped on RuntimeError" in row[3]
+    assert books_parse.document_rows is not boom
+
+
+@needs_pg
+def test_the_second_run_re_reads_every_document_and_finds_it_unchanged(pg, clock, monkeypatch):
+    """Finding 2: 'a second run adds zero' held because it read nothing. The acceptance re-reads all."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 110)})
+    run(vendor, pg, clock)
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        again = sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=600, reread_held=True)
+    assert (again["reread"], again["unchanged"], again["changed"], again["added"], again["complete"]) == (10, 10, 0, 0, True)
+
+
+@needs_pg
+def test_one_amount_written_three_ways_is_one_document(pg):
+    """Finding 7: 650.0, 650.00 and 650 hashed differently, and each save said changed ['lines']."""
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        run_id = s.start_run(DEMO, "test", 1)
+        results = []
+        for spelling in ("650.0", "650.00", "650"):
+            text = json.dumps(document(7, 50007)).replace('"Tftal": 650.0', f'"Tftal": {spelling}')
+            doc, lines, _ = document_rows(json.loads(text, parse_float=Decimal))
+            results.append(s.save(DEMO, run_id, doc, lines))
+    assert results == ["added", "unchanged", "unchanged"]
+
+
+@needs_pg
+def test_an_empty_company_reads_the_wide_frontier_once(pg, clock):
+    """Demo holds nothing: once a run reached the end, the next ones read the plain 50 and the far probes."""
+    vendor = Vendor({})
+    first = run(vendor, pg, clock)
+    second = run(vendor, pg, clock)
+    assert first["probed"] == sync.FIRST_RUN_MISSES + len(sync.FAR_PROBES) and first["complete"] is True
+    assert second["probed"] == sync.MISSES_IN_A_ROW + len(sync.FAR_PROBES)
+
+
+@needs_pg
+def test_every_read_is_bounded_by_what_is_left_of_the_box(pg, clock, monkeypatch):
+    """Finding 6: a read that started at 44 s of a 45 s box could take 30 s more."""
+    import time as _time
+
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    seen = []
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 103)})
+    client = vendor.client(clock)
+    real_get = client.get_doc
+
+    def spy(sid, deadline=None):
+        seen.append(deadline - _time.monotonic())
+        return real_get(sid, deadline=deadline)
+
+    client.get_doc = spy
+    store = BooksStore(pg)
+    with store.session(DEMO) as s:
+        sync.run_once(client, s, DEMO, trigger="test", box_s=20)
+    assert seen and max(seen) <= 20 - sync.MARGIN_S + 0.5
+
+
+def test_booleans_and_field_names_are_read_strictly():
+    body = document(7, 50007)
+    body["DocumentDetails"][1][0]["VatExempt"] = "0"
+    body["DocumentDetails"][0][0]["SESSION-LIKE KEY 123456789"] = 1
+    doc, lines, stats = document_rows(json.loads(json.dumps(body), parse_float=Decimal))
+    assert lines[0]["vat_exempt"] is False  # bool("0") was True
+    assert stats["fields_unnamed"] == 1 and not any("123456789" in f for f in doc["fields_seen"])
+
+
+@needs_pg
+def test_a_short_sync_key_is_refused(books_app, monkeypatch):
+    client, _ = books_app
+    monkeypatch.setenv("BOOKS_SYNC_KEY", "short")
+    r = client.post("/api/books/tick", headers={"Authorization": "Bearer short"})
+    assert r.status_code == 503 and "too short" in r.json()["error"]
