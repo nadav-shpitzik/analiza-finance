@@ -25,7 +25,7 @@ from app.books.store import BooksStore  # noqa: E402
 from app.wizcloud import WizClient  # noqa: E402
 
 RUN_KEYS = ("from_id", "to_id", "probed", "found", "added", "changed", "unchanged", "absent", "failed", "masked",
-            "far_hits", "retried", "reread", "held_absent", "queued", "complete", "ok", "note", "elapsed_s",
+            "far_hits", "retried", "reread", "held_absent", "queued", "stuck", "complete", "ok", "note", "elapsed_s",
             "masked_fields", "clean")
 TEXT_COLUMNS = ("account_name", "account_key", "reference", "remarks", "details", "currency", "batch")
 
@@ -46,6 +46,7 @@ def main() -> int:
     with store.session(cfg.db + ":status") as s:
         conn = s._conn
         series = s.series(cfg.db)
+        retry = s.retry_summary(cfg.db, limit=0)
         counts = conn.execute(
             "SELECT count(*), count(*) FILTER (WHERE status = 0), count(*) FILTER (WHERE cardinality(refs_in_text) > 0), "
             "count(*) FILTER (WHERE email_domain IS NOT NULL), count(*) FILTER (WHERE tax_api_number_present) "
@@ -78,6 +79,7 @@ def main() -> int:
                       "with_email_domain": counts[3], "with_tax_api_number": counts[4]},
         "lines": {"held": lines[0], "with_base_move_id": lines[1]},
         "series": series,
+        "retry": {k: retry[k] for k in ("waiting", "by_kind", "stuck_count")},
         "id_gaps": _gaps(ids),
         "longest_text": dict(zip(TEXT_COLUMNS, longest[:-1]), **{"line.details": line_longest[0],
                                                                   "line.item_name": line_longest[1]}),

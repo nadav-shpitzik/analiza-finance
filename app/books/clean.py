@@ -7,15 +7,22 @@ account, a card number, an email. So every text field passes through `clean`:
 
 1. Normalise: NFKC; a digit of any script becomes an ASCII digit; invisible characters go (format
    characters, the default-ignorables such as variation selectors and blank fillers, lone surrogates);
-   control characters and every kind of whitespace become one space.
+   control characters and every kind of whitespace become one space. Markup that hides a separator is
+   undone and the text normalised again: HTML entities (`&nbsp;`, also escaped twice), line-break and
+   formatting tags (`<br>`), and `\n`, `\r`, `\t` written as text. Between two digits, the two keys of the
+   Hebrew layout that type '.' and ',' (ץ and ת) are read as the key they were. The length is bounded
+   before and after normalising, since NFKC can make one character eighteen (third review 22.11).
 2. Emails become `@`: the run of address characters on each side of an at sign, one space allowed on
-   either side, and "(at)" or "[at]" count as an at sign. A linear scan, never a backtracking regex
-   (the review measured 14 s for one field with the old one).
-3. A number is a run of digits joined by anything that is not a letter, at most three characters at a
-   time: spaces, dots, dashes, slashes, colons, pipes, marks, symbols. It is split at spaces into pieces,
-   and each piece gets a shape:
+   either side, and "(at)", "[@]", "{at}", "<at>" in any bracket, or "שטרודל" between two address
+   characters, count as an at sign. A linear scan, never a backtracking regex (the review measured 14 s
+   for one field with the old one).
+3. A number is a run of digits joined by anything that is not a letter, at most three such characters at
+   a time not counting spaces (12345 -- 6789 is one number), or with no space by at most three characters
+   of which one is a letter (054ץ987ץ6543, 123אְ456, 123-א456: a typo splits nothing; third review 22.11).
+   It is split at spaces into pieces, and each piece gets a shape:
    - a document number (five digits, not 0-led), a range (50887-50891, also 50887-891 and 50887 - 50891),
-     a list (50887,50888 or 50887/50888);
+     a list (50887,50888, 50887/50888 or 50887+50888), and at the end of the field a list cut by the
+     field's width after two whole numbers (50887,50888,508);
    - a date with a four-digit year (16.08.2026, 2026-08-16), a month (08/2026, 2026-08), a date range
      (16.08.2026-20.08.2026), a span of years (2025/2026, 2025-26), a date with a two-digit year (16/8/26);
    - an amount below a million (1,170.00, 550.85, 123,456), not 0-led;
@@ -30,14 +37,18 @@ account, a card number, an email. So every text field passes through `clean`:
    step 1): no piece of a masked number ever reaches `refs_in_text`.
 
 A cost, chosen for the rule that an ID is never stored (22.11): a document number beside a bare
-four-digit number (50347 2026, 50347 1170) is masked, because an ID is also written 51234 5678. `stats`
-counts what masking cost, by reason, so books-check can show it on the real books.
+four-digit number (50347 2026, 50347 1170) is masked, because an ID is also written 51234 5678. The same
+holds for any piece of at most four digits beside it that is not small (50347 1,170, 50347 08/26, 50347
+1/12: confirmed by the third review's pass, which found them masked): a strong shape always has five
+digits or more, so it can never be the end of an ID. `stats` counts what masking cost, by reason, so
+books-check can show it on the real books (no reference lost in Analiza's, 22.11).
 
 Nothing here logs or returns the text it was given except as cleaned.
 """
 
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from decimal import Decimal
@@ -68,7 +79,10 @@ _DASHES = "-‐‑‒–—−־"
 _REF = r"[1-9]\d{4}"
 _RE_REF = re.compile(rf"^{_REF}$")
 _RE_RANGE = re.compile(rf"^({_REF})[{_DASHES}](\d{{5}}|\d{{1,3}})$")
-_RE_LIST = re.compile(rf"^{_REF}(?:[,/;]{_REF})+$")
+_RE_LIST = re.compile(rf"^{_REF}(?:[,/;+&]{_REF})+$")
+# A list cut by the field's width: two whole numbers at least, then a stub (third review 22.11). Only as one
+# piece with no space, and only at the end of the field: a stub after a space is how an ID's end is written.
+_RE_LIST_CUT = re.compile(rf"^({_REF}(?:[,/;+&]{_REF})+)[,/;+&]\d{{1,4}}$")
 _RE_DATE = re.compile(r"^(\d{1,2})([./-])(\d{1,2})\2((?:19|20)\d{2})$")
 _RE_ISO = re.compile(r"^((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})$")
 _RE_DATE2 = re.compile(r"^(\d{1,2})([./-])(\d{1,2})\2(\d{2})$")
@@ -76,7 +90,14 @@ _RE_MONTH = re.compile(r"^(\d{1,2})[./-]((?:19|20)\d{2})$|^((?:19|20)\d{2})[./-]
 _RE_YEARS = re.compile(r"^((?:19|20)\d{2})[/-]((?:19|20)\d{2}|\d{2})$")  # 2025/2026, 2025-26
 _RE_AMOUNT = re.compile(r"^(?:0|[1-9]\d{0,2})(?:,\d{3})+(?:\.\d{1,2})?$|^(?:0|[1-9]\d{0,5})\.\d{1,2}$")
 _RE_AMOUNT_STRONG = re.compile(r"^[1-9][\d,]*\d{2}\.\d{2}$")  # 100.00 and up, two decimal places
-_AT_WORDS = re.compile(r"\((?:at)\)|\[(?:at)\]", re.IGNORECASE)
+_AT_WORDS = re.compile(r"[(\[{<] ?(?:at|@|שטרודל) ?[)\]}>]", re.IGNORECASE)
+_AT_HEBREW = re.compile(r"(?<=[A-Za-z0-9._%+'-]) ?שטרודל ?(?=[A-Za-z0-9])")
+# Markup that hides a separator between digits (third review 22.11): line-break and formatting tags, and an
+# escape written as text. Entities go through html.unescape.
+_TAGS = re.compile(r"</?(?:br|p|div|span|b|i|u|strong|em|font|li|ul|ol|tr|td|th|table|tbody|thead)\b[^<>]{0,200}>",
+                   re.IGNORECASE)
+_ESCAPED = re.compile(r"\\[nrt]")
+_LAYOUT = (re.compile(r"(?<=[0-9])ץ(?=[0-9])"), re.compile(r"(?<=[0-9])ת(?=[0-9])"))
 _ADDRESS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._%+-'")
 _DOMAIN = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 # The shapes a piece of a longer number may have. A piece outside them masks the number.
@@ -107,7 +128,7 @@ def normalize(text: str) -> str:
 
 def _mask_emails(text: str) -> tuple:
     """(text with every address as '@', how many). Linear: each at sign looks back only to the last cut."""
-    text = _AT_WORDS.sub("@", text)
+    text = _AT_HEBREW.sub("@", _AT_WORDS.sub("@", text))
     if "@" not in text:
         return text, 0
     out, last, count, n = [], 0, 0, len(text)
@@ -140,8 +161,10 @@ def _is_digit(ch: str) -> bool:
 
 
 def _numbers(text: str):
-    """(start, end) of every number in a normalised text: digits joined by at most MAX_JOIN characters that
-    are neither a digit nor a letter. Linear: each join looks at most MAX_JOIN characters ahead."""
+    """(start, end) of every number in a normalised text: digits joined by at most MAX_JOIN characters that are
+    neither a digit nor a letter, spaces not counted (12345 -- 6789), or with no space by at most MAX_JOIN
+    characters of which one is a letter (054ץ987ץ6543, 123אְ456: third review 22.11). Linear: each join looks at
+    most 2 * MAX_JOIN + 1 characters ahead."""
     n, i = len(text), 0
     while i < n:
         if not _is_digit(text[i]):
@@ -154,10 +177,26 @@ def _numbers(text: str):
                 j += 1
                 end = j
                 continue
-            k = j
-            while k < n and k - j < MAX_JOIN and not _is_digit(text[k]) and not text[k].isalpha():
+            # Here text[j - 1] is a digit. A join is at most MAX_JOIN marks (neither a digit nor a letter), spaces not
+            # counted; or, with no space in it, at most MAX_JOIN characters of which one is a letter (a typo, a key
+            # of the Hebrew layout, a letter with its points: 054ץ987, 123אְ456, 123-א456).
+            k, marks, letter, space, joins = j, 0, False, False, True
+            while k < n and not _is_digit(text[k]):
+                ch = text[k]
+                if ch == " ":
+                    space = True
+                elif ch.isalpha():
+                    if letter:
+                        joins = False
+                        break
+                    letter = True
+                else:
+                    marks += 1
+                if marks > MAX_JOIN or k - j > 2 * MAX_JOIN or (letter and (space or k - j >= MAX_JOIN)):
+                    joins = False
+                    break
                 k += 1
-            if k > j and k < n and _is_digit(text[k]):
+            if joins and k < n:
                 j = k
                 continue
             break
@@ -258,6 +297,12 @@ def _refs_of(kind: str, core: str) -> list:
     return []
 
 
+def _cut_list(core: str) -> Optional[str]:
+    """The whole numbers of a list cut by the field's width (50887,50888,508 -> 50887,50888), or None."""
+    m = _RE_LIST_CUT.match(core)
+    return m.group(1) if m else None
+
+
 def _process(text: str, stats: Optional[dict]) -> tuple:
     """(cleaned text, refs, numbers masked) for a normalised text with its emails already masked."""
     refs: list = []
@@ -267,6 +312,9 @@ def _process(text: str, stats: Optional[dict]) -> tuple:
     for start, end in _numbers(text):
         raw = [(_core(p), p) for p in text[start:end].split(" ")]
         raw = [(shape(core), core, p) for core, p in raw]
+        if " " not in text[start:end] and not text[end:].strip() and raw[0][0] == "plain" and _cut_list(raw[0][1]):
+            whole = _cut_list(raw[0][1])
+            raw = [("list", whole, whole)]  # the stub the width cut is no number: set aside, nothing kept from it
         pieces = []
         i = 0
         while i < len(raw):
@@ -280,6 +328,9 @@ def _process(text: str, stats: Optional[dict]) -> tuple:
                 pieces.append((kind, sum(1 for ch in core if _is_digit(ch)), core))
             i += 1
         reason = _decide([(k, d) for k, d, _ in pieces])
+        if stats is not None and any(ch.isalpha() for ch in text[start:end]):  # joined through a letter (22.11)
+            key = "letter_joined" if reason is None else "letter_joined_masked"
+            stats[key] = stats.get(key, 0) + 1
         if reason is None:
             for kind, _, core in pieces:
                 refs.extend(_refs_of(kind, core))
@@ -309,18 +360,54 @@ def _bounded(text: str) -> str:
     return head[:cut]
 
 
+def _unmark(text: str) -> str:
+    """HTML entities (twice escaped too), line-break and formatting tags, and escapes written as text, undone:
+    each hid a separator between digits behind letters (third review 22.11)."""
+    for _ in range(3):
+        undone = html.unescape(text)
+        if undone == text:
+            break
+        text = undone
+    return _ESCAPED.sub(" ", _TAGS.sub(" ", text))
+
+
+def _prepare(raw: str) -> tuple:
+    """(the text the scans read, whether a bound cut it, whether markup was undone, Hebrew-layout keys read): bounded, normalised and bounded again - NFKC can make
+    one character eighteen (third review 22.11, finding 8) - with its markup undone, and the Hebrew layout's
+    '.' and ',' between digits read as the keys they were."""
+    cut = len(raw) > MAX_RAW
+    text = normalize(_bounded(raw))
+    cut = cut or len(text) > MAX_RAW
+    text = _bounded(text)
+    undone = _unmark(text)
+    marked = undone != text
+    if marked:
+        text = normalize(undone)
+        cut = cut or len(text) > MAX_RAW
+        text = _bounded(text)
+    dot, comma = _LAYOUT
+    text, dots = dot.subn(".", text)
+    text, commas = comma.subn(",", text)
+    return text, cut, marked, dots + commas
+
+
 def clean(text: Optional[str], stats: Optional[dict] = None) -> tuple:
     """(cleaned text or None, refs that kept their shape, number of masks). `stats` (optional) gathers
-    counts: numbers_masked, refs_lost by reason, and fields_cut (longer than MAX_RAW read or MAX_KEPT kept)."""
+    counts: numbers_masked, refs_lost by reason, fields_cut (longer than MAX_RAW read or MAX_KEPT kept), and what the
+    third review's rules touched: markup_undone, layout_keys, letter_joined (kept) and letter_joined_masked, and
+    emails_masked."""
     if text is None:
         return None, [], 0
     raw = str(text)
-    norm = normalize(_bounded(raw))
+    norm, cut, marked, keys = _prepare(raw)
     norm, emails = _mask_emails(norm)
     cleaned, refs, masks = _process(norm, stats)
     cleaned = cleaned.strip()
-    if stats is not None and (len(raw) > MAX_RAW or len(cleaned) > MAX_KEPT):
-        stats["fields_cut"] = stats.get("fields_cut", 0) + 1
+    if stats is not None:
+        for name, add in (("fields_cut", cut or len(cleaned) > MAX_KEPT), ("markup_undone", marked), ("layout_keys", keys),
+                          ("emails_masked", emails)):
+            if add:
+                stats[name] = stats.get(name, 0) + int(add)
     cleaned = cleaned[:MAX_KEPT].strip()
     return (cleaned or None), refs, masks + emails
 

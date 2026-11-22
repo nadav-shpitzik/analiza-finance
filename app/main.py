@@ -293,8 +293,9 @@ def books_tick(request: Request) -> JSONResponse:
 
 @app.get("/api/books/status")
 def books_status(request: Request) -> JSONResponse:
-    """The last run and the series - documents held, first and last number, holes - behind the sync key:
-    document numbers and counts are no one's business on a public URL."""
+    """The last run, the series - documents held, first and last number, holes - and books_retry - how many ids
+    wait, by kind, and the ids that keep failing - behind the sync key: document numbers and counts are no one's
+    business on a public URL."""
     cfg = config.load()
     refusal = _sync_key_refusal(request, cfg)
     if refusal is not None:
@@ -304,7 +305,8 @@ def books_status(request: Request) -> JSONResponse:
         with store.session(cfg.db + ":status") as s:  # its own lock id: reading never waits for a run
             if s is None:
                 return JSONResponse({"ok": False, "error": "busy"})
-            return JSONResponse({"ok": True, "company": cfg.company, "last_run": s.last_run(cfg.db), "series": s.series(cfg.db)})
+            return JSONResponse({"ok": True, "company": cfg.company, "last_run": s.last_run(cfg.db), "series": s.series(cfg.db),
+                                 "retry": s.retry_summary(cfg.db)})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
 

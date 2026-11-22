@@ -233,3 +233,102 @@ def test_cleaning_is_linear(raw):
 
 def test_every_digit_becomes_ascii():
     assert normalize("٣٤٥ ７ ❶") == "345 7 1"
+
+
+# ---- the third review of 22.11: a letter between digits, and text that hides a separator -----------------
+
+LETTER_JOINED = [
+    ("טל 054ץ987ץ6543", "a phone typed in the Hebrew layout, where '.' is ץ"),
+    ("כרטיס 4987ת6543ת9876ת5432", "a card typed in the Hebrew layout, where ',' is ת"),
+    ("ת.ז 98765ץ4321", "an ID whose first five digits read as a document number"),
+    ("ת.ז 123א456א789", "an ID with a letter between its groups"),
+    ("ת.ז 123&nbsp;456&nbsp;789", "an ID joined by &nbsp; as text"),
+    ("ת.ז 1234<br>56789", "an ID across an HTML line break"),
+    ("ת.ז 1234\\n56789", "an ID across a newline written as text"),
+    ("ת.ז 12345 -- 6789", "an ID joined by a double dash"),
+    ("ת.ז 123אְ456אְ789", "an ID with a pointed letter between its groups"),
+    ("ת.ז 123-א456-א789", "an ID with a dash and a letter between its groups"),
+    ("ת.ז 123.ץ456.ץ789", "an ID typed with both layouts' dot"),
+]
+
+
+@pytest.mark.parametrize("raw,why", LETTER_JOINED, ids=[x[1] for x in LETTER_JOINED])
+def test_a_letter_or_markup_between_digits_does_not_split_a_number(raw, why):
+    """Third review 22.11, finding 2: a letter ended a number, so each part was judged alone and kept."""
+    cleaned, refs, masked = clean(raw)
+    assert masked >= 1 and refs == [] and not any(ch.isdigit() for ch in cleaned), (why, cleaned, refs)
+
+
+@pytest.mark.parametrize("number", [ID, PHONE])
+def test_no_grouping_of_an_id_or_a_phone_joined_by_a_letter_keeps_a_digit(number):
+    tried = 0
+    for groups in _groupings(number):
+        for letter in "אבגדהוזחטיכלמנסעפצקרשתךםןףץxXnN":
+            cleaned, refs, masked = clean("ת.ז " + letter.join(groups))
+            tried += 1
+            assert masked >= 1 and refs == [] and not any(ch.isdigit() for ch in cleaned), (groups, letter, cleaned)
+    assert tried > 1000  # 36 or 45 groupings, 31 letters
+
+
+@pytest.mark.parametrize("raw,text", [
+    ("16ץ08ץ2026", "16.08.2026"),  # a date typed in the Hebrew layout keeps its shape
+    ("סך 1ת170ץ00", "סך 1,170.00"),
+    ("עח 50347 16ץ08ץ2026", "עח 50347 16.08.2026"),
+])
+def test_the_hebrew_layout_between_digits_is_read_as_the_key_it_was(raw, text):
+    cleaned, _, masked = clean(raw)
+    assert (cleaned, masked) == (text, 0)
+
+
+@pytest.mark.parametrize("raw,refs", [
+    ("עח 50347+50348", ["50347", "50348"]),
+    ("עח 50347&50348", ["50347", "50348"]),
+    ("עח 50347,50348,50349,503", ["50347", "50348", "50349"]),  # a list cut by the field's width
+    ("50347/50348/5", ["50347", "50348"]),
+])
+def test_a_list_joined_by_a_plus_or_cut_by_the_field_keeps_its_references(raw, refs):
+    """Third review 22.11, finding 6: each was masked whole and its references lost."""
+    cleaned, got, masked = clean(raw)
+    assert (cleaned, got, masked) == (raw, refs, 0)
+
+
+@pytest.mark.parametrize("raw", [
+    "ת.ז 51234,5678",  # one whole number and a stub: an ID with a comma, not a cut list
+    "עח 51234,56789,123 סוף",  # a stub that does not end the field
+    "עח 51234 56789 1234",  # after a space a stub is how an ID's end is written (56789 1234)
+    "עח 50347 1,170", "עח 50347 08/26", "עח 50347 1/12",  # the chosen cost: at most four digits beside a reference
+])
+def test_what_could_end_an_id_is_still_masked_with_the_reference(raw):
+    cleaned, refs, masked = clean(raw)
+    assert masked >= 1 and refs == [] and "#" in cleaned
+
+
+@pytest.mark.parametrize("raw", [
+    "israel.israeli[@]gmail.com", "israel.israeli{at}gmail.com", "israel.israeli שטרודל gmail.com",
+    "israel.israeli(@)gmail.com", "israel.israeli<at>gmail.com", "israel.israeli{@}gmail.com", "israel.israeli [ at ] gmail.com",
+    "israel.israeli&#64;gmail.com",
+])
+def test_a_disguised_email_loses_its_address(raw):
+    """Finding 7: an at sign in brackets, as a word or as an entity kept the name before it."""
+    cleaned, _, masked = clean(raw)
+    assert masked >= 1 and "israeli" not in cleaned, cleaned
+
+
+@pytest.mark.parametrize("raw,text", [("עוגת שטרודל", "עוגת שטרודל"), ("R&D 2026 AT&T", "R&D 2026 AT&T"),
+                                      ("Tom &amp; Jerry", "Tom & Jerry"), ("C:\\new", "C: ew")])
+def test_text_around_the_markup_rules_is_left_alone(raw, text):
+    assert clean(raw)[0] == text
+
+
+def test_the_scans_never_read_more_than_the_bound_after_nfkc(monkeypatch):
+    """Finding 8: the field was cut to 100,000 characters before NFKC, which made each ﷺ eighteen: the scans read
+    1.8 million characters of one field."""
+    from app.books import clean as module
+
+    seen = []
+    real = module._process
+    monkeypatch.setattr(module, "_process", lambda text, stats: (seen.append(len(text)), real(text, stats))[1])
+    stats = {}
+    clean("ﷺ" * module.MAX_RAW, stats)
+    clean("ﷺ" * 10_000, stats)
+    assert max(seen) <= module.MAX_RAW and stats["fields_cut"] == 2

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 from .doctypes import INFERRED, VALID_STATUS, role
 from .parse import DOCUMENT_COLUMNS, LINE_COLUMNS, line_key
@@ -29,6 +29,10 @@ BOOKS_TABLES = {
                         "added", "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note"),
 }
 HOLES_SAMPLE = 10
+STUCK_SAMPLE = 20
+# Ids put in books_retry before they were ever read: attempts 0, and a row already there keeps its kind.
+_QUEUE = ("INSERT INTO books_retry (company, stock_id, kind, attempts) SELECT %s, unnest(%s::bigint[]), %s, 0 "
+          "ON CONFLICT (company, stock_id) DO NOTHING")
 
 
 class BooksStoreError(Exception):
@@ -125,6 +129,34 @@ class BooksStore:
             return [r[0] for r in self._conn.execute(
                 "SELECT stock_id FROM books_retry WHERE company = %s ORDER BY stock_id", (company,)).fetchall()]
 
+    def retry_rows(self, company: str) -> list:
+        """(stock_id, kind, attempts, last_failed_at) of every id waiting in books_retry. `attempts` counts failed
+        reads: an id a probe jumped over waits with 0 until it is read."""
+        with _guard():
+            return [tuple(r) for r in self._conn.execute(
+                "SELECT stock_id, kind, attempts, last_failed_at FROM books_retry WHERE company = %s ORDER BY stock_id",
+                (company,)).fetchall()]
+
+    def retry_summary(self, company: str, limit: int = STUCK_SAMPLE) -> dict:
+        """What /api/books/status says of books_retry: how many ids wait, by kind, and the ids that failed more
+        than once (stuck), most attempts first (third review 22.11: three such ids froze the copy unseen)."""
+        with _guard():
+            by_kind = dict(self._conn.execute(
+                "SELECT kind, count(*) FROM books_retry WHERE company = %s GROUP BY kind ORDER BY kind", (company,)).fetchall())
+            stuck = self._conn.execute(
+                "SELECT stock_id, kind, attempts, first_failed_at, last_failed_at FROM books_retry "
+                "WHERE company = %s AND attempts >= 2 ORDER BY attempts DESC, stock_id LIMIT %s", (company, limit)).fetchall()
+            stuck_count = self._conn.execute(
+                "SELECT count(*) FROM books_retry WHERE company = %s AND attempts >= 2", (company,)).fetchone()[0]
+        return {
+            "waiting": sum(by_kind.values()),
+            "by_kind": by_kind,
+            "stuck_count": stuck_count,
+            "stuck": [{"stock_id": r[0], "kind": r[1], "attempts": r[2],
+                       "first_failed_at": r[3].isoformat(timespec="seconds"),
+                       "last_failed_at": r[4].isoformat(timespec="seconds")} for r in stuck],
+        }
+
     def mark_failed(self, company: str, stock_id: int, kind: str) -> None:
         with _guard():
             self._conn.execute(
@@ -134,13 +166,9 @@ class BooksStore:
             )
 
     def queue_retry(self, company: str, stock_ids: list, kind: str) -> None:
-        """Ids to read before the frontier (a range a far probe jumped over). A row already there keeps its kind."""
+        """Ids to read first in the next run, never read yet: attempts 0. A row already there keeps its kind."""
         with _guard():
-            self._conn.execute(
-                "INSERT INTO books_retry (company, stock_id, kind) SELECT %s, unnest(%s::bigint[]), %s "
-                "ON CONFLICT (company, stock_id) DO NOTHING",
-                (company, list(stock_ids), kind),
-            )
+            self._conn.execute(_QUEUE, (company, list(stock_ids), kind))
 
     def clear_retry(self, company: str, stock_id: int) -> None:
         with _guard():
@@ -159,13 +187,19 @@ class BooksStore:
             ).fetchone()[0]
 
     # ---- one document -----------------------------------------------------------------------------
-    def save(self, company: str, run_id: int, doc: dict, lines: list) -> str:
-        """'added', 'changed' or 'unchanged'. One transaction: the document, its lines and the event."""
+    def save(self, company: str, run_id: int, doc: dict, lines: list, jumped: Iterable[int] = ()) -> str:
+        """'added', 'changed' or 'unchanged'. One transaction: the document, its lines, the event, its own
+        books_retry row cleared, and `jumped` - the ids below it that the run has not read - put in books_retry,
+        so no crash between the two leaves them unread for good (third review 22.11, finding 4)."""
         cols = ("company",) + DOCUMENT_COLUMNS + ("content_hash", "fields_seen")
         values = [company] + [doc.get(c) for c in DOCUMENT_COLUMNS] + [doc["content_hash"], doc["fields_seen"]]
+        jumped = list(jumped)
         with _guard(), self._conn.transaction():
             cur = self._conn.cursor()
             cur.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+            if jumped:
+                cur.execute(_QUEUE, (company, jumped, "jumped"))
+            cur.execute("DELETE FROM books_retry WHERE company = %s AND stock_id = %s", (company, doc["stock_id"]))
             cur.execute(
                 f"SELECT content_hash, {', '.join(DOCUMENT_COLUMNS)} FROM books_documents "
                 "WHERE company = %s AND stock_id = %s FOR UPDATE",

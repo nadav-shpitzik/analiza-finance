@@ -67,9 +67,11 @@ class ParseError(Exception):
     """The answer is not a document as seen live: counted as a failed read, never stored."""
 
 
-# A number from the books is between these powers of ten (an amount below 10^18, a rate or a price down to
-# 10^-12): anything outside, or not finite, is not a document as seen live. Without the bound, 1E+999999
-# would build a million-digit string, and Infinity broke int() outside the parser's errors (review 22.11).
+# A number from the books is below 10^18: anything larger, or not finite, is not a document as seen live. Without
+# the bound, 1E+999999 would build a million-digit string, and Infinity broke int() outside the parser's errors
+# (review 22.11). A number below 10^-12 is zero: no amount, rate or price is that small, and the residue of
+# subtracting two doubles is (2^-42 is 2.27e-13). It was a failed read, and three such documents froze the copy
+# (third review 22.11, finding 1).
 MAX_EXP = 18
 MIN_EXP = -12
 _EXACT = Context(prec=60)  # canonical() never rounds: every value inside the bound has at most 31 digits
@@ -79,8 +81,8 @@ _FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,31}")
 
 
 def _number(v: Any) -> Optional[Decimal]:
-    """A finite Decimal inside the bound, None for an empty or unreadable value, ParseError for a number
-    no document holds."""
+    """A finite Decimal below the bound (zero below 10^-12), None for an empty or unreadable value, ParseError for
+    a number no document holds."""
     if v is None or v == "" or isinstance(v, bool):
         return None
     try:
@@ -89,8 +91,10 @@ def _number(v: Any) -> Optional[Decimal]:
         return None
     if not d.is_finite():
         raise ParseError("a number that is not finite")
-    if d and not MIN_EXP <= d.adjusted() <= MAX_EXP:
+    if d and d.adjusted() > MAX_EXP:
         raise ParseError("a number out of range")
+    if d and d.adjusted() < MIN_EXP:
+        return Decimal(0)
     return d
 
 

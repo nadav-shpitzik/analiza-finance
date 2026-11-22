@@ -315,10 +315,10 @@ def test_a_document_the_database_refuses_is_retried_and_the_run_goes_on(pg, cloc
 
     real_save = books_store.BooksStore.save
 
-    def refuse_102(self, company, run_id, doc, lines):
+    def refuse_102(self, company, run_id, doc, lines, **kw):
         if doc["stock_id"] == 102:
             raise books_store.BooksStoreError("22021")
-        return real_save(self, company, run_id, doc, lines)
+        return real_save(self, company, run_id, doc, lines, **kw)
 
     monkeypatch.setattr(books_store.BooksStore, "save", refuse_102)
     first = run(vendor, pg, clock)
@@ -560,7 +560,9 @@ def test_a_retried_id_above_the_high_water_mark_is_read_once(pg, clock, monkeypa
     vendor.fail.clear()
     vendor.reads.clear()
     second = run(vendor, pg, clock)
-    assert second["retried"] == 3 and second["found"] == 3 and second["from_id"] == 109
+    # the frontier starts at the high-water mark (106) and steps past the ids that failed before; they are read
+    # once, after it (third review 22.11)
+    assert second["retried"] == 3 and second["found"] == 3 and second["from_id"] == 106
     assert all(vendor.reads.count(sid) == 1 for sid in (106, 107, 108)) and second["complete"] is True
 
 
@@ -573,7 +575,7 @@ def test_what_masking_cost_is_counted_by_field_and_reason(pg, clock, monkeypatch
 
 
 def test_a_number_out_of_range_or_not_finite_is_not_a_document():
-    for value in ('"Infinity"', "1E+999999", "1E-99"):
+    for value in ('"Infinity"', "1E+999999"):  # 1E-99 is zero since the third review (a float residue)
         text = json.dumps(document(7, 50007)).replace('"Tftal": 650.0', f'"Tftal": {value}')
         with pytest.raises(ParseError):
             document_rows(json.loads(text, parse_float=Decimal))
@@ -610,3 +612,152 @@ def test_health_says_when_the_sync_key_is_too_short(monkeypatch):
     assert main.sync_key_state(config.load()) == "ok"
     monkeypatch.delenv("BOOKS_SYNC_KEY")
     assert main.sync_key_state(config.load()) == "missing"
+
+
+# ---- the third review of 22.11: the gate before Analiza ---------------------------------------------------
+
+# Three answers no retry fixes, as a document the vendor cannot render, an answer that is not a document, and a
+# value no document holds would give: each is a failed read every time it is read.
+STUCK = {
+    "vendor_error": httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Object reference not set to an instance of an object."}}),
+    "not_a_document": httpx.Response(200, json={"DocumentDetails": []}),
+    "no_such_value": httpx.Response(200, content=json.dumps(document(0, 0)).replace('"status": 1', '"status": "Infinity"').encode()),
+}
+
+
+def stuck_at(*ids):
+    return dict(zip(ids, STUCK.values()))
+
+
+def retry_attempts(url):
+    with psycopg.connect(url) as conn:
+        return conn.execute("SELECT stock_id, attempts FROM books_retry ORDER BY stock_id").fetchall()
+
+
+def held_ids(url):
+    with psycopg.connect(url) as conn:
+        return [r[0] for r in conn.execute("SELECT stock_id FROM books_documents ORDER BY stock_id").fetchall()]
+
+
+@needs_pg
+def test_ids_that_always_fail_never_freeze_the_copy(pg, clock, monkeypatch):
+    """Third review 22.11, finding 1: books_retry was read first, and three ids that fail on every read made
+    'three failed reads in a row' stop each run before the frontier: no new document was read again."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)}, fail=stuck_at(102, 104, 106))
+    first = run(vendor, pg, clock)
+    assert first["ok"] is True and first["added"] == 8 and first["complete"] is False
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(111, 116)})
+    second = run(vendor, pg, clock)
+    assert second["ok"] is True and second["added"] == 5, second["note"]
+    third = run(vendor, pg, clock)
+    assert third["ok"] is True and third["added"] == 0 and third["complete"] is False
+    assert held_ids(pg) == [sid for sid in range(100, 116) if sid not in (102, 104, 106)]
+    assert retry_attempts(pg) == [(102, 3), (104, 3), (106, 3)]
+
+
+@needs_pg
+def test_three_stuck_ids_at_the_top_stop_one_run_only(pg, clock, monkeypatch):
+    """Finding 1 at the frontier: three fresh failures in a row may be WizCloud failing, so the first run stops;
+    the next one knows them, reads past them, and reads them once more after the frontier."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 112)}, fail=stuck_at(106, 107, 108))
+    first = run(vendor, pg, clock)
+    assert first["ok"] is False and first["added"] == 6
+    vendor.reads.clear()
+    second = run(vendor, pg, clock)
+    assert second["ok"] is True and second["added"] == 3, second["note"]
+    assert all(vendor.reads.count(sid) == 1 for sid in (106, 107, 108))
+    assert held_ids(pg) == [sid for sid in range(100, 112) if sid not in (106, 107, 108)]
+
+
+def test_a_float_residue_below_the_bound_is_zero_not_a_failed_read():
+    """Finding 1's likely trigger: 2^-42, the residue of subtracting two doubles, was 'a number out of range'."""
+    for value in ("2.2737367544323206e-13", "-2.2737367544323206e-13", "1E-99"):
+        text = json.dumps(document(7, 50007)).replace('"tftalvatfree": 0', f'"tftalvatfree": {value}')
+        doc, _, _ = document_rows(json.loads(text, parse_float=Decimal))
+        assert doc["total_vat_free"] == 0
+
+
+@needs_pg
+def test_the_status_route_names_the_ids_that_keep_failing(books_app):
+    client, vendor = books_app
+    vendor.fail.update(stuck_at(103))
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+    client.post("/api/books/tick", headers=auth)
+    client.post("/api/books/tick", headers=auth)
+    retry = client.get("/api/books/status", headers=auth).json()["retry"]
+    assert retry["waiting"] == 1 and retry["by_kind"] == {"http_error": 1}
+    assert [(s["stock_id"], s["kind"], s["attempts"]) for s in retry["stuck"]] == [(103, "http_error", 2)]
+
+
+@needs_pg
+def test_a_far_probe_that_failed_and_then_answers_brings_the_gap_before_it(pg, clock, monkeypatch):
+    """Finding 3: the probe at +64 failed; the next run read it first, it held a document, the high-water mark
+    jumped to it, and the ids between the frontier's end and it were never read."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)})
+    assert run(vendor, pg, clock)["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(165, 176)})  # past a gap of 54 empty ids
+    vendor.fail[174] = httpx.Response(502, text="Bad Gateway")  # 110 + 64
+    second = run(vendor, pg, clock)
+    assert second["complete"] is False and "a far probe failed" in second["note"]
+    vendor.fail.clear()
+    third = run(vendor, pg, clock)
+    assert held_ids(pg) == list(range(100, 111)) + list(range(165, 176)) and third["complete"] is True
+
+
+@needs_pg
+def test_a_retried_id_found_above_the_frontier_brings_the_ids_below_it(pg, clock, monkeypatch):
+    """Finding 3, whatever order ids arrive in: a retried id read after the frontier that holds a document above the
+    highest id held puts the ids between that no read reached in books_retry, and reads them."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)})
+    assert run(vendor, pg, clock)["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(170, 175)})
+    vendor.fail[174] = httpx.Response(502, text="Bad Gateway")
+    assert run(vendor, pg, clock)["complete"] is False
+    vendor.fail.clear()
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(111, 116)})  # so the probes move past 174
+    third = run(vendor, pg, clock)
+    assert held_ids(pg) == list(range(100, 116)) + list(range(170, 175)) and third["complete"] is True
+    assert third["queued"] == 8  # 166-173: the walk read up to 165
+
+
+@needs_pg
+def test_a_crash_after_a_far_probe_hit_leaves_the_jumped_ids_waiting(pg, clock, monkeypatch):
+    """Finding 4: the probe's document was committed before the range it jumped over was written to books_retry,
+    so a crash between the two lost the range for good. Now both are one transaction."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)})
+    assert run(vendor, pg, clock)["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(165, 176)})
+    real_save = books_store.BooksStore.save
+
+    def crash_after_174(self, company, run_id, doc, lines, **kw):
+        result = real_save(self, company, run_id, doc, lines, **kw)
+        if doc["stock_id"] == 174:
+            raise RuntimeError("the process died here")
+        return result
+
+    monkeypatch.setattr(books_store.BooksStore, "save", crash_after_174)
+    with pytest.raises(RuntimeError):
+        run(vendor, pg, clock)
+    monkeypatch.setattr(books_store.BooksStore, "save", real_save)
+    after = run(vendor, pg, clock)
+    assert held_ids(pg) == list(range(100, 111)) + list(range(165, 176)) and after["complete"] is True
+
+
+@needs_pg
+def test_a_retried_id_that_fails_again_or_is_absent_is_read_once(pg, clock, monkeypatch):
+    """Finding 5: a retried id above the high-water mark that failed again, or was absent, was read by the retry
+    pass and then again by the frontier."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    bad = httpx.Response(502, text="Bad Gateway")
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 108)}, fail={106: bad, 107: bad})
+    first = run(vendor, pg, clock)
+    assert first["failed"] == {"http_error": 2} and first["added"] == 6
+    del vendor.docs[107], vendor.fail[107]  # 107 is gone now (a deleted draft); 106 still fails
+    vendor.reads.clear()
+    run(vendor, pg, clock)
+    assert vendor.reads.count(106) == 1 and vendor.reads.count(107) == 1
