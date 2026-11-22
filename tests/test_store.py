@@ -248,3 +248,23 @@ def test_a_locked_table_ends_a_read_instead_of_hanging_it(pg, fake, clock, monke
         monkeypatch.setattr(store, "LOCK_TIMEOUT", "1s")
         assert c.companies() == fake.companies  # the read goes on with a session of its own
         assert c.session().store_error["kind"] == "store_lock_timeout"
+
+
+def test_a_postgres_timeout_follows_the_time_box():
+    assert store._ms("35s", None) == "35s" and store._ms("35s", 2.5) == "2500ms" and store._ms("5s", 60) == "5000ms"
+    assert store._ms("35s", 0.0001) == "1ms"
+
+
+@needs_pg
+def test_a_renewal_waits_for_another_instance_at_most_the_time_box(pg):
+    """Review 22.11: the renewal lock waited LOCK_TIMEOUT (35 s) whatever the caller's box had left."""
+    import time
+
+    s = PgSessionStore(TEST_DATABASE_URL, KEY)
+    with psycopg.connect(TEST_DATABASE_URL) as other:
+        other.execute("SELECT pg_advisory_lock(%s)", (store._lock_id("lb19.wizcloud.co.il", "wizdb2245n4"),))
+        started = time.monotonic()
+        with pytest.raises(StoreError) as err:
+            with s.renewal("lb19.wizcloud.co.il", "wizdb2245n4", budget_s=1.0):
+                pass
+        assert err.value.kind == "store_lock_timeout" and time.monotonic() - started < 3.0

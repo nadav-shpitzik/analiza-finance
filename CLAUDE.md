@@ -56,10 +56,12 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   log. It prints shapes and non-personal values only; keep it that way (`SAFE_FIELDS` in `scripts/live_check.py`).
 - **The books copy (B1):** `app/books/` (clean, parse, store, sync). A run is `POST /api/books/tick` with
   `Authorization: Bearer <BOOKS_SYNC_KEY>` (Replit Secret; Make's keychain in B2); the detail is
-  `GET /api/books/status` behind the same key. The public `/health` says only whether the last run worked and how
-  many numbers are missing - no count and no number of documents (Nadav 19.11: the deployment is public).
-  `books-check.yml` (inputs `company`, `box_s`) runs two copies into a throwaway Postgres inside the job and prints
-  counts and series only (`scripts/books_check.py`). **Demo holds no documents** (every id probed, 22.11).
+  `GET /api/books/status` behind the same key. The public `/health` says only whether the last run worked, how
+  many numbers are missing and whether the key is `ok` - no count and no number of documents (Nadav 19.11: the
+  deployment is public). `books-check.yml` (inputs `company`, `box_s`) runs two copies into a throwaway Postgres
+  inside the job and prints counts only (`scripts/books_check.py`): series, what the cleaning cost, id gaps.
+  **Demo holds no documents** (every id probed, 22.11). The cleaning judges a number whole (`app/books/clean.py`'s
+  docstring is the rule); a new text field goes through it, and a new number shape comes with its test.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

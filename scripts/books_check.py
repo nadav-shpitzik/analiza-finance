@@ -5,8 +5,9 @@ Two runs: the first copies the company's documents; the second re-reads every do
 each one unchanged, add nothing, and fail no read (review 22.11: a second run that reads nothing proves
 nothing). Printed:
 the runs' counts, the series (document type, valid documents, first and last number, holes and up to ten
-missing numbers), how many text fields were masked, and the field names the vendor sent. Never a name,
-a text, an amount, a date or a card.
+missing numbers), how many text fields were masked and by which column, what masking cost (numbers masked,
+references lost, by reason), the gaps between held ids (to judge the frontier's window of 50), the longest
+text kept per column, and the field names the vendor sent. Never a name, a text, an amount, a date or a card.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ from app.books.store import BooksStore  # noqa: E402
 from app.wizcloud import WizClient  # noqa: E402
 
 RUN_KEYS = ("from_id", "to_id", "probed", "found", "added", "changed", "unchanged", "absent", "failed", "masked",
-            "far_hits", "retried", "reread", "held_absent", "complete", "ok", "note", "elapsed_s")
+            "far_hits", "retried", "reread", "held_absent", "queued", "complete", "ok", "note", "elapsed_s",
+            "masked_fields", "clean")
+TEXT_COLUMNS = ("account_name", "account_key", "reference", "remarks", "details", "currency", "batch")
 
 
 def main() -> int:
@@ -50,6 +53,15 @@ def main() -> int:
         lines = conn.execute("SELECT count(*), count(base_move_id) FROM books_lines WHERE company = %s", (cfg.db,)).fetchone()
         fields = sorted(r[0] for r in conn.execute(
             "SELECT DISTINCT unnest(fields_seen) FROM books_documents WHERE company = %s", (cfg.db,)).fetchall())
+        ids = [r[0] for r in conn.execute(
+            "SELECT stock_id FROM books_documents WHERE company = %s ORDER BY stock_id", (cfg.db,)).fetchall()]
+        longest = conn.execute(
+            "SELECT " + ", ".join(f"coalesce(max(length({c})), 0)" for c in TEXT_COLUMNS)
+            + ", count(*) FILTER (WHERE account_key LIKE '%%#%%') FROM books_documents WHERE company = %s",
+            (cfg.db,)).fetchone()
+        line_longest = conn.execute(
+            "SELECT coalesce(max(length(details)), 0), coalesce(max(length(item_name)), 0), "
+            "count(*) FILTER (WHERE item_key LIKE '%%#%%') FROM books_lines WHERE company = %s", (cfg.db,)).fetchone()
     first, second = runs
     accepted = bool(
         first["ok"] and first["complete"] and not first["failed"]
@@ -66,10 +78,21 @@ def main() -> int:
                       "with_email_domain": counts[3], "with_tax_api_number": counts[4]},
         "lines": {"held": lines[0], "with_base_move_id": lines[1]},
         "series": series,
+        "id_gaps": _gaps(ids),
+        "longest_text": dict(zip(TEXT_COLUMNS, longest[:-1]), **{"line.details": line_longest[0],
+                                                                  "line.item_name": line_longest[1]}),
+        "keys_masked": {"account_key": longest[-1], "line.item_key": line_longest[2]},
         "fields_seen": fields,
     }
     print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     return 0 if accepted else 1
+
+
+def _gaps(ids: list) -> dict:
+    """Runs of empty ids between held documents: the largest five and how many reach 10, 25 and 50."""
+    gaps = sorted((b - a - 1 for a, b in zip(ids, ids[1:]) if b - a > 1), reverse=True)
+    return {"first_id": ids[0] if ids else None, "largest": gaps[:5],
+            **{f"at_least_{n}": sum(1 for g in gaps if g >= n) for n in (10, 25, 50)}}
 
 
 if __name__ == "__main__":

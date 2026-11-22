@@ -120,3 +120,116 @@ def test_a_reference_next_to_a_date_or_a_small_number_is_kept(raw, text, refs):
 def test_control_characters_and_cut_emoji_never_reach_the_database():
     assert clean("a\x00b\x07c") == ("a b c", [], 0)
     assert clean("emoji \ud83d cut")[0] == "emoji cut"
+
+
+# ---- the second review of 22.11: a number is judged whole, and every digit and every joiner counts ---------
+
+ID, PHONE = "123456789", "0501234567"
+JOINERS = [" ", " - ", " / ", ", ", "-", "/", ".", ":", "|", "'", "+", " · ", "־", "―", "٬"]
+
+
+def _groupings(digits):
+    for i in range(1, len(digits)):
+        yield [digits[:i], digits[i:]]
+        for j in range(i + 1, len(digits)):
+            yield [digits[:i], digits[i:j], digits[j:]]
+
+
+@pytest.mark.parametrize("number", [ID, PHONE])
+def test_no_grouping_of_an_id_or_a_phone_keeps_a_digit(number):
+    """The review's fuzz kept 124 of 1,296 writings whole (12345 - 6789, 123 45678 9, 05012 - 34567)."""
+    tried = 0
+    for groups in _groupings(number):
+        for joiner in JOINERS:
+            cleaned, refs, masked = clean("ת.ז " + joiner.join(groups))
+            tried += 1
+            assert masked >= 1 and refs == [] and not any(ch.isdigit() for ch in cleaned), (groups, joiner, cleaned)
+    assert tried > 500
+
+
+@pytest.mark.parametrize("raw", [
+    "ת.ז 123͏456͏789",  # combining grapheme joiner
+    "ת.ז 1234︀5678︀9",  # variation selector 1
+    "ת.ז 123️456️789",  # variation selector 16
+    "ת.ז 123ㅤ456ㅤ789",  # Hangul filler: a blank letter
+    "ת.ז 123⠀456⠀789",  # braille blank
+    "ת.ז 123ְ456ְ789",  # a Hebrew point
+    "".join(d + "️⃣" for d in PHONE),  # keycap digits, pasted from WhatsApp
+    "❶❷❸❹❺❻❼❽❾",  # dingbat circled digits
+    "፩፪፫፬፭፮፯፰፱",  # Ethiopic digits
+    "ת.ז ١٢٣٬٤٥٦٬٧٨٩",  # Arabic-Indic, Arabic thousands separator
+], ids=["cgj", "vs1", "vs16", "hangul-filler", "braille-blank", "hebrew-point", "keycaps", "dingbats", "ethiopic",
+        "arabic-indic"])
+def test_digits_of_any_script_and_any_invisible_joiner_are_masked(raw):
+    cleaned, refs, masked = clean(raw)
+    assert masked >= 1 and refs == [] and not any(ch.isdigit() for ch in (cleaned or "")), cleaned
+
+
+@pytest.mark.parametrize("raw", [
+    "שלח ל israel.israeli@example.\nco.il",
+    "israel.israeli @example.co.il",
+    "israel.israeli@ example.co.il",
+    "israel.israeli@gmail",
+    "israel.israeli(at)gmail.com",
+    "israel.israeli[AT]gmail.com",
+])
+def test_an_email_in_any_spacing_loses_its_address(raw):
+    cleaned, _, masked = clean(raw)
+    assert masked >= 1 and "israeli" not in cleaned
+
+
+@pytest.mark.parametrize("raw,refs", [
+    ("חשבוניות 50887,50888", ["50887", "50888"]),
+    ("חשבוניות 50887/50888", ["50887", "50888"]),
+    ("חשבוניות 50887-891", ["50887-50891"]),
+    ("עח 50887 - 50891", ["50887-50891"]),
+    ("עח 50347 1,170.00", ["50347"]),
+    ("51234 56789", ["51234", "56789"]),  # two numbers: an Israeli ten-digit phone starts with 0, never a document
+    ("תשלום עבור 08/2026", []),
+    ("מחזור 2026-08", []),
+    ("תקופה 16.08.2026-20.08.2026", []),
+    ("שנה 2025/2026", []),
+    ("שנה 2025-26", []),
+    ("16/8/26", []),
+])
+def test_lists_short_ranges_months_date_ranges_and_year_spans_are_kept(raw, refs):
+    """The review's false positives: each was masked whole, and its references lost."""
+    assert clean(raw) == (raw, refs, 0)
+
+
+@pytest.mark.parametrize("raw", ["חשבונית 50347 2026", "עח 50347 1170", "עח 50347 67.89", "עח 50347 16/8/26"])
+def test_a_document_number_beside_what_could_end_an_id_is_masked_with_it(raw):
+    """The chosen cost (22.11): an ID is also written 51234 5678, 12345 67.89 or 12345 6.7.89, so a document
+    number beside a bare four digits, a small amount or a short date is masked with them."""
+    cleaned, refs, masked = clean(raw)
+    assert masked == 1 and refs == [] and cleaned.endswith("#")
+
+
+def test_stats_count_what_masking_cost():
+    stats = {}
+    clean("עח 50347 2026 ות.ז 123456789", stats)
+    assert stats == {"numbers_masked": 2, "refs_lost": {"plain": 1}}
+
+
+def test_a_field_is_bounded_and_cut_only_at_a_letter():
+    from app.books.clean import MAX_KEPT, MAX_RAW
+
+    stats = {}
+    assert clean("א" + " 1" * MAX_RAW, stats) == ("א", [], 0)  # cut back to the letter: no number cut in two
+    cleaned, _, _ = clean("שלום " * 30_000, stats)
+    assert len(cleaned) <= MAX_KEPT and stats["fields_cut"] == 2
+
+
+@pytest.mark.parametrize("raw", ["_" * 50_000, "a" * 25_000 + "@" + "a" * 25_000, "a@" * 25_000, "@" * 50_000,
+                                 "1 " * 25_000, "1." * 25_000, "12345 " * 8_000])
+def test_cleaning_is_linear(raw):
+    """The email regex took 14 s on 32k letters around an at sign (review 22.11)."""
+    import time
+
+    started = time.perf_counter()
+    clean(raw)
+    assert time.perf_counter() - started < 1.0
+
+
+def test_every_digit_becomes_ascii():
+    assert normalize("٣٤٥ ７ ❶") == "345 7 1"

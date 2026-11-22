@@ -56,6 +56,14 @@ READ_STATEMENT_TIMEOUT = "10s"
 _KEY_INFO = b"analiza-finance/wiz-session/v1"
 _NONCE_BYTES = 12
 
+
+def _ms(limit: str, budget_s: Optional[float]) -> str:
+    """A Postgres timeout: `limit` ('35s'), or less when the caller's time box has less left (review 22.11)."""
+    if budget_s is None:
+        return limit
+    return f"{max(1, min(int(limit.rstrip('s')) * 1000, int(budget_s * 1000)))}ms"
+
+
 STORE_KINDS = (
     "store_unreachable",  # no connection: the database is down, asleep too long, or the URL is wrong
     "store_schema",  # the table or a column is missing: python3 -m app.migrate has not run on this database
@@ -163,7 +171,7 @@ class PgSessionStore:
     def __repr__(self) -> str:
         return "PgSessionStore()"
 
-    def _connect(self):
+    def _connect(self, budget_s: Optional[float] = None):
         """psycopg.connect, where any failure is a StoreError. Some are not psycopg errors at all - a
         password with a %-escape that is not UTF-8, a host label over 63 characters - and would have
         made /check a 500 instead of costing a session (review 19.11). Only the connect is wrapped:
@@ -171,7 +179,9 @@ class PgSessionStore:
         import psycopg
 
         try:
-            return psycopg.connect(self._url, connect_timeout=CONNECT_TIMEOUT_S)
+            # libpq waits at least 2 s whatever it is given
+            timeout = CONNECT_TIMEOUT_S if budget_s is None else max(2, min(CONNECT_TIMEOUT_S, int(budget_s)))
+            return psycopg.connect(self._url, connect_timeout=timeout)
         except psycopg.Error:
             raise
         except Exception as exc:  # noqa: BLE001 - the class only: the text can carry the URL
@@ -183,21 +193,22 @@ class PgSessionStore:
         sealed, shape, issued_at = row
         return Saved(token=unseal(self._key, server, db, sealed) or "", shape=shape, issued_at=float(issued_at))
 
-    def load(self, server: str, db: str) -> Optional[Saved]:
+    def load(self, server: str, db: str, budget_s: Optional[float] = None) -> Optional[Saved]:
         with _guard():
-            with self._connect() as conn:
-                conn.execute(f"SET LOCAL lock_timeout = '{READ_LOCK_TIMEOUT}'")
-                conn.execute(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'")
+            with self._connect(budget_s) as conn:
+                conn.execute(f"SET LOCAL lock_timeout = '{_ms(READ_LOCK_TIMEOUT, budget_s)}'")
+                conn.execute(f"SET LOCAL statement_timeout = '{_ms(READ_STATEMENT_TIMEOUT, budget_s)}'")
                 row = conn.execute(_SELECT, (server, db)).fetchone()
         return self._open(row, server, db)
 
     @contextmanager
-    def renewal(self, server: str, db: str) -> Iterator["Renewal"]:
+    def renewal(self, server: str, db: str, budget_s: Optional[float] = None) -> Iterator["Renewal"]:
         """One transaction holding this company's renewal lock. Leaving the block commits; an
-        exception rolls back. Another instance's renewal of the same company waits for it."""
+        exception rolls back. Another instance's renewal of the same company waits for it, at most
+        LOCK_TIMEOUT or what is left of the caller's time box (`budget_s`)."""
         with _guard():
-            with self._connect() as conn:
-                conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+            with self._connect(budget_s) as conn:
+                conn.execute(f"SET LOCAL lock_timeout = '{_ms(LOCK_TIMEOUT, budget_s)}'")
                 conn.execute("SELECT pg_advisory_xact_lock(%s)", (_lock_id(server, db),))
                 yield Renewal(self, conn, server, db)
 

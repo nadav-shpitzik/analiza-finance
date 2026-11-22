@@ -684,3 +684,88 @@ def test_a_run_holds_one_connection_and_other_threads_keep_their_own(clock, monk
     assert made.count("other") == 1
     c.get_doc(3)  # after the run: a connection per call again
     assert made.count("MainThread") == 2
+
+
+# ---- the deadline bounds the session work too (review 22.11) -------------------------------------------------
+
+
+def test_a_call_with_too_little_time_left_makes_no_request(fake, clock):
+    import time
+
+    from app.wizcloud import DeadlineReached
+
+    c = client(fake, clock)
+    with pytest.raises(DeadlineReached) as err:
+        c.get_doc(7, deadline=time.monotonic() + 0.2)
+    assert err.value.kind == "network" and fake.requests == []
+
+
+def test_the_wait_for_another_threads_session_is_bounded(fake, clock):
+    import threading
+    import time
+
+    from app.wizcloud import DeadlineReached
+
+    c = client(fake, clock)
+    held = threading.Event()
+    release = threading.Event()
+
+    def renewing():
+        with c._lock:
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=renewing)
+    t.start()
+    held.wait(5)
+    started = time.monotonic()
+    try:
+        with pytest.raises(DeadlineReached):
+            c.get_doc(7, deadline=time.monotonic() + 1.0)
+        assert time.monotonic() - started < 2.0
+    finally:
+        release.set()
+        t.join()
+
+
+def test_a_timeout_far_from_the_deadline_is_a_failure_and_one_at_it_is_time(clock):
+    import time
+
+    from app.wizcloud import DeadlineReached
+
+    def handler(request):
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+    with pytest.raises(WizError) as err:
+        c.get_doc(7, deadline=time.monotonic() + 20)
+    assert not isinstance(err.value, DeadlineReached) and err.value.kind == "network"
+    with pytest.raises(WizError) as err:
+        c.get_doc(7)
+    assert not isinstance(err.value, DeadlineReached)
+
+    def at_the_deadline(request):
+        if request.url.path.startswith("/createSession/"):
+            return httpx.Response(200, text=SESSION)
+        time.sleep(request.extensions["timeout"]["read"])
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(at_the_deadline), clock=clock)
+    with pytest.raises(DeadlineReached):
+        c.get_doc(7, deadline=time.monotonic() + 1.0)
+
+
+def test_the_store_is_given_what_is_left_of_the_box(fake, clock):
+    import time
+
+    from tests.conftest import FakeStore
+
+    store = FakeStore()
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=fake.transport(), clock=clock, store=store)
+    c.call("CompanyListToTokenApi/TokenCompanies", deadline=time.monotonic() + 5.0)
+    assert store.budgets and all(b is not None and 0 < b <= 5.0 for b in store.budgets)
+    c2 = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=fake.transport(), clock=clock, store=FakeStore())
+    c2.companies()
+    assert c2.store.budgets and all(b is None for b in c2.store.budgets)

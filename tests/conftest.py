@@ -105,16 +105,19 @@ class FakeStore:
         self.loads = 0
         self.renewals = 0
         self.saves = 0
+        self.budgets = []
 
-    def load(self, server, db):
+    def load(self, server, db, budget_s=None):
         self.loads += 1
+        self.budgets.append(budget_s)
         if self.fail:
             raise self.fail
         return self.rows.get((server, db))
 
     @contextmanager
-    def renewal(self, server, db):
+    def renewal(self, server, db, budget_s=None):
         self.renewals += 1
+        self.budgets.append(budget_s)
         if self.fail:
             raise self.fail
         store = self

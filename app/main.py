@@ -133,7 +133,7 @@ def health(request: Request) -> dict:
             "problems": list(cfg.problems),
         },
         "store": store,
-        "books": {"sync_key_set": bool(cfg.books_sync_key), **(books or {})},
+        "books": {"sync_key": sync_key_state(cfg), **(books or {})},
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
@@ -239,10 +239,19 @@ BOOKS_BOX_S = 45  # Make's window is 300 s and the spec boxes the whole request 
 SYNC_KEY_MIN = 24
 
 
-def _sync_key_refusal(request: Request, cfg: config.Config) -> Optional[JSONResponse]:
+def sync_key_state(cfg: config.Config) -> str:
+    """'missing', 'too_short' or 'ok': what /health says, and what the routes act on (review 22.11: /health
+    said 'set' for a key the routes refused)."""
     if not cfg.books_sync_key:
+        return "missing"
+    return "too_short" if len(cfg.books_sync_key) < SYNC_KEY_MIN else "ok"
+
+
+def _sync_key_refusal(request: Request, cfg: config.Config) -> Optional[JSONResponse]:
+    state = sync_key_state(cfg)
+    if state == "missing":
         return JSONResponse({"ok": False, "error": "BOOKS_SYNC_KEY is not set"}, status_code=503)
-    if len(cfg.books_sync_key) < SYNC_KEY_MIN:
+    if state == "too_short":
         return JSONResponse({"ok": False, "error": f"BOOKS_SYNC_KEY is too short (at least {SYNC_KEY_MIN} characters)"}, status_code=503)
     sent = request.headers.get("authorization", "")
     expected = f"Bearer {cfg.books_sync_key}"

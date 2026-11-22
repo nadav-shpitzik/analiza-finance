@@ -57,6 +57,8 @@ TIMEOUT_S = 30.0
 # it gets a tighter budget than a report or a document. A live round of session, companies, webhooks
 # and ten documents took about five seconds (18.11).
 SESSION_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+# A call with a deadline is not started with less than this left (review 22.11: the books copy's time box).
+MIN_CALL_S = 0.5
 
 # The only hosts a request may go to, matched whole, and the only shape of a company database. Checked
 # here as well as in app/config.py: a server like "lb19.wizcloud.co.il/invApi/delDocument#" would turn a
@@ -125,6 +127,17 @@ KINDS = (
 )
 
 
+def _budget(deadline: Optional[float]) -> Optional[float]:
+    """Seconds left before `deadline` (time.monotonic), None for no deadline; DeadlineReached when too little
+    is left to start anything."""
+    if deadline is None:
+        return None
+    left = deadline - time.monotonic()
+    if left <= MIN_CALL_S:
+        raise DeadlineReached()
+    return left
+
+
 class WizError(Exception):
     def __init__(self, kind: str, message: str = "", status: Optional[int] = None):
         assert kind in KINDS, kind
@@ -140,6 +153,15 @@ class WizError(Exception):
         if self.message:
             out["message"] = self.message
         return out
+
+
+class DeadlineReached(WizError):
+    """The caller's deadline came before or during a call: not a failure of WizCloud. Its kind stays
+    "network" for a reader of kinds; the books copy tells it apart by its class, stops the run for time and
+    reads the id next run, instead of counting a failed read (review 22.11)."""
+
+    def __init__(self, message: str = "the time box ran out"):
+        super().__init__("network", message)
 
 
 class StoreErrorBase(Exception):
@@ -239,7 +261,8 @@ class WizClient:
             raise WizError("forbidden_path", "the request would not land on the configured server and path")
         return url
 
-    def _send(self, method: str, path: str, *, headers: Optional[dict] = None, body: Any = None, timeout: Any = TIMEOUT_S) -> httpx.Response:
+    def _send(self, method: str, path: str, *, headers: Optional[dict] = None, body: Any = None, timeout: Any = TIMEOUT_S,
+              deadline: Optional[float] = None) -> httpx.Response:
         url = self._url(path)
         held = getattr(self._local, "http", None)
         try:
@@ -252,13 +275,15 @@ class WizClient:
                     return client.get(url, headers=headers)
                 return client.post(url, headers=headers, json=body if body is not None else {})
         except httpx.TimeoutException:
+            if deadline is not None and time.monotonic() >= deadline - 0.25:
+                raise DeadlineReached("the time box ran out during a request") from None
             raise WizError("network", "timeout") from None
         except httpx.HTTPError as exc:
             # str(exc) can carry the URL, and the createSession URL carries the key.
             raise WizError("network", type(exc).__name__) from None
 
     # ---- session -----------------------------------------------------------
-    def _new_session(self) -> Session:
+    def _new_session(self, deadline: Optional[float] = None) -> Session:
         if not (self.server and self.db and self.private_key):
             raise WizError("config_missing", "WIZ_PRIVATE_KEY, server or company is not set")
         if not DB_RE.match(self.db):
@@ -266,7 +291,9 @@ class WizClient:
         problem = key_problem(self.private_key)
         if problem:
             raise WizError("config_missing", f"WIZ_PRIVATE_KEY {problem}")
-        resp = self._send("GET", f"createSession/{self.private_key}/{self.db}", timeout=SESSION_TIMEOUT)
+        left = _budget(deadline)
+        timeout = SESSION_TIMEOUT if left is None else httpx.Timeout(min(10.0, left), connect=min(5.0, left))
+        resp = self._send("GET", f"createSession/{self.private_key}/{self.db}", timeout=timeout, deadline=deadline)
         text = resp.text or ""
         if "module not active" in text.lower():
             raise WizError("module_inactive", self._short(text), resp.status_code)
@@ -291,45 +318,52 @@ class WizClient:
         current = self._session
         return current is not None and self._fresh_enough(current.issued_at)
 
-    def session(self, *, fresh: bool = False, rejected: Optional[Session] = None) -> Session:
+    def session(self, *, fresh: bool = False, rejected: Optional[Session] = None,
+                deadline: Optional[float] = None) -> Session:
         """The session to call with. `rejected` is the session WizCloud just refused: a replacement
         another thread or instance already made is taken as is, but only one issued after it - an
-        older session in the row is not a renewal, it is a session that may be just as dead (review 19.11)."""
-        with self._lock:
+        older session in the row is not a renewal, it is a session that may be just as dead (review 19.11).
+        `deadline` bounds the wait for another thread's renewal, the store and createSession (review 22.11)."""
+        left = _budget(deadline)
+        if not self._lock.acquire(timeout=-1 if left is None else left):
+            raise DeadlineReached("the time box ran out waiting for another thread's session")
+        try:
             current = self._session
             if fresh and rejected is None:
                 rejected = current
             if current is not None and self._fresh_enough(current.issued_at) and _replaces(current, rejected):
                 return current
             self._session = None
-            self._session = self._acquire(rejected)
+            self._session = self._acquire(rejected, deadline)
             return self._session
+        finally:
+            self._lock.release()
 
     def _usable(self, saved: Any, rejected: Optional[Session]) -> Optional[Session]:
         if saved is None or not saved.token or not self._fresh_enough(saved.issued_at) or not _replaces(saved, rejected):
             return None
         return Session(token=saved.token, issued_at=saved.issued_at, shape=saved.shape, origin="saved", saved=True)
 
-    def _acquire(self, rejected: Optional[Session]) -> Session:
+    def _acquire(self, rejected: Optional[Session], deadline: Optional[float] = None) -> Session:
         """A session from the store when it holds a usable one; otherwise a new one, saved under the
         store's renewal lock. A store that fails costs a new session, never the read, and is said."""
         if self.store is None:
-            return self._new_session()
+            return self._new_session(deadline)
         opened: Optional[Session] = None
         unreadable = False
         try:
             if rejected is None:
-                saved = self.store.load(self.server, self.db)
+                saved = self.store.load(self.server, self.db, budget_s=_budget(deadline))
                 usable = self._usable(saved, rejected)
                 if usable is not None:
                     return usable
-            with self.store.renewal(self.server, self.db) as renewal:
+            with self.store.renewal(self.server, self.db, budget_s=_budget(deadline)) as renewal:
                 saved = renewal.current()
                 usable = self._usable(saved, rejected)
                 if usable is not None:
                     return usable
                 unreadable = saved is not None and not saved.token
-                opened = self._new_session()
+                opened = self._new_session(deadline)
                 renewal.save(opened.token, opened.shape, opened.issued_at)
             opened.saved = True
             if unreadable:
@@ -338,7 +372,7 @@ class WizClient:
         except StoreErrorBase as exc:
             problem = exc.as_dict()
         if opened is None:
-            opened = self._new_session()
+            opened = self._new_session(deadline)
         opened.saved = False
         opened.store_error = problem
         return opened
@@ -352,14 +386,11 @@ class WizClient:
             raise WizError("forbidden_path", f"{path!r} is not a read path")
         rejected: Optional[Session] = None
         for attempt in (1, 2, 3):
-            sess = self.session(rejected=rejected)
-            timeout: Any = TIMEOUT_S
-            if deadline is not None:
-                left = deadline - time.monotonic()
-                if left <= 0.5:
-                    raise WizError("network", "the time box ran out")
-                timeout = min(TIMEOUT_S, left)
-            resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body, timeout=timeout)
+            sess = self.session(rejected=rejected, deadline=deadline)
+            left = _budget(deadline)
+            timeout: Any = TIMEOUT_S if left is None else min(TIMEOUT_S, left)
+            resp = self._send("POST", path, headers={"Authorization": f"Bearer {sess.token}"}, body=body,
+                              timeout=timeout, deadline=deadline)
             data, err = read_envelope(resp)
             if err is None:
                 return data

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.books import store as books_store
 from app.books import sync
 from app.books.parse import NEVER_STORED, ParseError, document_rows
 from app.books.store import BOOKS_TABLES, BooksStore, summarize_series
@@ -52,7 +53,8 @@ class Vendor:
         if sid in self.fail:
             return self.fail[sid]
         if sid in self.docs:
-            return httpx.Response(200, content=json.dumps(self.docs[sid]).encode())
+            body = self.docs[sid]
+            return httpx.Response(200, content=(body if isinstance(body, str) else json.dumps(body)).encode())
         return httpx.Response(500, json={"statusCode": 500, "status": {"errors": "Stock not found"}})
 
     def client(self, clock):
@@ -137,7 +139,9 @@ def test_a_run_stores_the_documents_and_a_second_adds_nothing(pg, clock, monkeyp
     vendor = Vendor(demo_books())
     first = run(vendor, pg, clock)
     assert (first["added"], first["changed"], first["ok"], first["complete"]) == (44, 0, True, True)
-    assert first["far_hits"] == [396] and "ids 141-395 were jumped over" in first["note"]
+    # the first run's wide frontier read up to 340; the probe at +256 hit 396, and the 55 ids it jumped over
+    # (341-395) were read in the same run, so nothing waits and the run is complete
+    assert first["far_hits"] == [396] and first["queued"] == 55 and "55 ids it jumped over are read" in first["note"]
     assert first["failed"] == {} and first["masked"] > 0
     second = run(vendor, pg, clock)
     assert (second["added"], second["changed"], second["found"], second["complete"]) == (0, 0, 0, True)
@@ -262,7 +266,7 @@ def test_a_tick_copies_and_says_counts_only(books_app, clock):
     clock.t += 20
     health = client.get("/health")
     books = health.json()["books"]
-    assert books["sync_key_set"] is True and books["holes"] == 0 and books["series"] == 1
+    assert books["sync_key"] == "ok" and books["holes"] == 0 and books["series"] == 1
     assert books["last_run"]["ok"] is True and books["last_run"]["complete"] is True
     assert "50100" not in health.text and "50109" not in health.text and SYNC_KEY not in health.text
 
@@ -278,7 +282,7 @@ def test_a_read_that_failed_is_read_again_and_the_run_is_not_complete_until_then
     vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)}, fail={101: bad, 103: bad, 105: bad})
     first = run(vendor, pg, clock)
     assert first["ok"] is True and first["complete"] is False and first["failed"] == {"http_error": 3}
-    assert first["added"] == 8 and "3 ids wait for a retry" in first["note"]
+    assert first["added"] == 8 and "3 ids wait in books_retry" in first["note"]
     vendor.fail.clear()
     second = run(vendor, pg, clock)
     assert (second["retried"], second["added"], second["complete"], second["failed"]) == (3, 3, True, {})
@@ -328,18 +332,16 @@ def test_a_document_the_database_refuses_is_retried_and_the_run_goes_on(pg, cloc
 def test_a_run_that_crashes_is_still_finished_in_the_log(pg, clock, monkeypatch):
     monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
     vendor = Vendor({100: document(100, 50100)})
-    from app.books import parse as books_parse
 
-    def boom(body):
+    def boom(self, company):  # a bug outside the reads: an answer the parser cannot read is a failed read instead
         raise RuntimeError("a bug")
 
-    monkeypatch.setattr(sync, "document_rows", boom)
+    monkeypatch.setattr(books_store.BooksStore, "high_water", boom)
     with pytest.raises(RuntimeError):
         run(vendor, pg, clock)
     with psycopg.connect(pg) as conn:
         row = conn.execute("SELECT finished_at IS NOT NULL, ok, complete, note FROM books_sync_runs").fetchone()
     assert row[:3] == (True, False, False) and "the run stopped on RuntimeError" in row[3]
-    assert books_parse.document_rows is not boom
 
 
 @needs_pg
@@ -374,7 +376,8 @@ def test_an_empty_company_reads_the_wide_frontier_once(pg, clock):
     vendor = Vendor({})
     first = run(vendor, pg, clock)
     second = run(vendor, pg, clock)
-    assert first["probed"] == sync.FIRST_RUN_MISSES + len(sync.FAR_PROBES) and first["complete"] is True
+    beyond = [j for j in sync.FAR_PROBES if j > sync.FIRST_RUN_MISSES]  # a probe inside the window is not read twice
+    assert first["probed"] == sync.FIRST_RUN_MISSES + len(beyond) and first["complete"] is True
     assert second["probed"] == sync.MISSES_IN_A_ROW + len(sync.FAR_PROBES)
 
 
@@ -415,3 +418,195 @@ def test_a_short_sync_key_is_refused(books_app, monkeypatch):
     monkeypatch.setenv("BOOKS_SYNC_KEY", "short")
     r = client.post("/api/books/tick", headers={"Authorization": "Bearer short"})
     assert r.status_code == 503 and "too short" in r.json()["error"]
+
+
+# ---- the second review of 22.11 ----------------------------------------------------------------------------
+
+
+class TimedVendor(Vendor):
+    """A vendor that honours the timeout httpx hands it, as a real connection does (a mock transport alone
+    ignores it): an answer slower than the read timeout waits that long and times out."""
+
+    def __init__(self, docs=None, slow=None, latency=0.0):
+        super().__init__(docs)
+        self.slow = dict(slow or {})  # 'session' or a stockID -> seconds that answer takes
+        self.latency = latency
+
+    def handler(self, request):
+        key = "session" if request.url.path.startswith("/createSession/") else int(json.loads(request.content)["stockID"])
+        took = self.slow.get(key, self.latency)
+        limit = (request.extensions.get("timeout") or {}).get("read")
+        if limit is not None and took > limit:
+            import time as _time
+
+            _time.sleep(limit)
+            raise httpx.ReadTimeout("timed out", request=request)
+        if took:
+            import time as _time
+
+            _time.sleep(took)
+        return super().handler(request)
+
+
+def retry_rows(url):
+    with psycopg.connect(url) as conn:
+        return conn.execute("SELECT stock_id, kind FROM books_retry ORDER BY stock_id").fetchall()
+
+
+@needs_pg
+def test_a_healthy_run_that_reaches_its_box_fails_nothing(pg, clock, monkeypatch):
+    """Review 22.11: reads that began with 1.0-1.5 s left failed at once as network, and three of them said
+    'WizCloud is failing' and filled books_retry."""
+    import time as _time
+
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = TimedVendor({sid: document(sid, 50000 + sid) for sid in range(100, 140)}, latency=0.25)
+    summary = run(vendor, pg, clock, box_s=3, monotonic=_time.monotonic)
+    assert summary["ok"] is True and summary["complete"] is False and summary["failed"] == {}
+    assert summary["note"] == "time box reached" and retry_rows(pg) == []
+
+
+@needs_pg
+@pytest.mark.parametrize("slow", ["session", 100])
+def test_a_read_or_a_session_cut_by_the_box_is_time_not_a_failure(pg, clock, monkeypatch, slow):
+    """Review 22.11: a slow createSession near the end of a 2 s box made the run take 4 s. Every wait is
+    bounded by what is left of the box, and a request it cuts stops the run for time."""
+    import time as _time
+
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = TimedVendor({100: document(100, 50100)}, slow={slow: 30.0})
+    started = _time.monotonic()
+    summary = run(vendor, pg, clock, box_s=3, monotonic=_time.monotonic)
+    assert _time.monotonic() - started < 3.5
+    assert summary["ok"] is True and summary["failed"] == {} and summary["probed"] == 0
+    assert summary["note"] == "time box reached" and retry_rows(pg) == []
+
+
+@needs_pg
+def test_a_number_no_document_holds_is_a_failed_read_not_a_crash(pg, clock, monkeypatch):
+    """Review 22.11: status Infinity raised OverflowError out of the parser and stalled the copy for good."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    docs = {sid: document(sid, 50000 + sid) for sid in range(100, 105)}
+    docs[102] = document(102, 50102, status=float("inf"))
+    docs[103] = json.dumps(document(103, 50103)).replace('"Tftal": 650.0', '"Tftal": 1E+999999')
+    summary = run(Vendor(docs), pg, clock)
+    assert summary["failed"] == {"bad_response": 2} and summary["added"] == 3 and summary["ok"] is True
+    assert summary["complete"] is False and retry_rows(pg) == [(102, "bad_response"), (103, "bad_response")]
+
+
+@needs_pg
+def test_an_answer_the_parser_cannot_read_is_a_failed_read(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    real = sync.document_rows
+
+    def fragile(body):
+        from app.books.parse import split
+
+        if split(body)[0].get("StockID") == 101:
+            raise RuntimeError("a bug in the parser")
+        return real(body)
+
+    monkeypatch.setattr(sync, "document_rows", fragile)
+    summary = run(Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 103)}), pg, clock)
+    assert summary["failed"] == {"bad_response": 1} and summary["added"] == 2
+    assert "an answer the parser could not read (RuntimeError)" in summary["note"] and retry_rows(pg) == [(101, "bad_response")]
+
+
+@needs_pg
+def test_documents_after_a_gap_are_copied_once_a_far_probe_lands_on_them(pg, clock, monkeypatch):
+    """Review 22.11: with 111-160 empty, 161-170 were never read, and once 171-180 came the probe at 174 jumped
+    over 161-173 for good. Now every id a probe jumps over is read. What a run cannot see before a probe lands
+    (the second run here) is the documented limit of a frontier; the weekly sweep (B2) reads every id."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)})
+    assert run(vendor, pg, clock)["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(161, 171)})
+    second = run(vendor, pg, clock)
+    assert second["found"] == 0 and second["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(171, 181)})
+    third = run(vendor, pg, clock)
+    assert third["far_hits"] == [174] and third["queued"] == 13 and third["added"] == 20 and third["complete"] is True
+    with psycopg.connect(pg) as conn:
+        held = [r[0] for r in conn.execute("SELECT stock_id FROM books_documents ORDER BY stock_id").fetchall()]
+    assert held == list(range(100, 111)) + list(range(161, 181)) and retry_rows(pg) == []
+
+
+@needs_pg
+def test_a_jumped_range_cut_by_the_box_waits_in_books_retry_and_is_read_first(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)})
+    assert run(vendor, pg, clock)["complete"] is True
+    vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(170, 201)})
+    vendor.reads.clear()
+    ticks = lambda: float(len(vendor.reads))  # noqa: E731 - one second per read
+    # 50 misses (111-160), the probe at 174, then 5 of the 13 jumped ids (161-173) before the box closes
+    cut = run(vendor, pg, clock, box_s=57.0, monotonic=ticks)
+    assert cut["far_hits"] == [174] and cut["queued"] == 13 and cut["complete"] is False and cut["failed"] == {}
+    assert [r[0] for r in retry_rows(pg)] == list(range(166, 174)) and {r[1] for r in retry_rows(pg)} == {"jumped"}
+    vendor.reads.clear()
+    after = run(vendor, pg, clock)
+    assert vendor.reads[:8] == list(range(166, 174)) and after["retried"] == 8 and after["complete"] is True
+    assert retry_rows(pg) == []
+
+
+@needs_pg
+def test_a_retried_id_above_the_high_water_mark_is_read_once(pg, clock, monkeypatch):
+    """Review 22.11: the frontier's start was taken before the retries, so a retried id was read twice."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    bad = httpx.Response(502, text="Bad Gateway")
+    vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 109)}, fail={106: bad, 107: bad, 108: bad})
+    first = run(vendor, pg, clock)
+    assert first["ok"] is False and first["added"] == 6
+    vendor.fail.clear()
+    vendor.reads.clear()
+    second = run(vendor, pg, clock)
+    assert second["retried"] == 3 and second["found"] == 3 and second["from_id"] == 109
+    assert all(vendor.reads.count(sid) == 1 for sid in (106, 107, 108)) and second["complete"] is True
+
+
+@needs_pg
+def test_what_masking_cost_is_counted_by_field_and_reason(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    summary = run(Vendor({100: document(100, 50100, remarks="עח 50347 2026")}), pg, clock)
+    assert summary["masked_fields"] == {"account_name": 1, "remarks": 1}
+    assert summary["clean"] == {"numbers_masked": 2, "refs_lost": {"plain": 1}}
+
+
+def test_a_number_out_of_range_or_not_finite_is_not_a_document():
+    for value in ('"Infinity"', "1E+999999", "1E-99"):
+        text = json.dumps(document(7, 50007)).replace('"Tftal": 650.0', f'"Tftal": {value}')
+        with pytest.raises(ParseError):
+            document_rows(json.loads(text, parse_float=Decimal))
+
+
+def test_vat_exempt_reads_one_point_zero_and_nothing_else_odd():
+    from app.books.parse import _read
+
+    assert [_read(v, "bool", {}) for v in (Decimal("1.0"), "0.00", 1, "true", "2", "yes", None)] == [
+        True, False, True, True, None, None, None]
+
+
+def test_canonical_never_rounds_two_values_together():
+    """Review 22.11: Decimal's 28-digit context made two 29-digit values hash alike."""
+    from app.books.parse import canonical
+
+    a, b = Decimal("1234567890123456789.0123456789"), Decimal("1234567890123456789.0123456788")
+    assert canonical(a) != canonical(b) and canonical(Decimal("650.00")) == canonical(650) == "650"
+
+
+def test_a_vendor_field_name_with_digits_in_it_is_counted_not_kept():
+    body = document(7, 50007, ID_123456789="x", MulFactor1="1")
+    doc, _, stats = document_rows(body)
+    assert "MulFactor1" in doc["fields_seen"] and not any("123456789" in f for f in doc["fields_seen"])
+    assert stats["fields_unnamed"] == 1
+
+
+def test_health_says_when_the_sync_key_is_too_short(monkeypatch):
+    from app import config
+
+    monkeypatch.setenv("BOOKS_SYNC_KEY", "short")
+    assert main.sync_key_state(config.load()) == "too_short"
+    monkeypatch.setenv("BOOKS_SYNC_KEY", SYNC_KEY)
+    assert main.sync_key_state(config.load()) == "ok"
+    monkeypatch.delenv("BOOKS_SYNC_KEY")
+    assert main.sync_key_state(config.load()) == "missing"

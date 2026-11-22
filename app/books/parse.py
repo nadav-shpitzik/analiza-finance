@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation
 from typing import Any, Optional
 
 from .clean import clean, email_domain, extract_refs
@@ -67,6 +67,33 @@ class ParseError(Exception):
     """The answer is not a document as seen live: counted as a failed read, never stored."""
 
 
+# A number from the books is between these powers of ten (an amount below 10^18, a rate or a price down to
+# 10^-12): anything outside, or not finite, is not a document as seen live. Without the bound, 1E+999999
+# would build a million-digit string, and Infinity broke int() outside the parser's errors (review 22.11).
+MAX_EXP = 18
+MIN_EXP = -12
+_EXACT = Context(prec=60)  # canonical() never rounds: every value inside the bound has at most 31 digits
+# A vendor field name is kept by name only when it is a plain identifier with at most two digits
+# (MulFactor1); a key like ID_123456789 is counted, never kept (review 22.11).
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,31}")
+
+
+def _number(v: Any) -> Optional[Decimal]:
+    """A finite Decimal inside the bound, None for an empty or unreadable value, ParseError for a number
+    no document holds."""
+    if v is None or v == "" or isinstance(v, bool):
+        return None
+    try:
+        d = Decimal(str(v).strip())
+    except (InvalidOperation, ValueError):
+        return None
+    if not d.is_finite():
+        raise ParseError("a number that is not finite")
+    if d and not MIN_EXP <= d.adjusted() <= MAX_EXP:
+        raise ParseError("a number out of range")
+    return d
+
+
 def _unwrap(value: Any) -> Any:
     if isinstance(value, str) and value.strip()[:1] in "[{":
         try:
@@ -93,21 +120,12 @@ def split(body: Any) -> tuple:
 
 
 def _int(v: Any) -> Optional[int]:
-    if v is None or v == "":
-        return None
-    try:
-        return int(Decimal(str(v)))
-    except (InvalidOperation, ValueError):
-        return None
+    d = _number(v)
+    return None if d is None else int(d)
 
 
 def _money(v: Any) -> Optional[Decimal]:
-    if v is None or v == "":
-        return None
-    try:
-        return Decimal(str(v))
-    except InvalidOperation:
-        return None
+    return _number(v)
 
 
 def _date(v: Any) -> Optional[date]:
@@ -121,7 +139,16 @@ def _date(v: Any) -> Optional[date]:
     return None if d == NO_DATE else d
 
 
-def _read(value: Any, how: str, stats: dict) -> Any:
+def _cleaned(value: Any, col: str, stats: dict) -> Optional[str]:
+    cleaned, _refs, masked = clean(None if value is None else str(value), stats.setdefault("clean", {}))
+    if masked:
+        stats["masked"] = stats.get("masked", 0) + masked
+        by = stats.setdefault("masked_fields", {})
+        by[col] = by.get(col, 0) + 1
+    return cleaned
+
+
+def _read(value: Any, how: str, stats: dict, col: str = "") -> Any:
     if how == "int":
         return _int(value)
     if how == "int0":
@@ -135,32 +162,36 @@ def _read(value: Any, how: str, stats: dict) -> Any:
         text = str(value).strip() if value is not None else ""
         return text if text.isascii() and text.isdigit() and len(text) <= 12 else None
     if how == "code":  # a short code (currency, batch): cleaned like any text, and capped
-        cleaned, _refs, masked = clean(None if value is None else str(value))
-        stats["masked"] = stats.get("masked", 0) + masked
+        cleaned = _cleaned(value, col, stats)
         return cleaned[:20] if cleaned else None
-    if how == "bool":
+    if how == "bool":  # true/false, 1/0, also 1.0 (money arrives as Decimal); anything else is None
         if isinstance(value, bool):
             return value
         text = str(value).strip().lower() if value is not None else ""
-        return {"1": True, "true": True, "0": False, "false": False}.get(text)
+        if text in ("true", "false"):
+            return text == "true"
+        try:
+            n = Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+        return True if n == 1 else False if n == 0 else None
     if how == "present":
         return value not in (None, "", 0, "0")
     if how == "domain":
         return email_domain(value)
     if how in ("text", "key"):
-        cleaned, _refs, masked = clean(None if value is None else str(value))
-        stats["masked"] = stats.get("masked", 0) + masked
-        return cleaned
+        return _cleaned(value, col, stats)
     raise ValueError(how)
 
 
-def _map(src: dict, table: dict, stats: dict) -> dict:
+def _map(src: dict, table: dict, stats: dict, prefix: str = "") -> dict:
     lower = {str(k).lower(): v for k, v in src.items()}
-    return {col: _read(lower.get(name), how, stats) for name, (col, how) in table.items()}
+    return {col: _read(lower.get(name), how, stats, prefix + col) for name, (col, how) in table.items()}
 
 
 def document_rows(body: Any) -> tuple:
-    """(document row, line rows, stats) for one getDoc answer. stats: masked (count), fields_seen."""
+    """(document row, line rows, stats) for one getDoc answer. stats: masked (fields masked), masked_fields
+    (by column), clean (what masking cost: numbers_masked, refs_lost by reason), fields_unnamed."""
     header, lines = split(body)
     stats: dict = {}
     doc = _map(header, HEADER, stats)
@@ -172,14 +203,13 @@ def document_rows(body: Any) -> tuple:
     doc["refs_in_text"] = sorted({r for text in raw if text is not None for r in extract_refs(str(text))})
     line_rows = []
     for line in lines:
-        line_stats: dict = {}
-        row = _map(line, LINE, line_stats)
-        stats["masked"] = stats.get("masked", 0) + line_stats.get("masked", 0)
+        row = _map(line, LINE, stats, "line.")
         if row["move_id"] is not None:
             line_rows.append(row)
     # The vendor's field names, as names only: a key that is not a plain identifier is counted, never kept.
     keys = {str(k) for k in header} | {str(k) for line in lines for k in line}
-    doc["fields_seen"] = sorted(k for k in keys if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", k))
+    doc["fields_seen"] = sorted(
+        k for k in keys if _FIELD_NAME.fullmatch(k) and sum(ch.isdigit() for ch in k) <= 2)
     stats["fields_unnamed"] = len(keys) - len(doc["fields_seen"])
     if doc["stock_id"] is None:
         raise ParseError("no StockID in the header")
@@ -193,7 +223,7 @@ def canonical(value: Any) -> Any:
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (int, Decimal)):
-        d = Decimal(value).normalize()
+        d = Decimal(value).normalize(_EXACT)
         return format(d, "f")
     if isinstance(value, (list, tuple)):
         return [canonical(v) for v in value]

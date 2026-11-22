@@ -91,7 +91,7 @@ class BooksStore:
                 lock.close()
 
     # ---- the run log ------------------------------------------------------------------------------
-    def start_run(self, company: str, trigger: str, from_id: int) -> int:
+    def start_run(self, company: str, trigger: str, from_id: Optional[int]) -> int:
         with _guard():
             return self._conn.execute(
                 "INSERT INTO books_sync_runs (company, trigger, from_id) VALUES (%s, %s, %s) RETURNING run_id",
@@ -103,10 +103,10 @@ class BooksStore:
 
         with _guard():
             self._conn.execute(
-                "UPDATE books_sync_runs SET finished_at = now(), to_id = %s, probed = %s, found = %s, added = %s, "
+                "UPDATE books_sync_runs SET finished_at = now(), from_id = %s, to_id = %s, probed = %s, found = %s, added = %s, "
                 "changed = %s, absent = %s, failed = %s, masked = %s, far_hits = %s, complete = %s, ok = %s, note = %s "
                 "WHERE run_id = %s",
-                (summary["to_id"], summary["probed"], summary["found"], summary["added"], summary["changed"],
+                (summary["from_id"], summary["to_id"], summary["probed"], summary["found"], summary["added"], summary["changed"],
                  summary["absent"], json.dumps(summary["failed"]), summary["masked"], summary["far_hits"],
                  summary["complete"], summary["ok"], summary.get("note"), run_id),
             )
@@ -131,6 +131,15 @@ class BooksStore:
                 "INSERT INTO books_retry (company, stock_id, kind) VALUES (%s, %s, %s) ON CONFLICT (company, stock_id) "
                 "DO UPDATE SET kind = EXCLUDED.kind, attempts = books_retry.attempts + 1, last_failed_at = now()",
                 (company, stock_id, kind),
+            )
+
+    def queue_retry(self, company: str, stock_ids: list, kind: str) -> None:
+        """Ids to read before the frontier (a range a far probe jumped over). A row already there keeps its kind."""
+        with _guard():
+            self._conn.execute(
+                "INSERT INTO books_retry (company, stock_id, kind) SELECT %s, unnest(%s::bigint[]), %s "
+                "ON CONFLICT (company, stock_id) DO NOTHING",
+                (company, list(stock_ids), kind),
             )
 
     def clear_retry(self, company: str, stock_id: int) -> None:
