@@ -121,16 +121,18 @@ def pg():
     drop_all(TEST_DATABASE_URL)
 
 
-def run(vendor, url, clock, box_s=600, monotonic=None):
+def run(vendor, url, clock, box_s=600, monotonic=None, tick=False):
+    """One run. tick=False is the copy alone (B1's phases), so a test of the frontier counts only its reads."""
     store = BooksStore(url)
     with store.session(DEMO) as s:
-        return sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=box_s, **({"clock": monotonic} if monotonic else {}))
+        return sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=box_s, tick=tick,
+                             **({"clock": monotonic} if monotonic else {}))
 
 
 def demo_books():
-    docs = {sid: document(sid, 50000 + sid) for sid in range(100, 141) if sid not in (120, 121)}  # 120-121: deleted drafts
-    docs.update({sid: document(sid, 50000 + sid) for sid in range(396, 401)})  # a jump of 256 past 140
-    return docs
+    # 120-121: deleted drafts; 396-400: a jump of 256 past 140. Numbered as the books number them: no number is skipped
+    sids = [sid for sid in range(100, 141) if sid not in (120, 121)] + list(range(396, 401))
+    return {sid: document(sid, 50100 + i) for i, sid in enumerate(sids)}
 
 
 @needs_pg
@@ -281,7 +283,7 @@ def test_a_read_that_failed_is_read_again_and_the_run_is_not_complete_until_then
     bad = httpx.Response(502, text="Bad Gateway")
     vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)}, fail={101: bad, 103: bad, 105: bad})
     first = run(vendor, pg, clock)
-    assert first["ok"] is True and first["complete"] is False and first["failed"] == {"http_error": 3}
+    assert first["failing"] is False and first["complete"] is False and first["failed"] == {"http_error": 3}
     assert first["added"] == 8 and "3 ids wait in books_retry" in first["note"]
     vendor.fail.clear()
     second = run(vendor, pg, clock)
@@ -352,7 +354,7 @@ def test_the_second_run_re_reads_every_document_and_finds_it_unchanged(pg, clock
     run(vendor, pg, clock)
     store = BooksStore(pg)
     with store.session(DEMO) as s:
-        again = sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=600, reread_held=True)
+        again = sync.run_once(vendor.client(clock), s, DEMO, trigger="test", box_s=600, reread_held=True, tick=False)
     assert (again["reread"], again["unchanged"], again["changed"], again["added"], again["complete"]) == (10, 10, 0, 0, True)
 
 
@@ -399,7 +401,7 @@ def test_every_read_is_bounded_by_what_is_left_of_the_box(pg, clock, monkeypatch
     client.get_doc = spy
     store = BooksStore(pg)
     with store.session(DEMO) as s:
-        sync.run_once(client, s, DEMO, trigger="test", box_s=20)
+        sync.run_once(client, s, DEMO, trigger="test", box_s=20, tick=False)
     assert seen and max(seen) <= 20 - sync.MARGIN_S + 0.5
 
 
@@ -490,7 +492,7 @@ def test_a_number_no_document_holds_is_a_failed_read_not_a_crash(pg, clock, monk
     docs[102] = document(102, 50102, status=float("inf"))
     docs[103] = json.dumps(document(103, 50103)).replace('"Tftal": 650.0', '"Tftal": 1E+999999')
     summary = run(Vendor(docs), pg, clock)
-    assert summary["failed"] == {"bad_response": 2} and summary["added"] == 3 and summary["ok"] is True
+    assert summary["failed"] == {"bad_response": 2} and summary["added"] == 3 and summary["failing"] is False
     assert summary["complete"] is False and retry_rows(pg) == [(102, "bad_response"), (103, "bad_response")]
 
 
@@ -646,12 +648,12 @@ def test_ids_that_always_fail_never_freeze_the_copy(pg, clock, monkeypatch):
     monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
     vendor = Vendor({sid: document(sid, 50000 + sid) for sid in range(100, 111)}, fail=stuck_at(102, 104, 106))
     first = run(vendor, pg, clock)
-    assert first["ok"] is True and first["added"] == 8 and first["complete"] is False
+    assert first["failing"] is False and first["added"] == 8 and first["complete"] is False
     vendor.docs.update({sid: document(sid, 50000 + sid) for sid in range(111, 116)})
     second = run(vendor, pg, clock)
-    assert second["ok"] is True and second["added"] == 5, second["note"]
+    assert second["failing"] is False and second["added"] == 5, second["note"]
     third = run(vendor, pg, clock)
-    assert third["ok"] is True and third["added"] == 0 and third["complete"] is False
+    assert third["failing"] is False and third["added"] == 0 and third["complete"] is False
     assert held_ids(pg) == [sid for sid in range(100, 116) if sid not in (102, 104, 106)]
     assert retry_attempts(pg) == [(102, 3), (104, 3), (106, 3)]
 
@@ -666,7 +668,7 @@ def test_three_stuck_ids_at_the_top_stop_one_run_only(pg, clock, monkeypatch):
     assert first["ok"] is False and first["added"] == 6
     vendor.reads.clear()
     second = run(vendor, pg, clock)
-    assert second["ok"] is True and second["added"] == 3, second["note"]
+    assert second["failing"] is False and second["added"] == 3, second["note"]
     assert all(vendor.reads.count(sid) == 1 for sid in (106, 107, 108))
     assert held_ids(pg) == [sid for sid in range(100, 112) if sid not in (106, 107, 108)]
 
@@ -761,3 +763,226 @@ def test_a_retried_id_that_fails_again_or_is_absent_is_read_once(pg, clock, monk
     vendor.reads.clear()
     run(vendor, pg, clock)
     assert vendor.reads.count(106) == 1 and vendor.reads.count(107) == 1
+
+
+# ---- B2: the tick ------------------------------------------------------------------------------------------
+
+
+def tick(vendor, url, clock, **kw):
+    return run(vendor, url, clock, tick=True, **kw)
+
+
+def books(*specs):
+    """Documents numbered as the books number them: valid ones in one unbroken series by id, drafts apart.
+    `specs`: (stock_id, status) pairs."""
+    out, n = {}, 50100
+    for sid, status in specs:
+        if status == 0:
+            out[sid] = document(sid, 90000 + sid, status=0, total=0.0)
+        else:
+            out[sid] = document(sid, n)
+            n += 1
+    return out
+
+
+def age_misses(url, hours=2):
+    with psycopg.connect(url) as conn:
+        conn.execute("UPDATE books_documents SET missing_since = missing_since - make_interval(hours => %s), "
+                     "missing_seen_at = missing_seen_at - make_interval(hours => %s) WHERE missing_since IS NOT NULL",
+                     (hours, hours))
+
+
+@needs_pg
+def test_a_tick_reads_the_canary_first_and_every_draft(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 110)], (110, 0), (111, 1)))
+    first = tick(vendor, pg, clock)
+    assert first["canary"] == "none" and first["added"] == 12 and first["ok"] is True
+    vendor.reads.clear()
+    second = tick(vendor, pg, clock)
+    assert vendor.reads[0] == 100 and second["canary"] == "ok"  # the oldest valid document held
+    assert second["drafts"] == 1 and 110 in vendor.reads and second["ok"] is True and second["alert"] is False
+
+
+@needs_pg
+def test_a_draft_missed_twice_an_hour_apart_is_gone_and_a_valid_document_waits_for_a_person(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books((100, 1), (101, 1), (102, 1), (103, 0), (104, 1)))
+    assert tick(vendor, pg, clock)["ok"] is True
+    del vendor.docs[103], vendor.docs[104]  # a draft deleted, and a valid document WizCloud no longer finds
+    first_miss = tick(vendor, pg, clock)
+    assert first_miss["missing"] == 2 and first_miss["gone"] == 0 and first_miss["ok"] is True
+    age_misses(pg)  # the second read comes more than an hour after the first
+    second_miss = tick(vendor, pg, clock)
+    assert second_miss["gone"] == 1 and second_miss["missing_valid"] == 1
+    assert second_miss["reasons"] == ["missing_valid"] and second_miss["ok"] is False and second_miss["alert"] is True
+    with psycopg.connect(pg) as conn:
+        gone = conn.execute("SELECT stock_id, gone_at IS NOT NULL FROM books_documents WHERE stock_id IN (103, 104) "
+                            "ORDER BY stock_id").fetchall()
+        events = conn.execute("SELECT stock_id, kind FROM books_document_events WHERE kind <> 'first_seen'").fetchall()
+    assert gone == [(103, True), (104, False)] and events == [(103, "gone")]  # the valid one stays in every figure
+    vendor.docs[104] = books((100, 1), (101, 1), (102, 1), (103, 0), (104, 1))[104]  # it answers again
+    back = tick(vendor, pg, clock)
+    assert back["missing_valid"] == 0 and back["ok"] is True and back["alert"] is True  # the way back to ok
+
+
+@needs_pg
+def test_a_canary_that_does_not_answer_trusts_no_absence(pg, clock, monkeypatch):
+    """If WizCloud answered 'not found' for everything (the wrong company), every document would look gone."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 106)]))
+    tick(vendor, pg, clock)
+    with psycopg.connect(pg) as conn:
+        conn.execute("INSERT INTO books_retry (company, stock_id, kind, attempts) VALUES (%s, 150, 'jumped', 0)", (DEMO,))
+    vendor.docs.clear()
+    blind = tick(vendor, pg, clock)
+    assert blind["canary"] == "absent" and blind["reasons"] == ["canary"] and blind["ok"] is False
+    assert blind["missing"] == 0 and retry_rows(pg) == [(150, "jumped")]  # nothing marked, nothing cleared
+    with psycopg.connect(pg) as conn:
+        assert conn.execute("SELECT count(*) FROM books_documents WHERE missing_since IS NOT NULL").fetchone()[0] == 0
+
+
+@needs_pg
+def test_at_most_five_drafts_go_in_one_tick(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books((100, 1), *[(sid, 0) for sid in range(101, 109)]))
+    tick(vendor, pg, clock)
+    for sid in range(101, 109):
+        del vendor.docs[sid]
+    assert tick(vendor, pg, clock)["missing"] == 8
+    age_misses(pg)
+    five = tick(vendor, pg, clock)
+    assert five["gone"] == 5 and "more than 5 drafts gone in one tick" in five["note"]
+    assert tick(vendor, pg, clock)["gone"] == 3
+
+
+@needs_pg
+def test_the_weekly_sweep_keeps_its_place_and_waits_a_week(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    monkeypatch.setattr(sync, "RECENT_PER_TICK", 0)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 140)]))
+    first = tick(vendor, pg, clock)
+    assert first["sweep"] == {"next_id": 140, "ended": True, "new_pass": True}  # the frontier read every id already
+    assert tick(vendor, pg, clock)["sweep"] is None  # this week's pass is done
+    with psycopg.connect(pg) as conn:
+        conn.execute("UPDATE books_sweep SET pass_started_at = now() - interval '8 days'")
+    vendor.reads.clear()
+    # one second a read: the canary, 50 misses and 5 probes, then the sweep until the box closes
+    cut = tick(vendor, pg, clock, box_s=66.0, monotonic=lambda: float(len(vendor.reads)))
+    sweep = cut["sweep"]
+    assert sweep["new_pass"] is True and sweep["ended"] is False and 101 < sweep["next_id"] < 140
+    vendor.reads.clear()
+    rest = tick(vendor, pg, clock)
+    assert rest["sweep"] == {"next_id": 140, "ended": True, "new_pass": False}
+    assert sweep["next_id"] in vendor.reads and sweep["next_id"] - 1 not in vendor.reads  # it went on from its place
+    with psycopg.connect(pg) as conn:
+        assert conn.execute("SELECT passes FROM books_sweep").fetchone()[0] == 2
+
+
+@needs_pg
+def test_the_recent_documents_are_read_a_slice_a_tick(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    monkeypatch.setattr(sync, "RECENT_HELD", 6)
+    monkeypatch.setattr(sync, "RECENT_PER_TICK", 3)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 110)]))
+    tick(vendor, pg, clock)
+    slices = []
+    for _ in range(3):
+        vendor.reads.clear()
+        tick(vendor, pg, clock)
+        slices.append(sorted(sid for sid in vendor.reads if 104 <= sid <= 109))
+    assert slices == [[104, 105, 106], [107, 108, 109], [104, 105, 106]]
+
+
+@needs_pg
+def test_a_hole_is_judged_only_once_the_frontier_reached_the_end(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    docs = books(*[(sid, 1) for sid in range(100, 140)])
+    docs[110] = document(110, 50300)  # a number far ahead: 50110-50299 are missing while 110 is held
+    vendor = Vendor(docs)
+    catching = tick(vendor, pg, clock, box_s=15.0, monotonic=lambda: float(len(vendor.reads)))
+    assert catching["catching_up"] is True and catching["holes"] is None and catching["ok"] is True
+    caught = tick(vendor, pg, clock)
+    assert caught["holes"] > 0 and caught["reasons"] == ["holes"] and caught["ok"] is False
+
+
+@needs_pg
+def test_an_id_failing_for_a_day_is_a_reason(pg, clock, monkeypatch):
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 106)]), fail=stuck_at(103))
+    tick(vendor, pg, clock)
+    assert tick(vendor, pg, clock)["stuck_day"] == 0  # failed twice, within the day
+    with psycopg.connect(pg) as conn:
+        conn.execute("UPDATE books_retry SET first_failed_at = now() - interval '25 hours'")
+    late = tick(vendor, pg, clock)
+    assert late["stuck_day"] == 1 and "stuck" in late["reasons"]
+
+
+@needs_pg
+def test_the_tick_route_alerts_on_a_change_only_and_says_it_in_hebrew(books_app):
+    client, vendor = books_app
+    auth = {"Authorization": f"Bearer {SYNC_KEY}"}
+    first = client.post("/api/books/tick", headers=auth).json()
+    assert first["ok"] is True and first["alert"] is False and first["request_s"] < main.REQUEST_BOX_S
+    bad = httpx.Response(502, text="Bad Gateway")
+    vendor.fail.update({sid: bad for sid in range(0, 2000)})
+    down = client.post("/api/books/tick", headers=auth).json()
+    assert down["ok"] is False and down["reasons"] == ["wizcloud_failing"] and down["alert"] is True
+    assert down["canary"] == "failed"  # its reads failed: WizCloud failing, not a canary that says 'not found'
+    assert down["message"] == "ספרי חשבשבת (demo): WizCloud לא עונה: שלוש קריאות נכשלו ברצף."
+    assert client.post("/api/books/tick", headers=auth).json()["alert"] is False  # still down: said once
+    vendor.fail.clear()
+    back = client.post("/api/books/tick", headers=auth).json()
+    assert back["ok"] is True and back["alert"] is True and back["message"] == "ספרי חשבשבת (demo): חזר לתקין."
+    status = client.get("/api/books/status", headers=auth).json()
+    assert status["sweep"]["passes"] >= 1 and status["missing"]["missing"] == 0
+    health = client.get("/health").json()["books"]
+    assert health["last_run"]["reasons"] == []
+
+
+@needs_pg
+def test_the_whole_request_is_boxed(pg, clock, monkeypatch):
+    """Spec §2.3: 60 seconds for the whole request, the session included. Here 3, with reads of 0.25 s."""
+    import time as _time
+
+    monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
+    monkeypatch.setenv("DATABASE_URL", pg)
+    monkeypatch.setenv("BOOKS_SYNC_KEY", SYNC_KEY)
+    monkeypatch.delenv("WIZ_COMPANY", raising=False)
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    monkeypatch.setattr(main, "REQUEST_BOX_S", 3)
+    monkeypatch.setattr(main, "FINISH_RESERVE_S", 0.5)
+    vendor = TimedVendor({sid: document(sid, 50000 + sid) for sid in range(100, 200)}, latency=0.25)
+    main.app.state.transport = httpx.MockTransport(vendor.handler)
+    main.app.state.client = None
+    try:
+        started = _time.monotonic()
+        body = TestClient(main.app).post("/api/books/tick", headers={"Authorization": f"Bearer {SYNC_KEY}"}).json()
+        took = _time.monotonic() - started
+    finally:
+        main.app.state.transport = None
+        main.app.state.client = None
+    assert took < 3.5 and body["catching_up"] is True and body["ok"] is True and 0 < body["added"] < 100
+
+
+def test_every_migration_only_creates_or_adds():
+    """A publish aligns production to development, DROP included: a migration never drops, renames or retypes."""
+    import re as _re
+
+    for path in sorted((main.ROOT / "migrations").glob("*.sql")):
+        sql = "\n".join(line.split("--")[0] for line in path.read_text(encoding="utf-8").splitlines()).upper()
+        assert not _re.search(r"\bDROP\b|\bRENAME\b|\bALTER\s+COLUMN\b|\bTRUNCATE\b|\bDELETE\b", sql), path.name
+
+
+@needs_pg
+def test_a_canary_that_went_missing_is_missed_once_the_next_one_answers(pg, clock, monkeypatch):
+    """Self-review 22.11: the oldest valid document is read first in every tick, before anything is trusted - so
+    if it were deleted and the next one answered, its own miss was never recorded and it never went missing."""
+    monkeypatch.setitem(sync.FIRST_ID, DEMO, 100)
+    vendor = Vendor(books(*[(sid, 1) for sid in range(100, 106)]))
+    tick(vendor, pg, clock)
+    del vendor.docs[100]
+    second = tick(vendor, pg, clock)
+    assert second["canary"] == "ok" and second["missing"] == 1
+    age_misses(pg)
+    assert tick(vendor, pg, clock)["missing_valid"] == 1

@@ -1,6 +1,10 @@
-"""One run of the books copy (spec §4.2, backlog 0301 B1; reworked after the three reviews of 22.11).
+"""One run of the books copy - a tick (spec §4.2, backlog 0301 B1 and B2; reworked after the three reviews of 22.11).
 
 A run, inside its time box, reads in this order:
+0. The canary (spec §4.2.4): the oldest valid document held, and the next one if it does not answer. When neither
+   answers as a document, no "not found" is trusted in this tick: no miss is recorded, nothing goes gone, no
+   waiting id is cleared. When they answered "not found", the tick is not ok (the wrong company?); when their reads
+   failed, the reads after them judge whether WizCloud is failing.
 1. The ids a far probe jumped over that wait in books_retry (never read yet).
 2. Optionally every held document again (`reread_held`: books-check's second run).
 3. The frontier: upward from the high-water mark (the largest stockID held) until MISSES_IN_A_ROW ids in a row
@@ -9,6 +13,24 @@ A run, inside its time box, reads in this order:
    complete run, an empty company (Demo) gets the plain frontier.
 4. The ids whose read failed in an earlier run, oldest failure first, after the frontier: the frontier steps past
    them, so an id that fails on every read never stands in front of new documents (third review 22.11, finding 1).
+5. Every draft held (spec §4.2.2), the one read longest ago first.
+6. Held documents that answered "not found" at least MISSING_CONFIRM_S ago, read again to confirm (spec §4.2.5).
+7. Of the RECENT_HELD highest ids held, the RECENT_PER_TICK read longest ago: each is read again every few ticks.
+   The spec's "the last 300 ids every tick" does not fit: a read takes about 0.19 s from Replit (22.11), so 300
+   would take 57 of the 60 seconds.
+8. The weekly sweep (spec §4.2.3), from its saved position, in what is left of the box: every id from the first to
+   the high-water mark, held or not, so a document the frontier missed is found and an edit is seen. A pass that
+   ends waits until a week from its start before the next one begins.
+
+A held document that answers "not found" is missing: its first and latest miss are kept. Missed twice at least
+MISSING_CONFIRM_S apart, a draft is gone at once (at most GONE_PER_TICK a tick), and a valid document stays in every
+figure until a person confirms it gone - until then the tick is not ok. A document read again is no longer missing,
+and one that was gone reappears.
+
+The verdict (`ok`, with `reasons`): not ok when WizCloud is failing, the canary answered "not found", a series has a hole
+(judged only once the frontier reached the end: a copy still catching up has holes that are not holes), a valid
+document is missing, or an id has kept failing for a day. `alert` is whether the reasons changed since the last
+finished run - a new problem, another one, or the way back to ok - which is when Make posts to Discord.
 
 No id is read twice in a run (finding 5): a second visit takes the first read's outcome.
 
@@ -39,6 +61,7 @@ import time
 from typing import Callable, Iterable, Optional
 
 from ..wizcloud import MIN_CALL_S, NOT_FOUND, DeadlineReached, WizError
+from .doctypes import DRAFT_STATUS
 from .parse import ParseError, document_rows
 from .store import BooksStoreError
 
@@ -53,6 +76,14 @@ MARGIN_S = 1.0
 FIRST_ID = {"wizdb2245n5": 1, "wizdb2245n4": 1}
 OUT_OF_TIME = "out_of_time"
 JUMPED = "jumped"  # the kind of a books_retry row for an id never read: a far probe or a retried id jumped over it
+CANARIES = 2
+RECENT_HELD = 300
+RECENT_PER_TICK = 100
+MISSING_CONFIRM_S = 3600  # two misses at least an hour apart (spec §4.2.5)
+MISSING_PER_TICK = 20
+GONE_PER_TICK = 5
+SWEEP_EVERY_S = 7 * 24 * 3600
+STUCK_ALERT_S = 24 * 3600
 
 
 def _merge(into: dict, add: dict) -> None:
@@ -75,7 +106,9 @@ class _Run:
             "run_id": self.run_id, "company": company, "trigger": trigger, "from_id": None, "to_id": None,
             "probed": 0, "found": 0, "added": 0, "changed": 0, "unchanged": 0, "absent": 0, "failed": {},
             "masked": 0, "far_hits": [], "retried": 0, "reread": 0, "held_absent": 0, "queued": 0, "stuck": 0,
-            "complete": False, "ok": True, "note": None, "masked_fields": {}, "clean": {},
+            "canary": None, "drafts": 0, "rechecked": 0, "recent": 0, "swept": 0, "sweep": None, "missing": 0, "gone": 0,
+            "complete": False, "failing": False, "catching_up": False, "holes": None, "missing_valid": 0, "stuck_day": 0,
+            "ok": True, "reasons": [], "alert": False, "note": None, "masked_fields": {}, "clean": {},
         }
         self.notes: list = []
         self.seen: dict = {}  # id -> the outcome of its read in this run: no id is read twice
@@ -87,6 +120,10 @@ class _Run:
         self.base = FIRST_ID.get(company, 1)
         self.in_a_row = 0
         self.failing = False
+        self.held: dict = {}  # stock_id -> status of every document held and not gone
+        self.trust_absence = False  # until the canary answered: a 'not found' changes nothing before that
+        self.gone_now = 0
+        self.prev_reasons: Optional[list] = None
 
     # ---- time ------------------------------------------------------------------------------------------
     def left(self) -> float:
@@ -121,9 +158,12 @@ class _Run:
             outcome = self._fail(sid, error)
         elif body is NOT_FOUND:
             s["absent"] += 1
-            if sid in self.waiting:
-                self.store.clear_retry(self.company, sid)
-                self.waiting.discard(sid)
+            if self.trust_absence:  # before the canary answered, or when it did not, a 'not found' changes nothing
+                if sid in self.waiting:
+                    self.store.clear_retry(self.company, sid)
+                    self.waiting.discard(sid)
+                if sid in self.held:
+                    self._missed(sid)
             outcome = "absent"
         else:
             outcome = self._found(sid, body)
@@ -134,7 +174,7 @@ class _Run:
             self.in_a_row += 1
             if self.in_a_row >= FAILURES_IN_A_ROW and not self.failing:
                 self.failing = True
-                s["ok"] = False
+                s["failing"] = True
                 self.notes.append(f"{FAILURES_IN_A_ROW} failed reads in a row: WizCloud is failing")
         return outcome
 
@@ -174,6 +214,7 @@ class _Run:
             self.summary["queued"] += len(gap)
             self.notes.append(f"a document beyond a gap: {len(gap)} ids it jumped over are read")
         self.high = sid if self.high is None else max(self.high, sid)
+        self.held[sid] = doc["status"]
         s = self.summary
         s["found"] += 1
         s[result] += 1
@@ -181,6 +222,23 @@ class _Run:
         _merge(s["masked_fields"], stats.get("masked_fields", {}))
         _merge(s["clean"], stats.get("clean", {}))
         return "doc"
+
+    def _missed(self, sid: int) -> None:
+        """A held document answered 'not found' (spec §4.2.5)."""
+        marked = self.store.mark_missing(self.company, sid)
+        if marked is None:
+            return
+        status, since_s = marked
+        self.summary["missing"] += 1
+        if since_s < MISSING_CONFIRM_S or status != DRAFT_STATUS:
+            return  # a first miss, or a valid document: a person confirms it (the verdict says so)
+        if self.gone_now >= GONE_PER_TICK:
+            self.notes.append(f"more than {GONE_PER_TICK} drafts gone in one tick: the rest wait for the next")
+            return
+        self.store.mark_gone(self.company, sid, self.run_id, "a draft missed twice an hour apart")
+        self.held.pop(sid, None)
+        self.gone_now += 1
+        self.summary["gone"] += 1
 
     # ---- many reads ------------------------------------------------------------------------------------
     def sweep(self, ids: Iterable[int], count: str, on_absent: Optional[Callable[[], None]] = None) -> bool:
@@ -275,28 +333,118 @@ class _Run:
     def held_gone(self) -> None:
         self.summary["held_absent"] += 1
 
+    def canary(self) -> None:
+        """Read the oldest valid documents held until one answers. None held: nothing to protect, absence trusted."""
+        ids = self.store.canaries(self.company, CANARIES)
+        if not ids:
+            self.summary["canary"] = "none"
+            self.trust_absence = True
+            return
+        answers = []
+        for sid in ids:
+            if self.stopped():
+                break
+            answers.append(self.read(sid))
+            if answers[-1] == "doc":
+                self.summary["canary"] = "ok"
+                self.trust_absence = True
+                for earlier, answer in zip(ids, answers):  # an older canary that said 'not found' is missing now
+                    if answer == "absent" and earlier in self.held:
+                        self._missed(earlier)
+                return
+        # 'absent': WizCloud answers, and says the oldest documents are not there (the wrong company?) - a reason.
+        # 'failed': the reads failed - WizCloud failing, which the reads after it judge. Either way no absence is
+        # trusted in this tick.
+        self.summary["canary"] = "absent" if "absent" in answers else "failed"
+        self.notes.append(f"the canary {'answered not found' if 'absent' in answers else 'was not read'}: "
+                          "no 'not found' is trusted in this tick")
+
+    def weekly_sweep(self) -> None:
+        """Every id from the first to the high-water mark, from the saved position, in what is left of the box."""
+        if self.high is None:
+            return
+        state = self.store.sweep_state(self.company)
+        new_pass = state is None or (state["next_id"] > self.high and state["pass_age_s"] >= SWEEP_EVERY_S)
+        if new_pass:
+            sid = self.base
+        elif state["next_id"] > self.high:
+            return  # this week's pass is done
+        else:
+            sid = state["next_id"]
+        top = self.high
+        while sid <= top:
+            if sid in self.seen:
+                sid += 1
+                continue
+            if self.stopped():
+                break
+            if self.read(sid) == OUT_OF_TIME:
+                break
+            self.summary["swept"] += 1
+            sid += 1
+        ended = sid > top
+        self.store.save_sweep(self.company, sid, new_pass=new_pass, ended=ended)
+        self.summary["sweep"] = {"next_id": sid, "ended": ended, "new_pass": new_pass}
+
+    def conclude(self, reached: bool) -> None:
+        """complete, and the verdict: ok, reasons, alert."""
+        s = self.summary
+        pending = len(self.store.retry_ids(self.company))
+        if pending:
+            self.notes.append(f"{pending} ids wait in books_retry")
+        if s["stuck"]:
+            self.notes.append(f"{s['stuck']} ids failed again (/api/books/status names them)")
+        s["complete"] = bool(reached and not self.failing and not s["failed"] and not pending)
+        reasons = []
+        if self.failing:
+            reasons.append("wizcloud_failing")
+        if s["canary"] == "absent":
+            reasons.append("canary")
+        if reached:
+            s["holes"] = sum(x["holes"] for x in self.store.series(self.company))
+            if s["holes"]:
+                reasons.append("holes")
+        else:
+            s["catching_up"] = not self.failing
+        s["missing_valid"] = self.store.missing_summary(self.company, MISSING_CONFIRM_S)["valid_confirmed"]
+        if s["missing_valid"]:
+            reasons.append("missing_valid")
+        s["stuck_day"] = self.store.stuck_since(self.company, STUCK_ALERT_S)
+        if s["stuck_day"]:
+            reasons.append("stuck")
+        s["reasons"] = reasons
+        s["ok"] = not reasons
+        s["alert"] = set(reasons) != set(self.prev_reasons or [])
+
     # ---- the run ---------------------------------------------------------------------------------------
-    def execute(self, reread_held: bool) -> None:
+    def execute(self, reread_held: bool, tick: bool = True) -> None:
         rows = self.store.retry_rows(self.company)
         self.waiting = {r[0] for r in rows}
         self.known_failed = {r[0] for r in rows if r[1] != JUMPED}
         self.retry_order = [r[0] for r in sorted((r for r in rows if r[1] != JUMPED), key=lambda r: (r[3], r[0]))]
         self.high = self.store.high_water(self.company)
+        self.held = self.store.held_status(self.company)
+        if tick:
+            self.canary()  # 0. does WizCloud answer for this company
+        else:
+            self.trust_absence = True  # the copy alone (B1): no canary, absence trusted
         going = self.sweep(sorted(r[0] for r in rows if r[1] == JUMPED), "retried")  # 1. ids never read
         if going and reread_held:  # 2. every held document again
             going = self.sweep(self.store.held_ids(self.company), "reread", on_absent=self.held_gone)
             if self.summary["held_absent"]:
-                self.notes.append(f"{self.summary['held_absent']} held documents answered 'not found' (gone is B2's)")
+                self.notes.append(f"{self.summary['held_absent']} held documents answered 'not found'")
         reached = going and self.frontier()  # 3. the frontier and the far probes
         if not self.stopped():  # 4. what failed before, after the frontier
             self.retry_failed()
-        pending = len(self.store.retry_ids(self.company))
-        if pending:
-            self.notes.append(f"{pending} ids wait in books_retry")
-        if self.summary["stuck"]:
-            self.notes.append(f"{self.summary['stuck']} ids failed again (/api/books/status names them)")
-        s = self.summary
-        s["complete"] = bool(reached and s["ok"] and not s["failed"] and not pending)
+        if tick and not self.stopped():  # 5. the drafts
+            self.sweep(self.store.draft_ids(self.company), "drafts")
+        if tick and not self.stopped():  # 6. what went missing, read again to confirm
+            self.sweep(self.store.missing_due(self.company, MISSING_CONFIRM_S, MISSING_PER_TICK), "rechecked")
+        if tick and not self.stopped():  # 7. the recent documents, a slice a tick
+            self.sweep(self.store.recent_ids(self.company, RECENT_HELD, RECENT_PER_TICK), "recent")
+        if tick and not self.stopped():  # 8. the weekly sweep, in what is left
+            self.weekly_sweep()
+        self.conclude(reached)
 
     def finish(self, quiet: bool = False) -> dict:
         s = self.summary
@@ -311,15 +459,18 @@ class _Run:
 
 
 def run_once(client, store, company: str, *, trigger: str, box_s: float,
-             clock: Callable[[], float] = time.monotonic, reread_held: bool = False) -> dict:
-    """One run inside `store.session(company)`. Returns its summary, also written to books_sync_runs."""
+             clock: Callable[[], float] = time.monotonic, reread_held: bool = False, tick: bool = True) -> dict:
+    """One run inside `store.session(company)`. Returns its summary, also written to books_sync_runs. `tick` False
+    is the copy alone (phases 1-4, absence trusted with no canary): what the B1 tests describe."""
     run = _Run(client, store, company, trigger, box_s, clock)
     try:
+        run.prev_reasons = store.last_reasons(company)
         with client.connection():
-            run.execute(reread_held)
+            run.execute(reread_held, tick)
     except Exception as exc:
         run.summary["ok"] = False
         run.summary["complete"] = False
+        run.summary["reasons"] = ["crashed"]
         run.notes.append(f"the run stopped on {type(exc).__name__}")
         run.finish(quiet=True)
         raise

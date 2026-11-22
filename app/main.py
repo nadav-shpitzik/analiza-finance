@@ -164,18 +164,21 @@ def _read_store(cfg: config.Config) -> dict:
 
 
 def _books_glance(cur, company: str) -> dict:
-    """For the public /health: whether the last run worked and how many numbers are missing - no count of
-    documents and no number (Nadav 19.11: the deployment is public; the detail is behind the sync key)."""
+    """For the public /health: whether the last run worked and why not (a closed vocabulary), and how many numbers
+    are missing - no count of documents and no number (Nadav 19.11: the deployment is public; the detail is behind
+    the sync key)."""
     from .books.store import summarize_series
 
     cur.execute(
-        "SELECT finished_at, ok, complete FROM books_sync_runs WHERE company = %s ORDER BY run_id DESC LIMIT 1", (company,)
+        "SELECT finished_at, ok, complete, reasons FROM books_sync_runs WHERE company = %s ORDER BY run_id DESC LIMIT 1",
+        (company,),
     )
     row = cur.fetchone()
     cur.execute("SELECT doc_type, doc_number, status FROM books_documents WHERE company = %s AND gone_at IS NULL", (company,))
     series = summarize_series(cur.fetchall())
     last = None if row is None else {
-        "finished_at": row[0].isoformat(timespec="seconds") if row[0] else None, "ok": row[1], "complete": row[2]}
+        "finished_at": row[0].isoformat(timespec="seconds") if row[0] else None, "ok": row[1], "complete": row[2],
+        "reasons": list(row[3] or [])}
     return {"last_run": last, "holes": sum(x["holes"] for x in series), "series": len(series)}
 
 
@@ -233,7 +236,20 @@ def store_health(cfg: config.Config, now: float) -> dict:
 
 # ---- the books copy (backlog 0301 B1): behind the sync key ----------------------------------------
 
-BOOKS_BOX_S = 45  # Make's window is 300 s and the spec boxes the whole request at 60 (§2.3); B2 tunes it
+# The whole request is boxed at REQUEST_BOX_S, the session included (spec §2.3; Make's window is 300 s): the run gets
+# what is left after the database's connection and lock, less FINISH_RESERVE_S for its log row, the verdict's
+# queries and the answer.
+REQUEST_BOX_S = 60
+FINISH_RESERVE_S = 4
+# What Make posts to Discord when `alert` is true: one line, counts only, never a number or a name from the books.
+REASON_TEXT = {
+    "wizcloud_failing": "WizCloud לא עונה: שלוש קריאות נכשלו ברצף",
+    "canary": "מסמך הביקורת לא נקרא, אז שום 'לא נמצא' לא נרשם בסבב",
+    "holes": "חסרים {holes} מספרים בסדרות המסמכים",
+    "missing_valid": "{missing_valid} מסמכים תקפים לא נמצאים בספרים (נשארים בכל חישוב עד שאדם מאשר)",
+    "stuck": "{stuck_day} מזהים נכשלים בקריאה כבר יותר מיממה",
+    "crashed": "הסבב נפל באמצע",
+}
 
 
 SYNC_KEY_MIN = 24
@@ -270,10 +286,23 @@ def _books_store(cfg: config.Config):
     return BooksStore(cfg.database_url)
 
 
+def tick_message(company: str, summary: dict) -> str:
+    """The line Make posts to Discord: the reasons in Hebrew, or the way back to ok."""
+    head = f"ספרי חשבשבת ({company})"
+    if not summary.get("reasons"):
+        return f"{head}: חזר לתקין."
+    parts = [REASON_TEXT.get(r, r).format(**{k: summary.get(k) for k in ("holes", "missing_valid", "stuck_day")})
+             for r in summary["reasons"]]
+    return f"{head}: " + "; ".join(parts) + "."
+
+
 @app.post("/api/books/tick")
 def books_tick(request: Request) -> JSONResponse:
-    """One run of the books copy for the configured company. 200 with ok false on a failure, as Make
-    needs (spec §2.3); skipped when another run of the company holds the lock. Counts only, no values."""
+    """One tick of the books copy for the configured company, boxed at REQUEST_BOX_S from the request's arrival. Always
+    200, as Make needs (spec §2.3): ok false with `reasons` when WizCloud fails or the copy has a problem, `skipped`
+    when another tick of the company holds the lock, and `alert` (with `message`, one Hebrew line) when the reasons
+    changed since the last tick - what Make posts to Discord. Counts only, no values."""
+    started = time.monotonic()
     cfg = config.load()
     refusal = _sync_key_refusal(request, cfg)
     if refusal is not None:
@@ -284,11 +313,16 @@ def books_tick(request: Request) -> JSONResponse:
     try:
         with _books_store(cfg).session(cfg.db) as store:
             if store is None:
-                return JSONResponse({"ok": True, "skipped": True, "reason": "another run of this company is in progress"})
-            summary = run_once(get_client(state, cfg), store, cfg.db, trigger="http", box_s=BOOKS_BOX_S)
+                return JSONResponse({"ok": True, "skipped": True, "alert": False,
+                                     "reason": "another run of this company is in progress"})
+            box = REQUEST_BOX_S - FINISH_RESERVE_S - (time.monotonic() - started)
+            summary = run_once(get_client(state, cfg), store, cfg.db, trigger="http", box_s=box)
     except Exception as exc:  # noqa: BLE001 - a 200 with the class, never the text; Make reruns a 5xx
-        return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
-    return JSONResponse({"skipped": False, **summary})
+        return JSONResponse({"ok": False, "skipped": False, "alert": True, "reasons": ["crashed"],
+                             "error": type(exc).__name__, "detail": getattr(exc, "detail", None),
+                             "message": f"ספרי חשבשבת ({cfg.company}): הסבב נפל ({type(exc).__name__})."})
+    return JSONResponse({"skipped": False, **summary, "message": tick_message(cfg.company, summary),
+                         "request_s": round(time.monotonic() - started, 1)})
 
 
 @app.get("/api/books/status")
@@ -305,8 +339,11 @@ def books_status(request: Request) -> JSONResponse:
         with store.session(cfg.db + ":status") as s:  # its own lock id: reading never waits for a run
             if s is None:
                 return JSONResponse({"ok": False, "error": "busy"})
+            from .books.sync import MISSING_CONFIRM_S
+
             return JSONResponse({"ok": True, "company": cfg.company, "last_run": s.last_run(cfg.db), "series": s.series(cfg.db),
-                                 "retry": s.retry_summary(cfg.db)})
+                                 "retry": s.retry_summary(cfg.db), "missing": s.missing_summary(cfg.db, MISSING_CONFIRM_S),
+                                 "sweep": s.sweep_summary(cfg.db)})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
 

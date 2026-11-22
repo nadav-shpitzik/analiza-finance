@@ -1,4 +1,5 @@
-"""The books copy in Postgres (spec §3.2, backlog 0301 B1): saving documents, the run log, the series.
+"""The books copy in Postgres (spec §3.2, backlog 0301 B1 and B2): saving documents, the run log, the series, the
+weekly sweep's position, and a held document that went missing.
 
 Every document is saved in its own transaction, as it is read, so a run that is cut loses nothing (spec
 §2.3). A run of one company holds a transaction-scoped advisory lock on a connection of its own for its
@@ -13,7 +14,7 @@ from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, Iterator, Optional
 
-from .doctypes import INFERRED, VALID_STATUS, role
+from .doctypes import DRAFT_STATUS, INFERRED, VALID_STATUS, role
 from .parse import DOCUMENT_COLUMNS, LINE_COLUMNS, line_key
 
 CONNECT_TIMEOUT_S = 10
@@ -21,12 +22,14 @@ STATEMENT_TIMEOUT = "15s"
 # What the writes name, per table. app/migrate.py checks the live schema against it.
 BOOKS_TABLES = {
     "books_documents": ("company", "stock_id") + DOCUMENT_COLUMNS + (
-        "content_hash", "fields_seen", "first_seen_at", "last_read_at", "last_changed_at", "gone_at", "gone_confirmed_by"),
+        "content_hash", "fields_seen", "first_seen_at", "last_read_at", "last_changed_at", "gone_at", "gone_confirmed_by",
+        "missing_since", "missing_seen_at"),
     "books_lines": ("company", "stock_id") + LINE_COLUMNS,
     "books_document_events": ("event_id", "company", "stock_id", "run_id", "kind", "fields", "at"),
     "books_retry": ("company", "stock_id", "kind", "attempts", "first_failed_at", "last_failed_at"),
     "books_sync_runs": ("run_id", "company", "trigger", "started_at", "finished_at", "from_id", "to_id", "probed", "found",
-                        "added", "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note"),
+                        "added", "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note", "reasons"),
+    "books_sweep": ("company", "next_id", "pass_started_at", "last_pass_ended_at", "passes"),
 }
 HOLES_SAMPLE = 10
 STUCK_SAMPLE = 20
@@ -108,12 +111,20 @@ class BooksStore:
         with _guard():
             self._conn.execute(
                 "UPDATE books_sync_runs SET finished_at = now(), from_id = %s, to_id = %s, probed = %s, found = %s, added = %s, "
-                "changed = %s, absent = %s, failed = %s, masked = %s, far_hits = %s, complete = %s, ok = %s, note = %s "
-                "WHERE run_id = %s",
+                "changed = %s, absent = %s, failed = %s, masked = %s, far_hits = %s, complete = %s, ok = %s, note = %s, "
+                "reasons = %s WHERE run_id = %s",
                 (summary["from_id"], summary["to_id"], summary["probed"], summary["found"], summary["added"], summary["changed"],
                  summary["absent"], json.dumps(summary["failed"]), summary["masked"], summary["far_hits"],
-                 summary["complete"], summary["ok"], summary.get("note"), run_id),
+                 summary["complete"], summary["ok"], summary.get("note"), list(summary.get("reasons") or []), run_id),
             )
+
+    def last_reasons(self, company: str) -> Optional[list]:
+        """Why the last finished run of this company was not ok ([] when it was), or None when none finished."""
+        with _guard():
+            row = self._conn.execute(
+                "SELECT reasons FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL ORDER BY run_id DESC LIMIT 1",
+                (company,)).fetchone()
+        return None if row is None else list(row[0] or [])
 
     def ever_completed(self, company: str) -> bool:
         """Whether a run of this company ever reached the end: after that, a run starting with nothing
@@ -201,11 +212,19 @@ class BooksStore:
                 cur.execute(_QUEUE, (company, jumped, "jumped"))
             cur.execute("DELETE FROM books_retry WHERE company = %s AND stock_id = %s", (company, doc["stock_id"]))
             cur.execute(
-                f"SELECT content_hash, {', '.join(DOCUMENT_COLUMNS)} FROM books_documents "
+                f"SELECT content_hash, gone_at, missing_since, {', '.join(DOCUMENT_COLUMNS)} FROM books_documents "
                 "WHERE company = %s AND stock_id = %s FOR UPDATE",
                 (company, doc["stock_id"]),
             )
             row = cur.fetchone()
+            if row is not None and (row[1] is not None or row[2] is not None):  # read again: not missing, not gone
+                cur.execute(
+                    "UPDATE books_documents SET gone_at = NULL, gone_confirmed_by = NULL, missing_since = NULL, "
+                    "missing_seen_at = NULL WHERE company = %s AND stock_id = %s", (company, doc["stock_id"]))
+                if row[1] is not None:
+                    cur.execute(
+                        "INSERT INTO books_document_events (company, stock_id, run_id, kind) VALUES (%s, %s, %s, 'reappeared')",
+                        (company, doc["stock_id"], run_id))
             if row is not None and row[0] == doc["content_hash"]:
                 cur.execute(
                     "UPDATE books_documents SET last_read_at = now() WHERE company = %s AND stock_id = %s",
@@ -218,7 +237,7 @@ class BooksStore:
                 )
                 kind, fields = "first_seen", []
             else:
-                old = dict(zip(DOCUMENT_COLUMNS, row[1:]))
+                old = dict(zip(DOCUMENT_COLUMNS, row[3:]))
                 fields = sorted(c for c in DOCUMENT_COLUMNS if _differs(old.get(c), doc.get(c)))
                 cur.execute(f"SELECT {', '.join(LINE_COLUMNS)} FROM books_lines WHERE company = %s AND stock_id = %s",
                             (company, doc["stock_id"]))
@@ -247,19 +266,125 @@ class BooksStore:
             )
             return "added" if row is None else "changed"
 
+    # ---- the tick's lists (B2) ---------------------------------------------------------------------
+    def held_status(self, company: str) -> dict:
+        """stock_id -> status of every document held and not gone."""
+        with _guard():
+            return dict(self._conn.execute(
+                "SELECT stock_id, status FROM books_documents WHERE company = %s AND gone_at IS NULL", (company,)).fetchall())
+
+    def canaries(self, company: str, n: int) -> list:
+        """The oldest valid documents held and not missing: what a tick reads first to know WizCloud answers for
+        this company (spec §4.2.4)."""
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                "SELECT stock_id FROM books_documents WHERE company = %s AND gone_at IS NULL AND missing_since IS NULL "
+                f"AND status = {VALID_STATUS} ORDER BY stock_id LIMIT %s", (company, n)).fetchall()]
+
+    def draft_ids(self, company: str) -> list:
+        """Every draft held, the one read longest ago first."""
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                f"SELECT stock_id FROM books_documents WHERE company = %s AND gone_at IS NULL AND status = {DRAFT_STATUS} "
+                "ORDER BY last_read_at, stock_id", (company,)).fetchall()]
+
+    def recent_ids(self, company: str, window: int, limit: int) -> list:
+        """Of the `window` highest ids held, the `limit` read longest ago: each is read again within window/limit
+        ticks."""
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                "SELECT stock_id FROM (SELECT stock_id, last_read_at FROM books_documents WHERE company = %s AND gone_at IS NULL "
+                "ORDER BY stock_id DESC LIMIT %s) recent ORDER BY last_read_at, stock_id LIMIT %s",
+                (company, window, limit)).fetchall()]
+
+    def missing_due(self, company: str, after_s: float, limit: int) -> list:
+        """Held documents that answered 'not found' and whose last miss is at least `after_s` old: read again to
+        confirm (spec §4.2.5)."""
+        with _guard():
+            return [r[0] for r in self._conn.execute(
+                "SELECT stock_id FROM books_documents WHERE company = %s AND gone_at IS NULL AND missing_since IS NOT NULL "
+                "AND missing_seen_at <= now() - make_interval(secs => %s) ORDER BY missing_since, stock_id LIMIT %s",
+                (company, after_s, limit)).fetchall()]
+
+    def mark_missing(self, company: str, stock_id: int) -> Optional[tuple]:
+        """A held document answered 'not found': (its status, seconds since its first miss), or None when it is not
+        held (or gone already)."""
+        with _guard():
+            row = self._conn.execute(
+                "UPDATE books_documents SET missing_since = coalesce(missing_since, now()), missing_seen_at = now() "
+                "WHERE company = %s AND stock_id = %s AND gone_at IS NULL "
+                "RETURNING status, extract(epoch FROM now() - missing_since)", (company, stock_id)).fetchone()
+        return None if row is None else (row[0], float(row[1]))
+
+    def mark_gone(self, company: str, stock_id: int, run_id: int, by: str) -> None:
+        with _guard(), self._conn.transaction():
+            cur = self._conn.cursor()
+            cur.execute("UPDATE books_documents SET gone_at = now(), gone_confirmed_by = %s "
+                        "WHERE company = %s AND stock_id = %s AND gone_at IS NULL", (by, company, stock_id))
+            if cur.rowcount:
+                cur.execute("INSERT INTO books_document_events (company, stock_id, run_id, kind) VALUES (%s, %s, %s, 'gone')",
+                            (company, stock_id, run_id))
+
+    def missing_summary(self, company: str, confirm_s: float, limit: int = STUCK_SAMPLE) -> dict:
+        """Held documents that answered 'not found': missed once, and valid ones missed twice at least
+        `confirm_s` apart, which stay in every figure until a person confirms them gone."""
+        with _guard():
+            rows = self._conn.execute(
+                "SELECT stock_id, status, missing_seen_at - missing_since >= make_interval(secs => %s) FROM books_documents "
+                "WHERE company = %s AND gone_at IS NULL AND missing_since IS NOT NULL ORDER BY stock_id",
+                (confirm_s, company)).fetchall()
+        confirmed = [r[0] for r in rows if r[2] and r[1] != DRAFT_STATUS]
+        return {"missing": len(rows), "valid_confirmed": len(confirmed), "valid_confirmed_ids": confirmed[:limit]}
+
+    def stuck_since(self, company: str, older_s: float) -> int:
+        """Ids that failed again and whose first failure is at least `older_s` old."""
+        with _guard():
+            return self._conn.execute(
+                "SELECT count(*) FROM books_retry WHERE company = %s AND attempts >= 2 "
+                "AND first_failed_at <= now() - make_interval(secs => %s)", (company, older_s)).fetchone()[0]
+
+    # ---- the weekly sweep's position ------------------------------------------------------------------
+    def sweep_state(self, company: str) -> Optional[dict]:
+        with _guard():
+            row = self._conn.execute(
+                "SELECT next_id, extract(epoch FROM now() - pass_started_at), last_pass_ended_at, passes FROM books_sweep "
+                "WHERE company = %s", (company,)).fetchone()
+        if row is None:
+            return None
+        return {"next_id": row[0], "pass_age_s": float(row[1]), "last_pass_ended_at": row[2], "passes": row[3]}
+
+    def save_sweep(self, company: str, next_id: int, *, new_pass: bool, ended: bool) -> None:
+        with _guard():
+            self._conn.execute(
+                "INSERT INTO books_sweep (company, next_id, last_pass_ended_at, passes) "
+                "VALUES (%s, %s, CASE WHEN %s THEN now() END, CASE WHEN %s THEN 1 ELSE 0 END) "
+                "ON CONFLICT (company) DO UPDATE SET next_id = EXCLUDED.next_id, "
+                "pass_started_at = CASE WHEN %s THEN now() ELSE books_sweep.pass_started_at END, "
+                "last_pass_ended_at = CASE WHEN %s THEN now() ELSE books_sweep.last_pass_ended_at END, "
+                "passes = books_sweep.passes + CASE WHEN %s THEN 1 ELSE 0 END",
+                (company, next_id, ended, ended, new_pass, ended, ended))
+
+    def sweep_summary(self, company: str) -> Optional[dict]:
+        state = self.sweep_state(company)
+        if state is None:
+            return None
+        ended = state["last_pass_ended_at"]
+        return {"next_id": state["next_id"], "pass_age_h": round(state["pass_age_s"] / 3600, 1), "passes": state["passes"],
+                "last_pass_ended_at": ended.isoformat(timespec="seconds") if ended else None}
+
     # ---- what /health and the status route say ---------------------------------------------------
     def last_run(self, company: str) -> Optional[dict]:
         with _guard():
             row = self._conn.execute(
                 "SELECT run_id, trigger, started_at, finished_at, from_id, to_id, probed, found, added, changed, absent, "
-                "failed, masked, far_hits, complete, ok, note FROM books_sync_runs WHERE company = %s "
+                "failed, masked, far_hits, complete, ok, note, reasons FROM books_sync_runs WHERE company = %s "
                 "ORDER BY run_id DESC LIMIT 1",
                 (company,),
             ).fetchone()
         if row is None:
             return None
         keys = ("run_id", "trigger", "started_at", "finished_at", "from_id", "to_id", "probed", "found", "added",
-                "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note")
+                "changed", "absent", "failed", "masked", "far_hits", "complete", "ok", "note", "reasons")
         out = dict(zip(keys, row))
         for k in ("started_at", "finished_at"):
             out[k] = out[k].isoformat(timespec="seconds") if out[k] else None

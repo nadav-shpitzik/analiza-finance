@@ -1,9 +1,11 @@
 """A manual, read-only check of the books copy against WizCloud (backlog 0301, B1's acceptance), run by
 .github/workflows/books-check.yml into a throwaway Postgres that lives only inside the job.
 
-Two runs: the first copies the company's documents; the second re-reads every document held and must find
-each one unchanged, add nothing, and fail no read (review 22.11: a second run that reads nothing proves
-nothing). Printed:
+Three runs, each a whole tick (B2): the first copies the company's documents; the second re-reads every document
+held and must find each one unchanged, add nothing, and fail no read (review 22.11: a second run that reads nothing
+proves nothing); the third is a steady tick in the deployment's own box (60 s less its reserve) with the weekly
+sweep's pass begun anew, so it shows on the real books what an hourly tick reads: the canary, the frontier, every
+draft, a slice of the recent documents, and the sweep in what is left. Printed:
 the runs' counts, the series (document type, valid documents, first and last number, holes and up to ten
 missing numbers), how many text fields were masked and by which column, what masking cost (numbers masked,
 references lost, by reason), the gaps between held ids (to judge the frontier's window of 50), the longest
@@ -25,8 +27,9 @@ from app.books.store import BooksStore  # noqa: E402
 from app.wizcloud import WizClient  # noqa: E402
 
 RUN_KEYS = ("from_id", "to_id", "probed", "found", "added", "changed", "unchanged", "absent", "failed", "masked",
-            "far_hits", "retried", "reread", "held_absent", "queued", "stuck", "complete", "ok", "note", "elapsed_s",
-            "masked_fields", "clean")
+            "far_hits", "retried", "reread", "held_absent", "queued", "stuck", "canary", "drafts", "rechecked", "recent",
+            "swept", "sweep", "missing", "gone", "complete", "catching_up", "holes", "missing_valid", "stuck_day", "ok",
+            "reasons", "note", "elapsed_s", "masked_fields", "clean")
 TEXT_COLUMNS = ("account_name", "account_key", "reference", "remarks", "details", "currency", "batch")
 
 
@@ -43,6 +46,12 @@ def main() -> int:
     for n in (1, 2):
         with store.session(cfg.db) as s:
             runs.append(sync.run_once(client, s, cfg.db, trigger=f"books-check-{n}", box_s=box_s, reread_held=n == 2))
+    from app.main import FINISH_RESERVE_S, REQUEST_BOX_S
+
+    steady_box = REQUEST_BOX_S - FINISH_RESERVE_S
+    with store.session(cfg.db) as s:
+        s._conn.execute("UPDATE books_sweep SET pass_started_at = now() - interval '8 days' WHERE company = %s", (cfg.db,))
+        runs.append(sync.run_once(client, s, cfg.db, trigger="books-check-3", box_s=steady_box))
     with store.session(cfg.db + ":status") as s:
         conn = s._conn
         series = s.series(cfg.db)
@@ -63,12 +72,14 @@ def main() -> int:
         line_longest = conn.execute(
             "SELECT coalesce(max(length(details)), 0), coalesce(max(length(item_name)), 0), "
             "count(*) FILTER (WHERE item_key LIKE '%%#%%') FROM books_lines WHERE company = %s", (cfg.db,)).fetchone()
-    first, second = runs
+    first, second, third = runs
     accepted = bool(
         first["ok"] and first["complete"] and not first["failed"]
         and second["ok"] and second["complete"] and not second["failed"]
         and second["added"] == 0 and second["changed"] == 0
-        and second["reread"] == counts[0] and second["unchanged"] == counts[0] and second["held_absent"] == 0
+        and second["found"] == counts[0] and second["unchanged"] == counts[0] and second["held_absent"] == 0
+        and third["ok"] and third["canary"] == "ok" and not third["failed"] and third["elapsed_s"] <= steady_box + 2
+        and third["drafts"] == counts[1] and third["swept"] > 0
     )
     out = {
         "code_sha": os.environ.get("GITHUB_SHA"),
