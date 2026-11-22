@@ -80,29 +80,43 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def check_board(board: Board, count: Optional[int], rows: list) -> dict:
-    """Counts only: the board's items_count, the rows read and the distinct ids among them. ok when all three agree."""
-    unique = len({r["id"] for r in rows})
+def check_board(board: Board, count: Optional[int], asked: list, rows: list) -> dict:
+    """Counts only. A board is whole when its items_count, the rows read and the distinct ids agree, **and** the rows are
+    exactly the ids its pages gave, each answered from this board with every column asked (review 22.11: by id, monday
+    answers an item of any board, and drops the columns that board lacks)."""
+    ids = [r["id"] for r in rows]
+    strangers = sum(1 for r in rows if r["id"] not in set(asked) or r.get("board_id") != board.board_id)
+    short = sum(1 for r in rows if not set(board.columns) <= set(r))
+    unique = len(set(ids))
+    ok = (count is not None and count == len(rows) == unique and set(ids) == set(asked) and not strangers
+          and not short)
     return {"board_id": board.board_id, "items_count": count, "rows": len(rows), "unique": unique,
-            "ok": count is not None and count == len(rows) == unique}
+            "strangers": strangers, "short_rows": short, "ok": ok}
 
 
 def read_profile(reader: MondayReader, profile: tuple = PROFILE, clock: Callable[[], float] = time.monotonic) -> dict:
     """The whole profile: every board's columns checked in one request, the boards' ids side by side, then every row by
-    id. A reading that failed carries its closed code and no rows; one that read every board is complete only when
-    every board's counts agree."""
+    id. A reading that failed carries its closed code and no rows - `crashed` for anything outside monday's own errors,
+    so it too replaces the stored reading (review 22.11) - and one that read every board is complete only when every
+    board is whole."""
     started = clock()
     out = {"profile": PROFILE_NAME, "read_at": _now_iso(), "complete": False, "error": None, "detail": None,
            "checks": {}, "boards": {}, "calls": 0, "seconds": 0.0}
+    keys, ids = [b.key for b in profile], [b.board_id for b in profile]
+    if len(set(keys)) != len(keys) or len(set(ids)) != len(ids):  # one key over two boards hides the first's check
+        out.update(error="profile", detail="a key or a board appears twice in the profile")
+        return out
     try:
         reader.require_columns([(b.board_id, b.columns) for b in profile])
         results = reader.read_boards([(b.board_id, b.columns) for b in profile])
-    except MondayError as exc:
-        out.update(error=exc.code, detail=exc.detail[:200])
-    else:
-        for board, (count, rows) in zip(profile, results):
-            out["checks"][board.key] = check_board(board, count, rows)
+        for board, (count, asked, rows) in zip(profile, results):
+            out["checks"][board.key] = check_board(board, count, asked, rows)
             out["boards"][board.key] = rows
+    except MondayError as exc:
+        out.update(error=exc.code, detail=exc.detail[:200], checks={}, boards={})
+    except Exception as exc:  # noqa: BLE001 - said by class: a reading that crashed is a reading that failed
+        out.update(error="crashed", detail=type(exc).__name__, checks={}, boards={})
+    else:
         out["complete"] = all(c["ok"] for c in out["checks"].values())
     out["calls"], out["seconds"] = reader.calls, round(clock() - started, 1)
     return out
@@ -117,20 +131,43 @@ class NotReady(Exception):
         super().__init__(reason)
 
 
-NOT_READY = ("demo", "company", "no_reading", "failed", "incomplete")
+NOT_READY = ("demo", "company", "no_reading", "failed", "incomplete", "stale")
+# The run reads monday fresh before its rules, every hour: a reading older than this means the last runs did not keep
+# theirs, and nothing should be matched on it.
+MAX_READING_AGE_S = 2 * 3600
 
 
-def why_not_ready(company: str, reading: Optional[dict]) -> Optional[str]:
+def _age_s(read_at) -> Optional[float]:
+    try:
+        then = datetime.fromisoformat(str(read_at))
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        return None
+    return (datetime.now(timezone.utc) - then).total_seconds()
+
+
+def why_not_ready(company: str, reading: Optional[dict], profile: tuple = PROFILE,
+                  max_age_s: float = MAX_READING_AGE_S) -> Optional[str]:
     """None when a monday-side rule may run; else why not. monday's boards are Analiza's: they are matched to Analiza's
-    books only, and only when the last reading read every board whole."""
+    books only, and only on a recent reading of this profile in which every board was read whole - judged from the
+    reading's own checks, not from a flag (review 22.11: a reading of an older profile, or a bare {"complete": True},
+    was ready)."""
     if company != "analiza":
         return "demo" if company == "demo" else "company"
     if not reading:
         return "no_reading"
     if reading.get("error"):
         return "failed"
-    if not reading.get("complete"):
+    checks = reading.get("checks") or {}
+    whole = (reading.get("profile") == PROFILE_NAME and reading.get("complete") is True
+             and set(checks) == {b.key for b in profile}
+             and all(checks[b.key].get("ok") is True and checks[b.key].get("board_id") == b.board_id for b in profile))
+    if not whole:
         return "incomplete"
+    age = _age_s(reading.get("read_at"))
+    if age is None or age > max_age_s:
+        return "stale"
     return None
 
 

@@ -14,11 +14,17 @@ The rules it keeps:
    every board are checked first, in one request, and a missing one ends the reading (`unknown_column`).
 3. **A whole board is counted twice:** its `items_count` beside the rows read. The caller compares them (app/recon/reading.py).
 4. **A deleted item is dropped, an archived one kept** (read by id, its `state` says which).
-5. **The token never appears** in an error, a log line or an answer. Errors carry a closed code and a short detail.
+5. **The token never appears** in an error, a log line or an answer. Errors carry a closed code and a short detail, with
+   the token taken out of whatever monday's message said (review 22.11: a message that echoes it reached the answer).
+6. **The deadline bounds the answer too:** a body is read in pieces and the deadline is checked between them, so a slow
+   answer ends at the deadline instead of whenever it finishes (review 22.11: httpx's timeout is per read, not per request).
+7. **Every row says which board it came from** (`board { id }`): an id read by id answers from any board, so a row is
+   counted as the board's only when it is (review 22.11).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -46,6 +52,7 @@ ITEMS_BY_ID_CHUNK = 100
 # items in 5 chunks took 7.0 s one after another and 1.35 s side by side)
 CHUNK_WORKERS = 6
 CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_column", "deadline", "too_many_pages")
+DETAIL_MAX = 200
 
 _AUTH_RE = re.compile(r"unauthor|unauthenticated|not authenticated|invalid token", re.IGNORECASE)
 _RATE_RE = re.compile(r"complexity|rate.?limit", re.IGNORECASE)
@@ -61,7 +68,8 @@ ITEM_IDS_FIRST = ("query ($b: [ID!], $limit: Int!) { boards(ids: $b) { items_cou
                   "items_page(limit: $limit) { cursor items { id } } } }")
 ITEM_IDS_NEXT = "query ($c: String!, $limit: Int!) { next_items_page(cursor: $c, limit: $limit) { cursor items { id } } }"
 ITEMS_BY_ID = ("query ($ids: [ID!], $cols: [String!], $limit: Int!) {"
-               " items(ids: $ids, limit: $limit) { id name state created_at column_values(ids: $cols) %s } }" % CV_FRAGMENT)
+               " items(ids: $ids, limit: $limit) { id name state created_at board { id } column_values(ids: $cols) %s } }"
+               % CV_FRAGMENT)
 
 
 class MondayError(Exception):
@@ -92,11 +100,19 @@ def classify_graphql_errors(errors: list) -> tuple:
     return code, "; ".join(messages)[:200], reset_in
 
 
+def _text(value) -> str:
+    """A cell's text, without NUL: Postgres jsonb refuses \\u0000, and one such cell would fail every save while it
+    stays (review 22.11). It never means anything in monday's text."""
+    return str(value or "").replace("\x00", "")
+
+
 def flatten(item: dict) -> dict:
     """One item as a row: a status cell's label under the column id and its index under `id#` (a label is matched by its
-    index, never its text), a relation's ids as a list, a mirror's display text, any other cell's text."""
-    row = {"id": str(item["id"]), "name": item.get("name") or "", "created_at": item.get("created_at") or "",
-           "state": str(item.get("state") or "active")}
+    index, never its text), a relation's ids as a list, a mirror's display text, any other cell's text; and the board the
+    item answered from (`board_id`)."""
+    board = item.get("board") if isinstance(item.get("board"), dict) else {}
+    row = {"id": str(item["id"]), "name": _text(item.get("name")), "created_at": _text(item.get("created_at")),
+           "state": str(item.get("state") or "active"), "board_id": str(board.get("id") or "")}
     for c in item.get("column_values") or []:
         if not isinstance(c, dict):
             continue
@@ -104,12 +120,12 @@ def flatten(item: dict) -> dict:
         if "linked_item_ids" in c:
             row[cid] = [str(x) for x in c.get("linked_item_ids") or []]
         elif "display_value" in c:
-            row[cid] = c.get("display_value") or ""
+            row[cid] = _text(c.get("display_value"))
         elif "index" in c:
-            row[cid] = c.get("label") or c.get("text") or ""
+            row[cid] = _text(c.get("label") or c.get("text"))
             row[cid + "#"] = "" if c.get("index") is None else str(c.get("index"))
         else:
-            row[cid] = c.get("text") or ""
+            row[cid] = _text(c.get("text"))
     return row
 
 
@@ -122,11 +138,23 @@ class MondayReader:
         self.client = client or httpx.Client(timeout=READ_TIMEOUT_SECONDS, verify=tls_context())
         self.api_url, self.sleep, self.clock = api_url, sleep, clock
         self.deadline: Optional[float] = None
-        self.calls = 0  # requests sent (a retry inside one is not counted): what a reading costs
+        self.calls = 0  # requests sent, a retry included: what a reading costs against monday's budget
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
         return "MondayReader()"
+
+    def close(self) -> None:
+        self.client.close()
+
+    def _redact(self, text: str) -> str:
+        text = str(text or "")
+        if self._token:
+            text = text.replace(self._token, "[token]")
+        return text[:DETAIL_MAX]
+
+    def _error(self, code: str, detail: str) -> MondayError:
+        return MondayError(code, self._redact(detail))
 
     # ---- transport -------------------------------------------------------
     def _headers(self) -> dict:
@@ -147,7 +175,7 @@ class MondayReader:
         self.sleep(delay)
 
     def post(self, query: str, variables: dict) -> dict:
-        """One read, retried once on 429, 5xx or a transport error (a read is idempotent). Returns `data`."""
+        """One read, retried once on 429, 5xx or a request error (a read is idempotent). Returns `data`."""
         if not query.lstrip().startswith("query"):
             raise MondayError("graphql", "only read queries are allowed")
         payload = {"query": query, "variables": variables}
@@ -161,29 +189,28 @@ class MondayReader:
             with self._lock:
                 self.calls += 1
             try:
-                resp = self.client.post(self.api_url, json=payload, headers=self._headers(), timeout=timeout)
-            except httpx.TransportError as exc:  # a timeout included
+                status, retry_after, raw = self._send(payload, timeout)
+            except httpx.RequestError as exc:  # a transport error, a timeout, a body that does not decode
                 after = self._left()
                 if after is not None and after <= 0.5:
                     raise MondayError("deadline", f"transport {type(exc).__name__}") from None
                 if attempt <= MAX_RETRIES:
-                    logger.warning("monday transport error %s, retrying", type(exc).__name__)
+                    logger.warning("monday request error %s, retrying", type(exc).__name__)
                     self._backoff(attempt, None)
                     continue
                 raise MondayError("http", f"transport {type(exc).__name__}") from None
-            status = resp.status_code
             if status in (401, 403):
                 raise MondayError("auth", f"http {status}")
             if status == 429 or status >= 500:
                 if attempt <= MAX_RETRIES:
                     logger.warning("monday http %s, retrying", status)
-                    self._backoff(attempt, resp.headers.get("Retry-After"))
+                    self._backoff(attempt, retry_after)
                     continue
                 raise MondayError("rate_limited" if status == 429 else "http", f"http {status} after {attempt} attempts")
             if status != 200:
                 raise MondayError("http", f"http {status}")
             try:
-                body = resp.json()
+                body = json.loads(raw)
             except ValueError:
                 raise MondayError("http", "non-json body") from None
             if not isinstance(body, dict):
@@ -194,14 +221,26 @@ class MondayReader:
                 if code == "rate_limited" and attempt <= MAX_RETRIES:
                     self._backoff(attempt, reset_in)
                     continue
-                raise MondayError(code, detail)
+                raise self._error(code, detail)
             if body.get("error_code") or body.get("error_message"):  # the legacy top-level shape
                 blob = f"{body.get('error_code') or ''} {body.get('error_message') or ''}".strip()
-                raise MondayError("auth" if _AUTH_RE.search(blob) else "graphql", blob[:200])
+                raise self._error("auth" if _AUTH_RE.search(blob) else "graphql", blob)
             data = body.get("data")
             if not isinstance(data, dict):
                 raise MondayError("graphql", "no data in the answer")
             return data
+
+    def _send(self, payload: dict, timeout: float) -> tuple:
+        """(status, Retry-After, body) - the body read in pieces, the deadline checked between them."""
+        with self.client.stream("POST", self.api_url, json=payload, headers=self._headers(), timeout=timeout) as resp:
+            if resp.status_code != 200:
+                return resp.status_code, resp.headers.get("Retry-After"), b""
+            pieces = []
+            for piece in resp.iter_bytes():
+                pieces.append(piece)
+                if self.deadline is not None and self.clock() > self.deadline:
+                    raise MondayError("deadline", "the answer was still coming at the deadline")
+            return resp.status_code, None, b"".join(pieces)
 
     # ---- boards ----------------------------------------------------------
     def require_columns(self, spec: Iterable[tuple]) -> None:
@@ -263,11 +302,11 @@ class MondayReader:
 
     def read_boards(self, boards: list) -> list:
         """[(board_id, columns)] whole: the ids of every board side by side, then every row by id in one pool.
-        -> [(items_count, rows)] in order."""
+        -> [(items_count, the ids asked, rows)] in order."""
         if len(boards) < 2:
             counted = [self.item_ids(b) for b, _ in boards]
         else:
             with ThreadPoolExecutor(max_workers=min(len(boards), CHUNK_WORKERS), thread_name_prefix="monday-ids") as pool:
                 counted = list(pool.map(lambda bc: self.item_ids(bc[0]), boards))
         rows = self.read_items([(ids, cols) for (_n, ids), (_b, cols) in zip(counted, boards)])
-        return [(n, r) for (n, _ids), r in zip(counted, rows)]
+        return [(n, ids, r) for (n, ids), r in zip(counted, rows)]

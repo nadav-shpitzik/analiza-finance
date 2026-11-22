@@ -158,9 +158,12 @@ def _read_store(cfg: config.Config) -> dict:
         state = schema_state(cur)
         times = saved_times(cur, cfg.server, cfg.db) if state["tables"].get(TABLE) == "present" and cfg.db else None
         books = None
+        # each glance in a savepoint of its own: a statement that fails aborts the transaction, and the next glance
+        # would read nothing (review 22.11: a books error blanked the recon block)
         if state["tables"].get("books_sync_runs") == "present" and cfg.db:
             try:  # its own try: a books problem never blanks the store block (review 22.11)
-                books = _books_glance(cur, cfg.db)
+                with conn.transaction():
+                    books = _books_glance(cur, cfg.db)
             except Exception as exc:  # noqa: BLE001 - the class only
                 books = {"error": type(exc).__name__}
         recon = None
@@ -168,7 +171,8 @@ def _read_store(cfg: config.Config) -> dict:
             try:  # its own try, like the books: a reading problem never blanks the store block
                 from .recon.store import reading_glance
 
-                recon = reading_glance(cur)
+                with conn.transaction():
+                    recon = reading_glance(cur)
             except Exception as exc:  # noqa: BLE001 - the class only
                 recon = {"error": type(exc).__name__}
     return {**state, "times": times, "books": books, "recon": recon}
@@ -461,18 +465,28 @@ def recon_run(request: Request) -> JSONResponse:
     from .recon.reading import read_profile
     from .recon.store import ReconStoreError, UnsafeBody, reading_lock, save_reading
 
+    box_end = started + REQUEST_BOX_S
     try:
         with reading_lock(cfg.database_url) as held:
             if not held:
                 return JSONResponse({"ok": True, "skipped": True, "detail": "another reading is running"})
             reader = _monday_reader(request.app.state, cfg)
-            reader.deadline = started + REQUEST_BOX_S - FINISH_RESERVE_S
-            reading = read_profile(reader)
-            save_reading(cfg.database_url, reading)
+            reader.deadline = box_end - FINISH_RESERVE_S
+            try:
+                reading = read_profile(reader)
+            finally:
+                reader.close()
+            try:
+                save_reading(cfg.database_url, reading, budget_s=box_end - time.monotonic())
+            except (ReconStoreError, UnsafeBody) as exc:
+                # the reading could not be kept: a failed one takes its place, so the rules never run on the one before
+                # (review 22.11: a NUL in one cell, refused by jsonb, left the earlier complete reading in force)
+                code = "unsafe_body" if isinstance(exc, UnsafeBody) else "store"
+                reading = {**reading, "complete": False, "error": code,
+                           "detail": getattr(exc, "detail", None), "boards": {}}
+                save_reading(cfg.database_url, reading, budget_s=max(1.0, box_end - time.monotonic()))
     except ReconStoreError as exc:
         return JSONResponse({"ok": False, "skipped": False, "error": "store", "detail": exc.detail})
-    except UnsafeBody:
-        return JSONResponse({"ok": False, "skipped": False, "error": "unsafe_body", "detail": None})
     except Exception as exc:  # noqa: BLE001 - said by class, never past the route
         return JSONResponse({"ok": False, "skipped": False, "error": "crashed", "detail": type(exc).__name__})
     return JSONResponse({**_reading_answer(reading), "request_s": round(time.monotonic() - started, 1)})

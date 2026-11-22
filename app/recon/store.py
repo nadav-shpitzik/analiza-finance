@@ -65,15 +65,23 @@ def _lock_id(name: str) -> int:
 @contextmanager
 def reading_lock(url: str, name: str = PROFILE_NAME) -> Iterator[bool]:
     """True while this request holds the reading (a transaction-scoped advisory lock on a connection of its own, so a
-    pooled connection keeps nothing); False when another reading of the profile is running."""
+    pooled connection keeps nothing); False when another reading of the profile is running.
+
+    If that connection drops mid-reading the lock goes with it, and a second reading may start: both read every board
+    whole and the later save wins, so nothing is wrong but the cost (review 22.11, judged harmless). Letting go of a
+    dropped connection is not an error: the reading was read and kept (review 22.11: it answered `store`)."""
     with _guard():
         lock = _connect(url, autocommit=False)
-        try:
+    try:
+        with _guard():
             got = lock.execute("SELECT pg_try_advisory_xact_lock(%s)", (_lock_id(name),)).fetchone()[0]
-            yield bool(got)
-        finally:
-            lock.rollback()
-            lock.close()
+        yield bool(got)
+    finally:
+        for step in (lock.rollback, lock.close):
+            try:
+                step()
+            except Exception:  # noqa: BLE001 - a connection that dropped holds nothing to let go of
+                pass
 
 
 def refuse_unsafe(boards: dict) -> None:
@@ -84,12 +92,19 @@ def refuse_unsafe(boards: dict) -> None:
                 raise UnsafeBody(f"a row carries {sorted(bad)}")
 
 
-def save_reading(url: str, reading: dict) -> None:
-    """The reading replaces the profile's row, in one transaction under the statement timeout."""
+def save_reading(url: str, reading: dict, budget_s: Optional[float] = None) -> None:
+    """The reading replaces the profile's row, in one transaction under the statement timeout - and within `budget_s`
+    when given, the time the request has left (review 22.11: 10 s to connect and 15 s to write, against a 4 s reserve)."""
     refuse_unsafe(reading.get("boards") or {})
     body = json.dumps(reading["boards"], ensure_ascii=False) if reading.get("boards") else None
-    with _guard(), _connect(url) as conn, conn.transaction():
-        conn.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+    connect_s, statement_ms = CONNECT_TIMEOUT_S, 15000
+    if budget_s is not None:
+        connect_s = max(1, min(CONNECT_TIMEOUT_S, int(budget_s)))
+        statement_ms = max(500, min(statement_ms, int(budget_s * 1000)))
+    import psycopg
+
+    with _guard(), psycopg.connect(url, autocommit=True, connect_timeout=connect_s) as conn, conn.transaction():
+        conn.execute(f"SET LOCAL statement_timeout = {int(statement_ms)}")
         conn.execute(
             "INSERT INTO recon_readings (name, read_at, complete, error, detail, checks, body, calls, seconds) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (name) DO UPDATE SET read_at = EXCLUDED.read_at, "
