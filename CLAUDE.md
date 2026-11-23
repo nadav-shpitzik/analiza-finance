@@ -69,6 +69,11 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   `query` is refused); `app/recon/reading.py` holds the profile, `NEVER_READ` (ID numbers, a sole proprietor's business number,
   bank details: never in a profile) and `monday_side`, the guard every rule that matches the books to monday goes through.
   `MONDAY_TOKEN` is a Replit Secret, reported as set or not.
+- **The actions (A1):** `app/recon/receipt_dates.py`, and `POST /api/actions/plan` / `POST /api/actions/verify` behind the sync
+  key. They are the dry run and the read-back of a class-A fill (spec §7). The service never writes the charge boards: a session
+  writes through the monday connector after Nadav's go, and then calls verify. A plan runs only on a whole reading (R0) and on a
+  whole copy (`BooksStore.matching_snapshot`, one repeatable-read snapshot): the last finished run complete and ok, nothing in
+  `books_retry`, and no hole in what is matched. A rule's bucket order is `BUCKETS`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
