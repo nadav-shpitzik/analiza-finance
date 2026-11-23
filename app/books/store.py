@@ -440,6 +440,16 @@ class BooksStore:
         out["far_hits"] = list(out["far_hits"] or [])
         return out
 
+    def documents_for_matching(self, company: str) -> list:
+        """Every held document's number, type, status, day and total, and whether it answered 'not found': what a rule
+        that matches monday to the books reads (backlog 0301 A1). Never a name, a card or a text field."""
+        with _guard():
+            rows = self._conn.execute(
+                "SELECT stock_id, doc_type, doc_number, status, value_date, total_incl, missing_since IS NOT NULL "
+                "FROM books_documents WHERE company = %s AND gone_at IS NULL ORDER BY stock_id", (company,)).fetchall()
+        return [{"stock_id": r[0], "doc_type": r[1], "doc_number": r[2], "status": r[3], "value_date": r[4],
+                 "total_incl": r[5], "missing": bool(r[6])} for r in rows]
+
     def series(self, company: str) -> list:
         """Per document type: valid documents held, first and last number, and the numbers missing
         between them (spec §4.2.6: Israeli tax documents are numbered without gaps)."""

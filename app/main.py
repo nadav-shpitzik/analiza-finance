@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Request
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import config
@@ -449,6 +449,42 @@ def _reading_answer(reading: dict) -> dict:
             "rules": None}
 
 
+def _read_and_keep(request: Request, cfg: config.Config, box_end: float) -> tuple:
+    """R0's reading of the profile, read now and kept in recon_readings: (the reading, None), or (None, the answer) when
+    another reading is running. A reading the store refused is kept as failed in its place, so no rule ever runs on the
+    one before (review 22.11: a NUL in one cell, refused by jsonb, left the earlier complete reading in force)."""
+    from .recon.reading import read_profile
+    from .recon.store import ReconStoreError, UnsafeBody, reading_lock, save_reading
+
+    with reading_lock(cfg.database_url) as held:
+        if not held:
+            return None, JSONResponse({"ok": True, "skipped": True, "detail": "another reading is running"})
+        reader = _monday_reader(request.app.state, cfg)
+        reader.deadline = box_end - FINISH_RESERVE_S
+        try:
+            reading = read_profile(reader)
+        finally:
+            reader.close()
+        try:
+            save_reading(cfg.database_url, reading, budget_s=box_end - time.monotonic())
+        except (ReconStoreError, UnsafeBody) as exc:
+            code = "unsafe_body" if isinstance(exc, UnsafeBody) else "store"
+            reading = {**reading, "complete": False, "error": code,
+                       "detail": getattr(exc, "detail", None), "boards": {}}
+            save_reading(cfg.database_url, reading, budget_s=max(1.0, box_end - time.monotonic()))
+    return reading, None
+
+
+def _recon_refusal(request: Request, cfg: config.Config) -> Optional[JSONResponse]:
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    missing = [name for name, value in (("MONDAY_TOKEN", cfg.monday_token), ("DATABASE_URL", cfg.database_url)) if not value]
+    if missing:
+        return JSONResponse({"ok": False, "skipped": False, "error": "not_configured", "detail": f"{', '.join(missing)} not set"})
+    return None
+
+
 @app.post("/api/recon/run")
 def recon_run(request: Request) -> JSONResponse:
     """R0: reads the reconciliation's profile of monday whole (app/recon/reading.py), checks every board against its
@@ -456,39 +492,19 @@ def recon_run(request: Request) -> JSONResponse:
     tick; always 200, with ok false and a closed code when it did not read every board."""
     started = time.monotonic()
     cfg = config.load()
-    refusal = _sync_key_refusal(request, cfg)
+    refusal = _recon_refusal(request, cfg)
     if refusal is not None:
         return refusal
-    missing = [name for name, value in (("MONDAY_TOKEN", cfg.monday_token), ("DATABASE_URL", cfg.database_url)) if not value]
-    if missing:
-        return JSONResponse({"ok": False, "skipped": False, "error": "not_configured", "detail": f"{', '.join(missing)} not set"})
-    from .recon.reading import read_profile
-    from .recon.store import ReconStoreError, UnsafeBody, reading_lock, save_reading
+    from .recon.store import ReconStoreError
 
-    box_end = started + REQUEST_BOX_S
     try:
-        with reading_lock(cfg.database_url) as held:
-            if not held:
-                return JSONResponse({"ok": True, "skipped": True, "detail": "another reading is running"})
-            reader = _monday_reader(request.app.state, cfg)
-            reader.deadline = box_end - FINISH_RESERVE_S
-            try:
-                reading = read_profile(reader)
-            finally:
-                reader.close()
-            try:
-                save_reading(cfg.database_url, reading, budget_s=box_end - time.monotonic())
-            except (ReconStoreError, UnsafeBody) as exc:
-                # the reading could not be kept: a failed one takes its place, so the rules never run on the one before
-                # (review 22.11: a NUL in one cell, refused by jsonb, left the earlier complete reading in force)
-                code = "unsafe_body" if isinstance(exc, UnsafeBody) else "store"
-                reading = {**reading, "complete": False, "error": code,
-                           "detail": getattr(exc, "detail", None), "boards": {}}
-                save_reading(cfg.database_url, reading, budget_s=max(1.0, box_end - time.monotonic()))
+        reading, answer = _read_and_keep(request, cfg, started + REQUEST_BOX_S)
     except ReconStoreError as exc:
         return JSONResponse({"ok": False, "skipped": False, "error": "store", "detail": exc.detail})
     except Exception as exc:  # noqa: BLE001 - said by class, never past the route
         return JSONResponse({"ok": False, "skipped": False, "error": "crashed", "detail": type(exc).__name__})
+    if answer is not None:
+        return answer
     return JSONResponse({**_reading_answer(reading), "request_s": round(time.monotonic() - started, 1)})
 
 
@@ -509,6 +525,104 @@ def recon_status(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "store", "detail": exc.detail})
     return JSONResponse({"ok": True, "monday_token_set": bool(cfg.monday_token),
                          "reading": None if reading is None else _reading_answer(reading)})
+
+
+# ---- actions (backlog 0301 A1; spec §7): the dry run and the read-back of a class-A fill, behind the sync key -------
+# The service plans and reads back; it never writes the charge boards (spec §7.3). A Claude session shows the plan in
+# chat, writes through the monday connector after Nadav's go, and asks /api/actions/verify.
+ACTION_KINDS = ("b2c_receipt_date_fill",)
+VERIFY_MAX_IDS = 1000
+_ITEM_ID_RE = re.compile(r"\d{1,20}")
+
+
+def books_not_ready(store: Any, db: str) -> Optional[str]:
+    """Why the books copy cannot be matched against, or None: it never finished a run, or a series has a hole (spec
+    §6.1.5: a copy with a hole changes nothing that is shown)."""
+    if not store.ever_completed(db):
+        return "never_completed"
+    if any(s.get("holes") for s in store.series(db)):
+        return "holes"
+    return None
+
+
+def _action_input(payload: Any, verify: bool) -> tuple:
+    """(kind, item ids) from the request's body, or (None, the refusal)."""
+    if not isinstance(payload, dict) or payload.get("kind") not in ACTION_KINDS:
+        return None, JSONResponse({"ok": False, "error": "bad_request", "detail": f"kind must be one of {list(ACTION_KINDS)}"},
+                                  status_code=400)
+    if not verify:
+        return (payload["kind"], None), None
+    ids = payload.get("item_ids")
+    if (not isinstance(ids, list) or not ids or len(ids) > VERIFY_MAX_IDS
+            or any(not isinstance(i, (str, int)) or isinstance(i, bool) or not _ITEM_ID_RE.fullmatch(str(i)) for i in ids)):
+        return None, JSONResponse({"ok": False, "error": "bad_request",
+                                   "detail": f"item_ids must be 1 to {VERIFY_MAX_IDS} monday item ids"}, status_code=400)
+    return (payload["kind"], [str(i) for i in ids]), None
+
+
+def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
+    started = time.monotonic()
+    cfg = config.load()
+    refusal = _recon_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    parsed, refusal = _action_input(payload, verify)
+    if refusal is not None:
+        return refusal
+    kind, item_ids = parsed
+    if cfg.company != "analiza":  # the guard would refuse after a whole reading; say it before one (rules' contract §0.6)
+        return JSONResponse({"ok": False, "error": "not_ready", "reason": "demo" if cfg.company == "demo" else "company"})
+    from .books.store import BooksStoreError
+    from .recon import receipt_dates
+    from .recon.reading import NotReady
+    from .recon.store import ReconStoreError, load_reading
+
+    reading = None
+    try:
+        reading, answer = _read_and_keep(request, cfg, started + REQUEST_BOX_S)
+        if answer is not None:  # another reading is running: no plan from this request
+            return JSONResponse({"ok": False, "error": "busy", "detail": "another reading is running"})
+        kept = load_reading(cfg.database_url)  # the rule runs on what recon_readings holds, not on the request's copy
+        with _books_store(cfg).session(cfg.db + ":actions") as s:  # its own lock id: never waits for a tick
+            if s is None:
+                return JSONResponse({"ok": False, "error": "busy"})
+            reason = books_not_ready(s, cfg.db)
+            documents = s.documents_for_matching(cfg.db) if reason is None else []
+        if reason is not None:
+            return JSONResponse({"ok": False, "error": "books_not_ready", "reason": reason})
+        if verify:
+            body = receipt_dates.verify(cfg.company, kept, documents, item_ids)
+        else:
+            body = receipt_dates.plan(cfg.company, kept, documents)
+    except NotReady as exc:
+        return JSONResponse({"ok": False, "error": "not_ready", "reason": exc.reason,
+                             "reading": _reading_answer(reading) if reading else None})
+    except ReconStoreError as exc:
+        return JSONResponse({"ok": False, "error": "store", "detail": exc.detail})
+    except BooksStoreError as exc:
+        return JSONResponse({"ok": False, "error": "books_store", "detail": exc.detail})
+    except Exception as exc:  # noqa: BLE001 - said by class, never past the route
+        return JSONResponse({"ok": False, "error": "crashed", "detail": type(exc).__name__})
+    return JSONResponse({"ok": True, "company": cfg.company, "read_at": kept.get("read_at"),
+                         "reading": {"calls": reading.get("calls"), "seconds": reading.get("seconds")},
+                         "books": {"documents": len(documents)}, **body,
+                         "request_s": round(time.monotonic() - started, 1)})
+
+
+@app.post("/api/actions/plan")
+def actions_plan(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
+    """The dry run of a class-A fill (spec §7.1.1), `{"kind": "b2c_receipt_date_fill"}`: monday read now through R0 and
+    kept, the rule run on the reading recon_readings holds and on the books copy, and the answer - every bucket's count,
+    and per row to fill its link, the value now and the value proposed (app/recon/receipt_dates.py). Never a name or an
+    amount; writes nothing."""
+    return _run_action(request, payload, verify=False)
+
+
+@app.post("/api/actions/verify")
+def actions_verify(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
+    """The read-back (spec §7.1.4), `{"kind": ..., "item_ids": [...]}`: monday read again with the service's own token,
+    and each row `verified` when its value is the one the books give, else what it is."""
+    return _run_action(request, payload, verify=True)
 
 
 @app.get("/check")
