@@ -440,15 +440,27 @@ class BooksStore:
         out["far_hits"] = list(out["far_hits"] or [])
         return out
 
-    def documents_for_matching(self, company: str) -> list:
-        """Every held document's number, type, status, day and total, and whether it answered 'not found': what a rule
-        that matches monday to the books reads (backlog 0301 A1). Never a name, a card or a text field."""
-        with _guard():
+    def matching_snapshot(self, company: str) -> dict:
+        """What a rule that matches monday to the books reads (backlog 0301 A1), in ONE repeatable-read transaction, so a
+        tick that saves between two statements cannot leave a hole in what is matched (review 23.11): every held
+        document's number, type, status, day and total, and whether it answered 'not found'; whether a run ever
+        completed and whether the last finished one did; and how many ids wait in books_retry. Never a name, a card
+        or a text field."""
+        with _guard(), self._conn.transaction():
+            self._conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             rows = self._conn.execute(
                 "SELECT stock_id, doc_type, doc_number, status, value_date, total_incl, missing_since IS NOT NULL "
                 "FROM books_documents WHERE company = %s AND gone_at IS NULL ORDER BY stock_id", (company,)).fetchall()
-        return [{"stock_id": r[0], "doc_type": r[1], "doc_number": r[2], "status": r[3], "value_date": r[4],
-                 "total_incl": r[5], "missing": bool(r[6])} for r in rows]
+            waiting = self._conn.execute("SELECT count(*) FROM books_retry WHERE company = %s", (company,)).fetchone()[0]
+            last = self._conn.execute(
+                "SELECT complete FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL "
+                "ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
+            ever = self._conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM books_sync_runs WHERE company = %s AND complete)", (company,)).fetchone()[0]
+        documents = [{"stock_id": r[0], "doc_type": r[1], "doc_number": r[2], "status": r[3], "value_date": r[4],
+                      "total_incl": r[5], "missing": bool(r[6])} for r in rows]
+        return {"documents": documents, "retry_waiting": waiting, "last_run_complete": bool(last and last[0]),
+                "ever_completed": bool(ever)}
 
     def series(self, company: str) -> list:
         """Per document type: valid documents held, first and last number, and the numbers missing

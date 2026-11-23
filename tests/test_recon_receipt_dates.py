@@ -189,8 +189,10 @@ def test_an_archived_row_is_neither_filled_nor_counted_in_a_sum():
     ("62894, 62914", ["62894", "62914"]), ("62894,62914", ["62894", "62914"]), (" 62894 ", ["62894"]),
     ("‏62894, 62914‎", ["62894", "62914"]), ("062894", ["62894"]), ("62894, 62894", ["62894"]),
     ("", []), (None, []), ("‏", []),
+    ("628\u200e94", ["62894"]), ("62894,\u202f62914", ["62894", "62914"]),
     ("62894 62914", None), ("62894/62914", None), ("חשבונית 62894", None), ("62894,", None), ("-62894", None),
-    ("6289.4", None), ("1234567890123", None), ("٦٢٨٩٤", None),
+    ("6289.4", None), ("1234567890123", None), ("\u0666\u0662\u0668\u0669\u0664", None), ("62,894", None),
+    ("894", None),
 ])
 def test_refs_are_read_as_adr_0088_writes_them(text, refs):
     """ADR-0088 §1: one number, or several separated by commas. Anything else is unreadable and counted."""
@@ -433,9 +435,205 @@ def test_the_books_store_gives_numbers_days_and_totals_and_never_a_name(pg):
     from app.books.store import BooksStore
 
     with BooksStore(pg).session(ANALIZA + ":t") as s:
-        got = s.documents_for_matching(ANALIZA)
+        snapshot = s.matching_snapshot(ANALIZA)
+    assert {k: v for k, v in snapshot.items() if k != "documents"} == {
+        "retry_waiting": 0, "last_run_complete": True, "ever_completed": True}
+    got = snapshot["documents"]
     assert got == [
         {"stock_id": 62500, "doc_type": 2, "doc_number": "62500", "status": 1, "value_date": date(2026, 3, 15),
          "total_incl": Decimal("4000"), "missing": False},
         {"stock_id": 62501, "doc_type": 2, "doc_number": "62501", "status": 0, "value_date": date(2026, 3, 15),
          "total_incl": Decimal("4000"), "missing": True}]
+
+
+# ---- the review of 23.11 (an adversarial agent on ddd637c): each finding held by its own proof ---------------------
+def test_group_sum_hides_a_row_paid_past_its_only_document():
+    """Review 23.11, finding 1: a group's sums can tie while one row is paid past its only document - row 0 cites
+    63100 (7,000) alone and says 8,000; row 1 cites 63100 and 63101 (3,000) and says 2,000. Several rows over several
+    documents is a tangle: neither row is filled."""
+    docs = [doc(63100, total="7000", day="2026-04-01"), doc(63101, total="3000", day="2026-04-01")]
+    rows = [row(0, "63100", paid="8000"), row(1, "63100, 63101", paid="2000")]
+    assert buckets(rows, docs) == {0: "group_tangled", 1: "group_tangled"}
+
+
+def test_the_two_shapes_adr_0088_names_are_matched_and_nothing_else():
+    """ADR-0088 §1: one document over several rows, one row over several documents. A chain that joins both is a
+    tangle even when every sum agrees."""
+    docs = [doc(63110, total="6000"), doc(63111, total="2000"), doc(63112, total="3000"), doc(63113, total="1000")]
+    star_doc = [row(0, "63110", paid="2500"), row(1, "63110", paid="3500")]
+    star_row = [row(2, "63111, 63112", paid="5000")]
+    chain = [row(3, "63113", paid="500"), row(4, "63113, 63112", paid="3500")]
+    assert buckets(star_doc + star_row, docs) == {0: "fill", 1: "fill", 2: "fill"}
+    assert buckets(chain, docs[3:] + docs[2:3]) == {3: "group_tangled", 4: "group_tangled"}
+
+
+def test_an_unreadable_cell_in_arabic_indic_digits_still_holds_its_document():
+    """Review 23.11, finding 3: an unreadable cell holds the documents its digits may name, in any script, and two
+    neighbouring runs joined (`62,894`); so the row citing 62894 alone is not judged on half its group."""
+    docs = [doc(62894)]
+    for cell in ("\u0666\u0662\u0668\u0669\u0664", "62,894", "62 894"):
+        assert buckets([row(0, "62894"), row(1, cell)], docs) == {0: "shares_with_unmatched", 1: "ref_unreadable"}, cell
+    assert rd.loose_numbers("62,894, 70100") == ["62", "894", "70100", "62894", "89470100"]
+
+
+@needs_pg
+def test_verify_counts_each_asked_row_once(actions_app):
+    """Review 23.11, finding 2: the same id asked twice (`"1"` and `1`) is one row - asking [A, A, B] with B not
+    written said `asked 2, verified 2`."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    fake.values[str(SC_BASE)][rd.COLUMN] = "2026-03-15"
+    ids = [str(SC_BASE), SC_BASE, str(SC_BASE + 3)]
+    body = client.post("/api/actions/verify", headers=AUTH, json={**PLAN, "item_ids": ids}).json()
+    assert body["asked"] == 2 and body["verified"] == 1 and sum(body["counts"].values()) == 2
+    assert rd.verify("analiza", a_reading([row(0, "62500", day="2026-03-15")]), [doc(62500)],
+                     [str(SC_BASE), SC_BASE])["asked"] == 1
+
+
+@needs_pg
+def test_the_plan_never_matches_a_copy_with_a_hole_in_what_it_read(actions_app, monkeypatch):
+    """Review 23.11, finding 5: the holes are judged on the very documents matched, read in one snapshot - a tick
+    that saves 62510 just before leaves 62503-62509 missing from them, and the plan refuses."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    from app.books.store import BooksStore
+
+    original = BooksStore.matching_snapshot
+
+    def tick_saves_first(self, company):
+        with psycopg.connect(pg, autocommit=True) as conn:
+            conn.execute("INSERT INTO books_documents (company, stock_id, doc_type, doc_number, status, value_date, "
+                         "total_incl, content_hash) VALUES (%s, 62510, 2, '62510', 1, '2026-03-20', 4000, 'h')", (ANALIZA,))
+        return original(self, company)
+
+    monkeypatch.setattr(BooksStore, "matching_snapshot", tick_saves_first)
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "books_not_ready", "reason": "holes"}
+
+
+@needs_pg
+def test_the_plan_refuses_a_copy_whose_last_run_left_a_document_unread(actions_app):
+    """Review 23.11, finding 4: 'a run ever completed' is not 'the copy is whole now'. The last finished run was cut
+    with 62503 jumped over and never read (past the last number held, so no hole shows): refused. And ids waiting in
+    books_retry refuse it too."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok) "
+                     "VALUES (%s, 'tick', now(), false, true)", (ANALIZA,))
+        conn.execute("INSERT INTO books_retry (company, stock_id, kind, attempts) VALUES (%s, 62503, 'jumped', 0)",
+                     (ANALIZA,))
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "books_not_ready", "reason": "last_run_incomplete"}
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok) "
+                     "VALUES (%s, 'tick', now(), true, true)", (ANALIZA,))  # complete, and yet 62503 still waits
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "books_not_ready", "reason": "retry_waiting"}
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("DELETE FROM books_retry")
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()["ok"] is True
+
+
+def test_an_out_of_window_document_is_out_of_window_even_when_the_amounts_differ():
+    """Review 23.11, finding 6 (FR-7): out of the window is never a gap, so it is judged before the sum."""
+    docs = [doc(62990, day="2025-12-28"), doc(62991, total="3347.46", day="2025-12-30")]
+    rows = [row(0, "62990", paid="3000"), row(1, "62991", paid="3350")]
+    assert buckets(rows, docs) == {0: "out_of_window", 1: "out_of_window"}
+
+
+def test_a_row_lands_in_the_first_bucket_that_fits_whatever_the_order_of_its_numbers():
+    """Review 23.11, finding 7: two bad numbers in one cell give the first bucket in BUCKETS, not the first typed."""
+    docs = [doc(70100, doc_type=3), doc(62970), doc(62970, doc_type=31)]
+    for ref in ("70100, 99999", "99999, 70100"):
+        assert buckets([row(0, ref)], docs) == {0: "ref_not_in_books"}, ref
+    for ref in ("70100, 62970", "62970, 70100"):
+        assert buckets([row(0, ref)], docs) == {0: "ref_ambiguous"}, ref
+
+
+# ---- the mutants that survived the first tests (review 23.11) ------------------------------------------------------
+def test_an_underpaid_row_is_a_mismatch_not_a_fill():
+    """2,000 paid against a 4,000 invoice-receipt is a gap: the difference is judged both ways."""
+    assert buckets([row(0, "63120", paid="2000")], [doc(63120, total="4000")]) == {0: "amount_mismatch"}
+
+
+def test_the_boundaries_of_the_tolerance_and_the_band():
+    """Exactly 1 ₪ a document is within the tolerance; exactly 0.1% is still the band."""
+    assert buckets([row(0, "63130", paid="4001")], [doc(63130, total="4000")]) == {0: "fill"}
+    assert buckets([row(0, "63130, 63131", paid="8002")], [doc(63130), doc(63131)]) == {0: "fill"}
+    assert buckets([row(0, "63132", paid="3003")], [doc(63132, total="3000")]) == {0: "rounding_band"}
+    assert buckets([row(0, "63132", paid="3003.01")], [doc(63132, total="3000")]) == {0: "amount_mismatch"}
+
+
+def test_a_group_is_judged_in_the_order_of_buckets():
+    """A document not found, then the window, then the shape, then the sum, then the tax invoice, then the days."""
+    assert buckets([row(0, "63140", paid="1")], [doc(63140, missing=True, day="2025-01-01")]) == {0: "document_missing"}
+    assert buckets([row(0, "63141", paid="1")], [doc(63141, day="2025-01-01")]) == {0: "out_of_window"}
+    assert buckets([row(0, "50600", paid="1")], [doc(50600, doc_type=1)]) == {0: "amount_mismatch"}
+    two = [doc(63142, total="2000", day="2026-02-01"), doc(50601, total="2000", doc_type=1, day="2026-03-01")]
+    assert buckets([row(0, "63142, 50601")], two) == {0: "invoice_needs_receipt"}
+
+
+def test_the_plan_lists_the_band_and_proposes_nothing_for_it():
+    rows = [row(0, "62800", paid="3350"), row(1, "62801")]
+    body = rd.plan("analiza", a_reading(rows), [doc(62800, total="3347.46"), doc(62801)])
+    assert body["ids_by_bucket"] == {"rounding_band": [str(SC_BASE)]}
+    assert [a["item_id"] for a in body["actions"]] == [str(SC_BASE + 1)]
+
+
+def test_verify_never_takes_a_row_the_books_give_no_day_for_or_an_unreadable_date():
+    """Only `filled_same` is verified: a row whose status says no money came in, even with the books' day in it, or a
+    date cell that is not a date, is not."""
+    docs = [doc(62500), doc(62501)]
+    after = [row(0, "62500", day="2026-03-15", status="0"), row(1, "62501", day="15/03/2026")]
+    body = rd.verify("analiza", a_reading(after), docs, [str(SC_BASE), str(SC_BASE + 1)])
+    assert {int(k) - SC_BASE: v["state"] for k, v in body["items"].items()} == {
+        0: "status_not_money_in", 1: "date_unreadable"}
+    assert body["verified"] == 0
+
+
+@needs_pg
+def test_a_plan_asked_while_a_reading_or_another_plan_runs_is_busy(actions_app):
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    from app.books.store import BooksStore
+    from app.recon.store import reading_lock
+
+    with reading_lock(pg) as held:
+        assert held is True
+        assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+            "ok": False, "error": "busy", "detail": "another reading is running"}
+    with BooksStore(pg).session(ANALIZA + ":actions") as s:
+        assert s is not None
+        assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {"ok": False, "error": "busy"}
+
+
+@needs_pg
+def test_the_rule_runs_on_the_reading_recon_readings_holds(actions_app, monkeypatch):
+    """The user's words (23.11): monday is read through R0 (recon_readings). What the store gives back is what is
+    matched - here a row changed in the store between the save and the rule is the one planned."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    from app.recon import store as recon_store
+
+    original = recon_store.load_reading
+
+    def stored(url, name=rr.PROFILE_NAME, body=True):
+        kept = original(url, name, body)
+        for r in kept["boards"]["student_charge"]:
+            if r["id"] == str(SC_BASE + 1):
+                r[rd.COLUMN] = ""  # as if the store held it empty
+        return kept
+
+    monkeypatch.setattr(recon_store, "load_reading", stored)
+    body = client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()
+    assert sorted(a["item_id"] for a in body["actions"]) == [str(SC_BASE), str(SC_BASE + 1)]
+
+
+@needs_pg
+def test_verify_takes_a_thousand_ids(actions_app):
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    ids = [str(SC_BASE + i) for i in range(main.VERIFY_MAX_IDS)]
+    body = client.post("/api/actions/verify", headers=AUTH, json={**PLAN, "item_ids": ids}).json()
+    assert body["ok"] is True and body["asked"] == main.VERIFY_MAX_IDS

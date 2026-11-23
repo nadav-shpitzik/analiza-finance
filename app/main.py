@@ -535,12 +535,24 @@ VERIFY_MAX_IDS = 1000
 _ITEM_ID_RE = re.compile(r"\d{1,20}")
 
 
-def books_not_ready(store: Any, db: str) -> Optional[str]:
-    """Why the books copy cannot be matched against, or None: it never finished a run, or a series has a hole (spec
-    §6.1.5: a copy with a hole changes nothing that is shown)."""
-    if not store.ever_completed(db):
+BOOKS_NOT_READY = ("never_completed", "last_run_incomplete", "retry_waiting", "holes")
+
+
+def books_not_ready(snapshot: dict) -> Optional[str]:
+    """Why the books copy cannot be matched against now, or None (spec §6.1.5: only a whole copy changes what is
+    shown), judged on the very snapshot the rule matches (BooksStore.matching_snapshot): no run ever completed; the
+    last finished run did not (cut short, crashed, or a read failed); ids wait in books_retry; or a series of the
+    documents read has a hole (review 23.11: 'ever completed' let a copy cut short since then be matched)."""
+    from .books.store import summarize_series
+
+    if not snapshot["ever_completed"]:
         return "never_completed"
-    if any(s.get("holes") for s in store.series(db)):
+    if not snapshot["last_run_complete"]:
+        return "last_run_incomplete"
+    if snapshot["retry_waiting"]:
+        return "retry_waiting"
+    held = [(d["doc_type"], d["doc_number"], d["status"]) for d in snapshot["documents"]]
+    if any(x["holes"] for x in summarize_series(held)):
         return "holes"
     return None
 
@@ -557,7 +569,7 @@ def _action_input(payload: Any, verify: bool) -> tuple:
             or any(not isinstance(i, (str, int)) or isinstance(i, bool) or not _ITEM_ID_RE.fullmatch(str(i)) for i in ids)):
         return None, JSONResponse({"ok": False, "error": "bad_request",
                                    "detail": f"item_ids must be 1 to {VERIFY_MAX_IDS} monday item ids"}, status_code=400)
-    return (payload["kind"], [str(i) for i in ids]), None
+    return (payload["kind"], list(dict.fromkeys(str(i) for i in ids))), None  # once each (review 23.11)
 
 
 def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
@@ -586,8 +598,9 @@ def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
         with _books_store(cfg).session(cfg.db + ":actions") as s:  # its own lock id: never waits for a tick
             if s is None:
                 return JSONResponse({"ok": False, "error": "busy"})
-            reason = books_not_ready(s, cfg.db)
-            documents = s.documents_for_matching(cfg.db) if reason is None else []
+            snapshot = s.matching_snapshot(cfg.db)
+        reason = books_not_ready(snapshot)
+        documents = snapshot["documents"] if reason is None else []
         if reason is not None:
             return JSONResponse({"ok": False, "error": "books_not_ready", "reason": reason})
         if verify:

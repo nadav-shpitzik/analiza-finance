@@ -7,9 +7,12 @@ can take that day from them - but only where the books say it for certain:
 
 1. **The match (FR-C1, FR-3, FR-4).** Every number the row cites (comma-separated, ADR-0088 §1) is exactly one status-1
    document, and that document is a tax invoice or an invoice-receipt with a total that is not negative. The rows and
-   the documents they cite form groups (a document over two rows, a row over two documents, any chain of them), and a
-   group matches when its rows' paid amounts sum to its documents' `total_incl` within 1 ₪ per document (the contract
-   §0.3). Past that and up to 0.1% is the rounding band: shown, never filled. **A name is never read** (the law of §5).
+   the documents they cite form groups, judged whole: a row is never judged on half the rows of its document. A group
+   is matched only in the two shapes ADR-0088 §1 names - one document over several rows, one row over several
+   documents - when its rows' paid amounts sum to its documents' `total_incl` within 1 ₪ per document (the contract
+   §0.3); past that and up to 0.1% is the rounding band: shown, never filled. Several rows over several documents is a
+   tangle: a sum that ties there can hide a row paid past its only document (review 23.11), so it is counted and left
+   to a person. **A name is never read** (the law of §5).
 2. **The day (FR-C5, FR-L12, FR-7).** An invoice-receipt pays itself, so its `value_date` is the day the money came
    in. A tax invoice is a demand: when it stands alone the money came on a separate receipt (ADR-0088 §1 cites the
    invoice then), whose day the linker of R1 finds - until then a group with a tax invoice gives no date. A group
@@ -60,10 +63,11 @@ BUCKETS = (
     "ref_not_an_invoice",      # a credit, a receipt, a proforma, an own invoice, or a negative invoice (FR-4)
     "amount_unreadable",       # the row's paid amount is empty or not a number
     "shares_with_unmatched",   # its document is cited also by a row above: the group cannot be judged
+    "document_missing",        # a document of the group answered "not found" in the books
+    "out_of_window",           # a document of the group is dated outside 2026 (FR-7): never a gap, whatever the sums
+    "group_tangled",           # several rows over several documents: the sums cannot say which row paid what
     "amount_mismatch",         # the group's rows and documents differ past the rounding band
     "rounding_band",           # past 1 ₪ a document, within 0.1%: a person looks, nothing is filled
-    "document_missing",        # a document of the group answered "not found" in the books
-    "out_of_window",           # a document of the group is dated outside 2026 (FR-7)
     "invoice_needs_receipt",   # the group holds a tax invoice: its day is its receipt's, found by R1
     "dates_differ",            # the group's invoice-receipts carry different days
     "status_not_money_in",     # matched, and the row's status does not say the money came in
@@ -73,18 +77,27 @@ BUCKETS = (
     "fill",                    # empty, and the books say the day: the plan
 )
 
-_INVISIBLE = re.compile(r"[​-‏‪-‮⁦-⁩﻿ ]")
-# ASCII digits only, as the books copy stores a number (app/books/parse.py): `\d` alone also takes ٦٢٨٩٤.
-_NUMBER = re.compile(r"[0-9]{1,12}")
+# Marks a right-to-left editor leaves (zero-width, direction, BOM) are dropped, even inside a number; a no-break space
+# is a space. Written as escapes: an invisible character in source is invisible in review too.
+_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+_NBSP = re.compile("[\u00a0\u202f]")
+# A number is 4 to 12 ASCII digits, as the books copy stores one (app/books/parse.py): `\d` alone also takes Arabic-Indic
+# digits, and `62,894` is a thousands separator, not the numbers 62 and 894 (review 23.11). Every number cited live
+# is 5 digits.
+_NUMBER = re.compile(r"[0-9]{4,12}")
 _AMOUNT = re.compile(r"-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?")
 _DAY = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
+
+
+def _clean(text) -> str:
+    return _NBSP.sub(" ", _INVISIBLE.sub("", str(text or ""))).strip()
 
 
 def parse_refs(text) -> Optional[list]:
     """The numbers a row cites, in order and once each: [] for an empty cell, None for one that is not a
     comma-separated list of numbers (ADR-0088 §1: `62894, 62914`). Invisible marks a right-to-left editor leaves
     are dropped first; a leading zero is not a different number."""
-    cleaned = _INVISIBLE.sub(" ", str(text or "")).strip()
+    cleaned = _clean(text)
     if not cleaned:
         return []
     out: list = []
@@ -98,9 +111,19 @@ def parse_refs(text) -> Optional[list]:
     return out
 
 
+def loose_numbers(text) -> list:
+    """Every number an unreadable cell may name, so that it still holds those documents (it is never resolved): each
+    run of digits in any script (Arabic-Indic too), and each two neighbouring runs joined (`62,894` may be 62894).
+    Holding too much only keeps a group from being filled; holding too little fills a row whose document is cited
+    twice (review 23.11)."""
+    raw = re.findall(r"\d{1,24}", _clean(text))
+    joined = [a + b for a, b in zip(raw, raw[1:])]
+    return list(dict.fromkeys(str(int(n)) for n in raw + joined))
+
+
 def parse_amount(text) -> Optional[Decimal]:
     """monday's numbers cell as text: `4000`, `4,000` or `3347.46`; None for empty or anything else."""
-    cleaned = _INVISIBLE.sub("", str(text or "")).strip()
+    cleaned = _clean(text)
     if not _AMOUNT.fullmatch(cleaned):
         return None
     try:
@@ -181,18 +204,21 @@ class _Groups:
             self.parent[rb] = ra
 
 
-def _group_verdict(rows: list, docs: dict) -> tuple:
-    """(bucket or None, the day) for a group whose every row resolved: the sum, then the day."""
-    paid = sum((r["_amount"] for r in rows), Decimal(0))
-    total = sum((_as_money(d["total_incl"]) for d in docs.values()), Decimal(0))
-    diff = abs(paid - total)
-    if diff > TOLERANCE_PER_DOC * len(docs):
-        return ("rounding_band" if diff <= total * ROUNDING_BAND else "amount_mismatch"), None
+def _group_verdict(amounts: list, docs: dict) -> tuple:
+    """(bucket or None, the day) for a group whose every row resolved, in the order of BUCKETS: a document not found,
+    the window (FR-7: never a gap, whatever the sums), the shape, the sum, then the day."""
     if any(d.get("missing") for d in docs.values()):
         return "document_missing", None
     days = {_as_day(d.get("value_date")) for d in docs.values()}
     if None in days or any(day.year != WINDOW_YEAR for day in days):
         return "out_of_window", None
+    if len(amounts) > 1 and len(docs) > 1:
+        return "group_tangled", None
+    paid = sum(amounts, Decimal(0))
+    total = sum((_as_money(d["total_incl"]) for d in docs.values()), Decimal(0))
+    diff = abs(paid - total)
+    if diff > TOLERANCE_PER_DOC * len(docs):
+        return ("rounding_band" if diff <= total * ROUNDING_BAND else "amount_mismatch"), None
     if any(role(d.get("doc_type")) == INVOICE for d in docs.values()):
         return "invoice_needs_receipt", None
     if len(days) != 1:
@@ -220,18 +246,18 @@ def analyse(rows: list, documents: Iterable[dict]) -> dict:
             continue
         if refs is None:
             entry["bucket"] = "ref_unreadable"
-            loose[item_id] = [str(int(n)) for n in re.findall(r"[0-9]{1,12}", str(row.get(REF_COLUMN) or ""))]
+            loose[item_id] = loose_numbers(row.get(REF_COLUMN))
             continue
         entry["documents"] = refs
-        resolved, problem = [], None
+        resolved, problems = [], []
         for number in refs:
             bucket, doc = _resolve(number, by_number)
             if bucket is not None:
-                problem = problem or bucket
+                problems.append(bucket)
             else:
                 resolved.append(doc)
-        if problem is not None:
-            entry["bucket"] = problem
+        if problems:  # the first in BUCKETS, whatever order the numbers were typed in (review 23.11)
+            entry["bucket"] = min(problems, key=BUCKETS.index)
             continue
         amount = parse_amount(row.get(AMOUNT_COLUMN))
         if amount is None:
@@ -262,13 +288,10 @@ def analyse(rows: list, documents: Iterable[dict]) -> dict:
                 out[i]["bucket"] = "shares_with_unmatched"
             continue
         docs = {}
-        group_rows = []
         for i in candidates:
-            row, amount, resolved = judged[i]
-            group_rows.append({"_amount": amount})
-            for doc in resolved:
+            for doc in judged[i][2]:
                 docs[str(int(str(doc["doc_number"])))] = doc
-        bucket, day = _group_verdict(group_rows, docs)
+        bucket, day = _group_verdict([judged[i][1] for i in candidates], docs)
         for i in candidates:
             out[i]["bucket"] = bucket
             out[i]["books_day"] = day.isoformat() if day else None
@@ -325,7 +348,7 @@ def verify(company: str, reading: dict, documents: Iterable[dict], item_ids: Ite
     the books from giving a day - and `not_found` when the reading does not hold it."""
     analysis = analyse(reading["boards"]["student_charge"], documents)
     states, counts = {}, defaultdict(int)
-    for item_id in [str(i) for i in item_ids]:
+    for item_id in dict.fromkeys(str(i) for i in item_ids):  # once each: a repeated id counted twice said "all verified"
         entry = analysis["rows"].get(item_id)
         if entry is None:
             state = "not_found"
