@@ -77,10 +77,11 @@ BUCKETS = (
     "fill",                    # empty, and the books say the day: the plan
 )
 
-# Marks a right-to-left editor leaves (zero-width, direction, BOM) are dropped, even inside a number; a no-break space
-# is a space. Written as escapes: an invisible character in source is invisible in review too.
-_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
-_NBSP = re.compile("[\u00a0\u202f]")
+# Marks a right-to-left editor leaves (zero-width, direction, BOM) and no-break spaces are a space: a boundary. Dropped,
+# a mark between two numbers made them one (`62894<RLM>62914` read as 6289462914, so the cell held neither and the row
+# citing 62894 alone was filled - second review 23.11). A mark inside a number makes the cell unreadable, never another
+# number. Written as escapes: an invisible character in source is invisible in review too.
+_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff\u00a0\u202f]")
 # A number is 4 to 12 ASCII digits, as the books copy stores one (app/books/parse.py): `\d` alone also takes Arabic-Indic
 # digits, and `62,894` is a thousands separator, not the numbers 62 and 894 (review 23.11). Every number cited live
 # is 5 digits.
@@ -90,13 +91,14 @@ _DAY = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
 
 
 def _clean(text) -> str:
-    return _NBSP.sub(" ", _INVISIBLE.sub("", str(text or ""))).strip()
+    return _INVISIBLE.sub(" ", str(text or "")).strip()
 
 
 def parse_refs(text) -> Optional[list]:
     """The numbers a row cites, in order and once each: [] for an empty cell, None for one that is not a
-    comma-separated list of numbers (ADR-0088 §1: `62894, 62914`). Invisible marks a right-to-left editor leaves
-    are dropped first; a leading zero is not a different number."""
+    comma-separated list of numbers (ADR-0088 §1: `62894, 62914`). An invisible mark a right-to-left editor leaves is
+    a space, so at the edge of a number it is trimmed and inside one the cell is unreadable; a leading zero is not a
+    different number."""
     cleaned = _clean(text)
     if not cleaned:
         return []
@@ -113,7 +115,8 @@ def parse_refs(text) -> Optional[list]:
 
 def loose_numbers(text) -> list:
     """Every number an unreadable cell may name, so that it still holds those documents (it is never resolved): each
-    run of digits in any script (Arabic-Indic too), and each two neighbouring runs joined (`62,894` may be 62894).
+    run of digits in any script (Arabic-Indic too), split at every mark, and each two neighbouring runs joined (`62,894`
+    and `628<LRM>94` may be 62894).
     Holding too much only keeps a group from being filled; holding too little fills a row whose document is cited
     twice (review 23.11)."""
     raw = re.findall(r"\d{1,24}", _clean(text))

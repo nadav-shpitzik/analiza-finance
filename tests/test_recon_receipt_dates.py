@@ -189,7 +189,8 @@ def test_an_archived_row_is_neither_filled_nor_counted_in_a_sum():
     ("62894, 62914", ["62894", "62914"]), ("62894,62914", ["62894", "62914"]), (" 62894 ", ["62894"]),
     ("‏62894, 62914‎", ["62894", "62914"]), ("062894", ["62894"]), ("62894, 62894", ["62894"]),
     ("", []), (None, []), ("‏", []),
-    ("628\u200e94", ["62894"]), ("62894,\u202f62914", ["62894", "62914"]),
+    ("62894,\u202f62914", ["62894", "62914"]), ("628\u200e94", None), ("62894\u200f62914", None),
+    ("62894\u00a062914", None),
     ("62894 62914", None), ("62894/62914", None), ("חשבונית 62894", None), ("62894,", None), ("-62894", None),
     ("6289.4", None), ("1234567890123", None), ("\u0666\u0662\u0668\u0669\u0664", None), ("62,894", None),
     ("894", None),
@@ -409,10 +410,10 @@ def test_the_plan_route_refuses_a_books_copy_with_a_hole_or_never_completed(acti
     client, fake, pg = actions_app
     seed_books(pg, DOCS, completed=False)
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
-        "ok": False, "error": "books_not_ready", "reason": "never_completed"}
+        "ok": False, "error": "books_not_ready", "reason": "never_completed", "last_run_reasons": []}
     seed_books(pg, [doc(62504)])  # 62503 is missing between 62502 and 62504
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
-        "ok": False, "error": "books_not_ready", "reason": "holes"}
+        "ok": False, "error": "books_not_ready", "reason": "holes", "last_run_reasons": []}
 
 
 @needs_pg
@@ -437,7 +438,8 @@ def test_the_books_store_gives_numbers_days_and_totals_and_never_a_name(pg):
     with BooksStore(pg).session(ANALIZA + ":t") as s:
         snapshot = s.matching_snapshot(ANALIZA)
     assert {k: v for k, v in snapshot.items() if k != "documents"} == {
-        "retry_waiting": 0, "last_run_complete": True, "ever_completed": True}
+        "retry_waiting": 0, "last_run_complete": True, "last_run_ok": True, "last_run_reasons": [],
+        "ever_completed": True}
     got = snapshot["documents"]
     assert got == [
         {"stock_id": 62500, "doc_type": 2, "doc_number": "62500", "status": 1, "value_date": date(2026, 3, 15),
@@ -508,7 +510,7 @@ def test_the_plan_never_matches_a_copy_with_a_hole_in_what_it_read(actions_app, 
 
     monkeypatch.setattr(BooksStore, "matching_snapshot", tick_saves_first)
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
-        "ok": False, "error": "books_not_ready", "reason": "holes"}
+        "ok": False, "error": "books_not_ready", "reason": "holes", "last_run_reasons": []}
 
 
 @needs_pg
@@ -524,12 +526,12 @@ def test_the_plan_refuses_a_copy_whose_last_run_left_a_document_unread(actions_a
         conn.execute("INSERT INTO books_retry (company, stock_id, kind, attempts) VALUES (%s, 62503, 'jumped', 0)",
                      (ANALIZA,))
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
-        "ok": False, "error": "books_not_ready", "reason": "last_run_incomplete"}
+        "ok": False, "error": "books_not_ready", "reason": "last_run_incomplete", "last_run_reasons": []}
     with psycopg.connect(pg, autocommit=True) as conn:
         conn.execute("INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok) "
                      "VALUES (%s, 'tick', now(), true, true)", (ANALIZA,))  # complete, and yet 62503 still waits
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
-        "ok": False, "error": "books_not_ready", "reason": "retry_waiting"}
+        "ok": False, "error": "books_not_ready", "reason": "retry_waiting", "last_run_reasons": []}
     with psycopg.connect(pg, autocommit=True) as conn:
         conn.execute("DELETE FROM books_retry")
     assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()["ok"] is True
@@ -637,3 +639,83 @@ def test_verify_takes_a_thousand_ids(actions_app):
     ids = [str(SC_BASE + i) for i in range(main.VERIFY_MAX_IDS)]
     body = client.post("/api/actions/verify", headers=AUTH, json={**PLAN, "item_ids": ids}).json()
     assert body["ok"] is True and body["asked"] == main.VERIFY_MAX_IDS
+
+
+# ---- the second review of 23.11 (on 02f2851) -----------------------------------------------------------------------
+@pytest.mark.parametrize("cell", ["62894\u200f62914", "\u200e62894\u200e\u200f62914\u200e", "62894\u200b62914",
+                                  "\u206662894\u2069\u206662914\u2069", "62894\ufeff62914", "62894\u00a062914"])
+def test_a_mark_between_two_numbers_does_not_merge_them_into_one(cell):
+    """Second review 23.11: dropping a mark merged two numbers into one (6289462914) that held neither, and the row
+    citing 62894 alone was filled though 62894 is cited twice. A mark is a boundary: the cell is unreadable and holds
+    both."""
+    docs = [doc(62894), doc(62914)]
+    assert buckets([row(0, "62894"), row(1, cell)], docs) == {0: "shares_with_unmatched", 1: "ref_unreadable"}
+
+
+def test_an_unreadable_cell_keeps_the_numbers_a_mark_separates():
+    docs = [doc(62001), doc(62003)]
+    got = buckets([row(0, "62001"), row(1, "62003"), row(2, "חשבונית 62001\u200f62003")], docs)
+    assert got == {0: "shares_with_unmatched", 1: "shares_with_unmatched", 2: "ref_unreadable"}
+    assert rd.loose_numbers("628\u200e94") == ["628", "94", "62894"]
+
+
+class Interleave:
+    """A connection that lets another one commit right after the statement that names `after`: a tick's save landing
+    between the snapshot's statements."""
+
+    def __init__(self, conn, after: str, action):
+        self._conn, self._after, self._action, self.fired = conn, after, action, False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def execute(self, query, *args, **kwargs):
+        cur = self._conn.execute(query, *args, **kwargs)
+        if not self.fired and self._after in str(query):
+            self.fired = True
+            self._action()
+        return cur
+
+
+@needs_pg
+def test_the_snapshot_is_one_read_even_when_a_tick_commits_between_its_statements(pg):
+    """Second review 23.11: without REPEATABLE READ each statement saw its own moment. A tick that commits a failed
+    read and a run cut short right after the documents are read must not change what the same snapshot says."""
+    seed_books(pg, [doc(62500)])
+    from app.books.store import BooksStore
+
+    def tick():
+        with psycopg.connect(pg, autocommit=True) as conn:
+            conn.execute("INSERT INTO books_retry (company, stock_id, kind) VALUES (%s, 62501, 'http')", (ANALIZA,))
+            conn.execute("INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok) "
+                         "VALUES (%s, 'tick', now(), false, false)", (ANALIZA,))
+
+    with BooksStore(pg).session(ANALIZA + ":t") as s:
+        s._conn = Interleave(s._conn, "FROM books_documents", tick)
+        snapshot = s.matching_snapshot(ANALIZA)
+        assert s._conn.fired is True
+    assert (snapshot["retry_waiting"], snapshot["last_run_complete"], snapshot["last_run_ok"]) == (0, True, True)
+
+
+@needs_pg
+def test_a_tick_in_progress_does_not_refuse_the_plan(actions_app):
+    """A run that has not finished is not 'the last finished run': a plan asked during a tick is judged on the one
+    before it."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("INSERT INTO books_sync_runs (company, trigger) VALUES (%s, 'tick')", (ANALIZA,))
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()["ok"] is True
+
+
+@needs_pg
+def test_a_last_run_that_was_not_ok_refuses_the_plan(actions_app):
+    """Second review 23.11 (a note, taken): with `canary` the tick trusted no 'not found', so a document deleted from
+    the books would still be matched. A complete run that was not ok refuses, and says why."""
+    client, fake, pg = actions_app
+    seed_books(pg, DOCS)
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("INSERT INTO books_sync_runs (company, trigger, finished_at, complete, ok, reasons) "
+                     "VALUES (%s, 'tick', now(), true, false, '{canary}')", (ANALIZA,))
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "books_not_ready", "reason": "last_run_not_ok", "last_run_reasons": ["canary"]}
