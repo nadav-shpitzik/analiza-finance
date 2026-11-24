@@ -572,9 +572,9 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     ids_read: dict = {}
     for k in DELTA_KEYS:
         if k in CHARGE_KEYS:
-            held_ids = {str(r["id"]) for r in base[k]["rows"]}
             changed = [i for i in after[k] if i in on_board[k]]
-            came = [i for i in paged[k][1] if i not in held_ids and i not in set(changed)]
+            known = {str(r["id"]) for r in base[k]["rows"]} | set(changed)
+            came = [i for i in paged[k][1] if i not in known]
             ids_read[k] = changed + came
         else:
             ids_read[k] = [i for i in after[k] if i in asked_set[k]]
@@ -583,8 +583,8 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     ids_read["leads"], got_rows["leads"] = list(held_deciding), leads_got
     names.update(names_read(leads_got, held_deciding))
     reps.update(reps_read(leads_got, held_deciding))
-    rows = {k: [r for r in merge_rows(base[k]["rows"], got_rows[k], ids_read[k], charge=True) if str(r["id"]) in on_board[k]]
-            for k in CHARGE_KEYS}
+    rows = {k: [r for r in merge_rows(base[k]["rows"], got_rows[k], ids_read[k], charge=True)
+                if str(r["id"]) in on_board[k]] for k in CHARGE_KEYS}
     for k in CHARGE_KEYS:
         if len(rows[k]) != len(on_board[k]):
             # an id paged that no read gave as this board's active row (gone, archived or moved since its page, or answered
