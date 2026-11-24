@@ -23,6 +23,8 @@ replacement at a time, run against tests/test_desk*.py).
    token nor the usage limit bounded what an anonymous client sent. Now the secret, the token and the limit come first,
    and the body after them, with the same closed codes; POST /api/desk/export-link reads its body after its gate too
    (app/desk/routes.py `_body_of`).
+And the mutants the review's pass left alive, each killed by a test at the end: R7, R22, S3, S4, S5, C2, C5, C6 (U5, a
+period of any digits, by tests/test_desk_usage.py's refusals).
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ import json
 import re
 import threading
 import time
+import types
 
 import httpx
 import psycopg
@@ -596,3 +599,127 @@ def test_the_export_links_body_is_read_after_its_gate(desk):  # noqa: F811
     r = desk.client.post("/api/desk/export-link", json={"tab": "b2c"}, headers=auth)
     assert r.status_code == 200 and r.json()["url"].startswith("/api/desk/export.xlsx?")
     assert desk.client.get(r.json()["url"]).status_code == 200
+
+
+# --- the mutants the review's pass left alive ---------------------------------------------------------------------------
+
+def test_r7_a_refresh_whose_deciding_leads_come_back_short_says_the_leads_are_not_whole():
+    """R7: `_delta_checks` marked the leads ok whatever the deciding leads' rows lacked. A column gone from the answers
+    after the columns check (`drop_cells`) leaves the deciding leads short in the refresh as in a full reading."""
+    w = world()
+    h = holder(w)
+    h.get()
+    w.drop_cells = {rd.LD["cohort"]}
+    kept, _ = h.get()
+    assert kept["kind"] == "delta" and kept["checks"]["leads"]["short_rows"] == 2
+    assert kept["checks"]["leads"]["ok"] is False and kept["complete"] is False
+    full = rd.read_desk(reader_of(w))
+    assert full["checks"]["leads"]["ok"] is False and full["complete"] is False
+
+
+def test_r22_a_reading_whose_leads_names_or_owners_are_no_dict_is_never_laid_under_a_refresh():
+    """R22: usable() without its `lead_reps` dict check. A reading's names and Owners are the dicts a reading and the
+    store hold; a mapping of another kind (a read-only view here) is not that shape, so it is never a refresh's base."""
+    kept = rd.read_desk(reader_of(world()))
+    assert rd.usable(kept)
+    for key in ("lead_names", "lead_reps"):
+        assert not rd.usable(dict(kept, **{key: types.MappingProxyType(dict(kept[key]))})), key
+
+
+def _sql(url, statement):
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(statement)
+
+
+@needs_pg
+def test_s3_a_save_behind_a_lock_gives_up_at_its_lock_timeout(pg, monkeypatch):
+    """S3: DeskStore.save without its lock_timeout waited for a held table until the statement_timeout, and longer when
+    that is off: a refresh's request held for a lock someone else holds."""
+    monkeypatch.setattr(ds, "LOCK_TIMEOUT_MS", 300)
+    monkeypatch.setattr(ds, "STATEMENT_TIMEOUT_MS", 5000)
+    store = ds.DeskStore(pg)
+    kept, _ = holder(world(), store).get()
+    with psycopg.connect(pg) as other:
+        other.execute("LOCK TABLE desk_readings IN ACCESS EXCLUSIVE MODE")
+        t0 = time.monotonic()
+        with pytest.raises(ds.DeskStoreError) as err:
+            store.save(dict(kept, read_at=rd._now_iso()))
+        took = time.monotonic() - t0
+        other.rollback()
+    assert err.value.detail == "55P03" and took < 3
+
+
+@needs_pg
+def test_s4_a_load_behind_a_lock_gives_up_at_its_statement_timeout(pg, monkeypatch):
+    """S4: DeskStore.load without its statement_timeout waited for a held table as long as it was held: a cold open's
+    seed, in a request, behind someone else's lock."""
+    monkeypatch.setattr(ds, "STATEMENT_TIMEOUT_MS", 300)
+    store = ds.DeskStore(pg)
+    holder(world(), store).get()
+    with psycopg.connect(pg) as other:
+        other.execute("LOCK TABLE desk_readings IN ACCESS EXCLUSIVE MODE")
+        timer = threading.Timer(4, other.rollback)                    # never a hang, whatever the code does
+        timer.start()
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(ds.DeskStoreError) as err:
+                store.load()
+            took = time.monotonic() - t0
+        finally:
+            timer.cancel()
+            other.rollback()
+    assert err.value.detail == "57014" and took < 3
+
+
+@needs_pg
+def test_s5_load_says_the_schema_its_row_was_kept_under(pg):
+    """S5: load() said BODY_SCHEMA for any row, so a reading kept by an older deploy was laid under a refresh."""
+    w = world()
+    store = ds.DeskStore(pg)
+    holder(w, store).get()
+    assert store.load()["body_schema"] == rd.BODY_SCHEMA
+    _sql(pg, "UPDATE desk_readings SET body_schema = '1:an-older-deploy'")
+    assert store.load()["body_schema"] == "1:an-older-deploy"
+    cold = rd.HeldReading(lambda: reader_of(w), store=store)
+    shown, _last, _refreshing = cold.answer(stale_ok=True)
+    assert shown["kind"] == "full" and cold.health()["last_codes"][:2] == ["store_other_schema", "full_first"]
+
+
+def test_c2_a_refresh_keeps_only_the_cells_it_asked_for_of_the_leads_it_reads_beside_the_windows():
+    """C2: changed_items flattened the deciding leads without `keep`, so a cell monday answered unasked was kept (and
+    stored); a read by id keeps only the cells it asked for (flatten's `keep`), here as in read_items."""
+    w = world()
+    h = holder(w)
+    h.get()
+    w.extra_cells = {"302": {"text_unasked": {"text": "x"}}, "303": {"color_unasked": {"text": "y", "index": 1, "label": "y"}}}
+    kept, _ = h.get()
+    allowed = set(rd.ROW_COLUMNS["leads"]) | set(monday.ROW_KEYS)
+    assert kept["kind"] == "delta" and [r["id"] for r in kept["leads"]] == ["302", "303"]
+    for row in kept["leads"]:
+        assert set(row) <= allowed, sorted(set(row) - allowed)
+
+
+def test_c5_a_graphql_rate_limit_whose_wait_does_not_fit_the_refresh_is_still_the_limits():
+    """C5: a complexity budget monday names in GraphQL (not a 429) was not counted in `limited`, so a refresh whose reset
+    did not fit its time ended `deadline` and fell back to a full reading - some thirty requests into that very limit."""
+    w = world()
+    h = holder(w)
+    held, _ = h.get()
+    w.window_error = [{"message": "Complexity budget exhausted, query cost 30001 budget remaining 2 out of 5000000 reset in "
+                                  "30 seconds", "extensions": {"code": "ComplexityException"}}]
+    before = len(w.queries)
+    shown, last = h.get()
+    assert last["error"] == "rate_limited" and len(w.queries) - before == 1 and shown is held
+    assert h.health()["last_codes"] == ["delta_failed_rate_limited"]
+
+
+def test_c6_packed_reads_never_send_more_than_a_chunk_of_ids_in_one_request():
+    """C6: packing ignored ITEMS_BY_ID_CHUNK, so a refresh with many changes sent one request of every id."""
+    w = world()
+    reader = reader_of(w)
+    jobs = [([str(5000 + i) for i in range(60)], [rd.SC["paid"]]), ([str(6000 + i) for i in range(60)], [rd.DL["payer"]]),
+            ([str(7000 + i) for i in range(30)], [rd.CO["code"]])]
+    reader.read_items(jobs, pack=True)
+    sizes = [len(var["ids"]) if "ids" in var else sum(len(v) for k, v in var.items() if re.fullmatch(r"i\d+", k))
+             for _q, var in w.queries]
+    assert sorted(sizes) == [60, 90] and max(sizes) <= monday.ITEMS_BY_ID_CHUNK      # side by side, in any order
