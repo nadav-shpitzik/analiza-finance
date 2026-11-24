@@ -33,8 +33,6 @@
   var NF2 = new Intl.NumberFormat("he-IL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   var ACCOUNT_URL = "https://analiza-college-group.monday.com";
   var BOARD = { sc: "5093448677", b2: "5097721228" };
-  /* the request form on the technical board (knowledge backlog 0273) - the desk's way to ask for more */
-  var ASK_URL = ACCOUNT_URL + "/boards/5098225215/views/51829235";
 
   /* a refund's two dates, named as app/finance.py names them (tests/test_finance_js.py holds the two together):
      the transfer round set at approval, monday's own title since 11.11, and the legal day, request + 14 days */
@@ -401,21 +399,6 @@
     var one = st && st !== "tasks" ? st : "";
     if (one === "refund_to_execute") { return out.slice().sort(byRefundKey); }
     return sortRows(out, SC_SORT[one] || "-date");
-  }
-  /* A search narrowed by the list's filters (a state, a period, one company) offers the same search without them, in
-     plain words: "בכל השיבוצים" read as the desk's jargon (Chava, 16.11), and it let go of the state only, so a search
-     in one month or one company's ledger still found nothing. The button keeps the search and drops every filter
-     (`unfilter`); the list's head says how many more it finds, counted the same way. */
-  var UNFILTER = "חיפוש ללא סינון";
-  function unfilterButton() { return "<button class=\"fin-linkbtn\" type=\"button\" data-unfilter=\"1\">" + UNFILTER + "</button>"; }
-  function elsewhere(more) {
-    return more > 0 ? " · <button class=\"fin-linkbtn\" type=\"button\" data-unfilter=\"1\">" + (more === 1 ? "עוד תוצאה אחת" : "עוד " + NF.format(more) + " תוצאות") +
-      " ב" + UNFILTER + "</button>" : "";
-  }
-  /* the search stays, and nothing else narrows it: every state and the whole span, or every company */
-  function unfilter() {
-    if (state.tab === "b2b") { state.b2.state = ""; state.b2.customer = ""; state.b2.view = "list"; state.b2.open = {}; }
-    else { state.sc.state = ""; state.sc.period = ""; state.sc.open = {}; }
   }
   /* D2, 1.2 (the desk move plan §1b, 24.11): a search looks at every row of its tab, whatever tile, period or company is
      open - Chava's four searches of 17-23.11 all found nothing in the list that was open, three would have found rows
@@ -1509,7 +1492,8 @@
       : he && !la && !di ? "hebrew" : la && !he && !di ? "latin" : he || la ? "mixed" : "other";
     return { len: Math.min(s.length, 200), kind: kind };
   }
-  /* how many rows the search finds in the list on the screen, and without its filters ("חיפוש ללא סינון") */
+  /* how many rows the search finds in the open list (`results`), and in the whole tab (`unfiltered`): since D2's 1.2 the
+     screen shows the second, the first says how many of them the open list holds */
   function searchCounts() {
     var q = state.query;
     if (state.tab === "b2b") {
@@ -1847,7 +1831,7 @@
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
       overviewHtml() + "<div class=\"fin-foot\">" + healthHtml() +
-      "<a class=\"fin-ask\" data-ask=\"1\" href=\"" + ASK_URL + "\" target=\"_blank\" rel=\"noopener\">חסר כאן משהו? פנייה לנדב</a></div></div>";
+      "</div></div>";
   }
   function message(text) {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">" + esc(text) + "</p>" +
@@ -2010,9 +1994,9 @@
 
   /* ---------- events ---------- */
   function onClick(ev) {
-    var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-unfilter],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
+    var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
-      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask]");
+      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
     /* the actions (round 3, slice 3): inside a row's details, so they never open or close the row */
     if (el.dataset.act) {
@@ -2034,8 +2018,6 @@
     if (el.dataset.idRetry) { delete IDS[el.dataset.idRetry]; redraw(); return; }
     if (el.dataset.bankRetry) { delete BANKS[el.dataset.bankRetry]; redraw(); return; }
     if (el.dataset.vatRetry) { delete VATS[el.dataset.vatRetry]; redraw(); return; }
-    /* "חסר כאן משהו? פנייה לנדב": the link opens the request form as it did; this only counts it */
-    if (el.dataset.ask) { use("ask"); flushUse(false); return; }
     if (el.dataset.terms) {
       /* "אין תנאי תשלום": the company's ledger, its billing details at the top (read only since D2) */
       state.b2.customer = el.dataset.terms; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
@@ -2069,11 +2051,6 @@
     }
     if (el.dataset.retry) { el.disabled = true; el.textContent = "טוען..."; load(false); return; }
     if (el.dataset.export) { use("export", { list: el.dataset.export }); exportList(el.dataset.export); return; }
-    if (el.dataset.unfilter) {
-      unfilter();
-      use("unfilter", { from: el.closest(".fin-empty") ? "empty" : "head", results: Math.min(searchCounts().results, 100000) });
-      redraw(); return;
-    }
     if (el.dataset.bstate !== undefined) { state.sc.state = el.dataset.bstate; state.sc.open = {}; use("state"); redraw(); return; }
     if (el.dataset.b2state !== undefined) {
       state.b2.state = el.dataset.b2state; state.b2.view = "list"; state.b2.open = {};
@@ -2162,7 +2139,6 @@
     _flags: function () { return { all: FLAG, on: FLAG_ON }; },
     _lastDayText: lastDayText, _refetchDue: refetchDue, _returnAfterMs: RETURN_AFTER_MS, _notes: function () { return { all: NOTE, loud: LOUD }; },
     /* "חיפוש ללא סינון" pressed: the filters it leaves (16.11) */
-    _unfilter: function () { unfilter(); return { tab: state.tab, query: state.query, sc: state.sc, b2: state.b2 }; },
     _labels: { planned: PLANNED_LABEL, lastDay: LAST_DAY_LABEL },
     _columns: function () {
       var heads = {};

@@ -257,6 +257,25 @@ def test_the_page_never_calls_a_path_under_api_finance():
     assert not [p for p in paths if p.startswith("/api/finance")]
 
 
+def test_the_unfilter_button_and_the_link_to_ask_nadav_are_gone():
+    """D2, 2.1 and 2.2 (the desk move plan §1b, 24.11): "חיפוש ללא סינון" (pressed 0 times; since 1.2 a search looks at every
+    row by itself) and "חסר כאן משהו? פנייה לנדב" (no request came through its form since the desk was built) are gone -
+    their words, their code, their hook and their style."""
+    page = code_of(PAGE)
+    for gone in ("data-unfilter", "unfilter(", "UNFILTER", "_unfilter", "data-ask", "fin-ask", "ASK_URL", "5098225215",
+                 "51829235", "חסר כאן משהו", "פנייה לנדב", "חיפוש ללא סינון"):
+        assert gone not in page, gone
+    assert "fin-ask" not in (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert "_unfilter" not in node(LOAD + "console.log(JSON.stringify(Object.keys(F)));", None)
+    got = drive(answer(), [
+        {"show": {"tab": "b2c", "query": "zzz", "sc": {"state": "tasks", "period": "2026-11", "open": {}}}},
+        {"show": {"tab": "b2b", "query": "zzz", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}}],
+        monday=world())
+    for html in [got["first"]] + [s["html"] for s in got["steps"]]:
+        assert "פנייה לנדב" not in html and "data-ask" not in html and "data-unfilter" not in html
+        assert '<div class="fin-foot"><section class="fin-health">' in html
+
+
 def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_company():
     """D2, 1.2: a search looks at every row of its tab, so its Excel file and its totals are asked with no tile, period or
     company - the server's filter then picks exactly the rows on the screen (tests/test_desk_parity_js.py). Without a

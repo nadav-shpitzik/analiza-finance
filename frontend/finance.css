@@ -208,13 +208,11 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-panel.fin-empty { margin-top: 16px; }
 #screen-finance .fin-listnote { margin: 0; padding: 8px 16px 10px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12px; }
 
-/* the footer: whether everything was read, and the way to ask - one quiet line under a hairline */
+/* the footer: whether everything was read - one quiet line under a hairline (its link to ask Nadav left in D2, 2.2) */
 #screen-finance .fin-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 24px;
   margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12.5px; }
 #screen-finance .fin-health { flex: 1 1 320px; }
 #screen-finance .fin-health ul { margin: 6px 0 0; padding-inline-start: 18px; }
-#screen-finance .fin-ask { text-decoration: none; white-space: nowrap; }
-#screen-finance .fin-ask:hover { text-decoration: underline; }
 .fin-toast { position: fixed; bottom: 16px; inset-inline-start: 16px; background: #1f2430; color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 50; }
 
 @media (max-width: 900px) {
