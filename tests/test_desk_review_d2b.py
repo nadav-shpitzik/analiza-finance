@@ -12,10 +12,15 @@ replacement at a time, run against tests/test_desk*.py).
    error as its own failure (app/desk/store.py).
 4. A list or an object as an event's kind raised TypeError out of clean_batch: a 500, the batch's good events lost. Now
    it is refused and counted like any kind outside the list (app/desk/usage.py).
+5. A request behind a reading in progress waited on its lock with no bound of its own, and the save after a reading is not
+   bounded by the reading's deadline. Now it waits at most the deadline and WAIT_MARGIN_S, then is answered with what is
+   held (or stored) marked refreshing, or with no reading (app/desk/reading.py `HeldReading.answer`).
 """
 from __future__ import annotations
 
 import re
+import threading
+import time
 
 import httpx
 import psycopg
@@ -295,3 +300,98 @@ def test_a_kind_that_is_not_a_word_is_counted_refused_not_a_500(use):  # noqa: F
 def test_an_event_whose_kind_or_tab_is_not_a_string_is_refused_alone(bad):
     rows, refused = usage.clean_batch(batch(ev("hide"), {"k": bad}, dict(ev("hide"), tab=bad), ev("state")), 7)
     assert refused == 2 and [r["kind"] for r in rows] == ["hide", "state"]
+
+
+# --- 5. a request behind a reading in progress waits a bounded time -----------------------------------------------------
+
+def _stuck_save(store: MemoryStore) -> threading.Event:
+    """The store's save waits for the returned event (a connection that dropped silently: the server's statement_timeout
+    never reaches a client that waits on a dead socket)."""
+    release = threading.Event()
+    real = store.save
+    store.save = lambda reading: (release.wait(10), real(reading))[1]
+    return release
+
+
+def test_a_request_behind_a_reading_waits_no_longer_than_the_readings_deadline():
+    """HeldReading.answer waited on `_lock` with no bound of its own ("a request that finds one running waits for it
+    (bounded by its deadline)"); analiza-metrics' SharedReading waited `acquire(timeout=wait())` and answered with what it
+    held. The store's save runs after the reading's deadline, so a save that does not come back held every fresh=1, press
+    and export of the instance behind it."""
+    w = world()
+    store = MemoryStore()
+    h = rd.HeldReading(lambda: reader_of(w), store=store, ttl_s=0, deadline_s=1, delta_deadline_s=1)
+    h.get()
+    release = _stuck_save(store)
+    w.set(102, paid="1200")                                         # a change: the next refresh saves
+    first = threading.Thread(target=h.get)
+    first.start()
+    time.sleep(0.3)                                                 # the refresh is in its save now
+    t0 = time.monotonic()
+    second = threading.Thread(target=h.get)
+    second.start()
+    second.join(4)
+    waited = time.monotonic() - t0
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert waited < 2, "a request waited %.1fs behind a reading whose deadline was 1s" % waited
+
+
+def test_a_request_that_waited_out_the_reading_gets_the_held_one_marked_refreshing_or_none():
+    w = world()
+    store = MemoryStore()
+    h = rd.HeldReading(lambda: reader_of(w), store=store, ttl_s=0, deadline_s=0.5, delta_deadline_s=0.5)
+    held, _ = h.get()
+    release = _stuck_save(store)
+    w.set(102, paid="1200")
+    first = threading.Thread(target=h.get)
+    first.start()
+    time.sleep(0.2)
+    for force in (False, True):                                     # a fresh=1, and a press
+        t0 = time.monotonic()
+        shown, last, refreshing = h.answer(force=force)
+        assert shown is held and refreshing is True and time.monotonic() - t0 < 1.5
+    assert "wait_timeout" in [c["code"] for c in h.health()["recent_codes"]]
+    release.set()
+    first.join(10)
+    assert h.reading is not held and h.reading["kind"] == "delta"   # the reading in progress landed after all
+    # an instance that holds nothing, with nothing stored, has nothing to answer with: no reading, never a hung worker
+    cold_store = MemoryStore()
+    cold = rd.HeldReading(lambda: reader_of(w), store=cold_store, ttl_s=0, deadline_s=0.5)
+    release = _stuck_save(cold_store)
+    first = threading.Thread(target=cold.get)
+    first.start()
+    time.sleep(0.2)
+    shown, last, refreshing = cold.answer()
+    assert shown is None and refreshing is False
+    release.set()
+    first.join(10)
+
+
+def test_the_desks_own_request_behind_a_stuck_reading_is_answered_with_the_held_one(desk):  # noqa: F811
+    """At the route: the page's `?fresh=1` behind a reading whose save does not come back is answered 200, the reading
+    held marked refreshing, within the reading's deadline and the margin."""
+    from fastapi.testclient import TestClient
+
+    store = MemoryStore()
+    main.app.state.desk_store = store
+    try:
+        first = desk.get(session_token(1)).json()
+        held = main.app.state.desk.reading
+        held.ttl_s, held.deadline_s, held.delta_deadline_s = 0, 1, 1
+        release = _stuck_save(store)
+        desk.w.set(102, paid="1200")
+        hung = threading.Thread(target=lambda: TestClient(main.app).get(
+            "/api/desk?fresh=1", headers={"Authorization": "Bearer " + session_token(1)}))
+        hung.start()
+        time.sleep(0.3)
+        t0 = time.monotonic()
+        r = TestClient(main.app).get("/api/desk?fresh=1", headers={"Authorization": "Bearer " + session_token(1)})
+        waited = time.monotonic() - t0
+        release.set()
+        hung.join(10)
+        assert r.status_code == 200 and waited < 3
+        assert r.json()["refreshing"] is True and r.json()["taken_at"] == first["taken_at"]
+    finally:
+        main.app.state.desk_store = None

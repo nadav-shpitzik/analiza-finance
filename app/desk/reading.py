@@ -117,6 +117,11 @@ ROW_COLUMNS = {key: [c for c in cols if c not in NEVER_READ] for key, cols in CH
 READ_DEADLINE_S = 50
 HELD_TTL_S = 60  # an open within a minute of a reading is answered with it
 FAIL_GAP_S = 20  # after a reading that failed, the next is tried this much later, not on every open
+# a request that finds a reading in progress waits for it at most a whole reading's deadline and this margin (its save is
+# one short statement after it), then is answered with what is held: a save whose connection dropped silently could hold
+# the reading lock far longer - the store's statement_timeout is the server's (D2's review; analiza-metrics' SharedReading
+# waited `acquire(timeout=wait())` the same way)
+WAIT_MARGIN_S = 0.5
 
 # ---- the refresh (D2): analiza-metrics app/finance.py at da671b2, its constants with their reasons
 # the filter is day-grained: each item's `updated_at` makes the exact cut, at the held reading's start less this margin (a
@@ -606,7 +611,9 @@ class HeldReading:
     app/desk/store.py; None without a database) and its refresh that reads only what changed.
 
     D1's rules, kept: `get()` answers with the reading held when it is younger than HELD_TTL_S; otherwise it reads, one
-    reading at a time: a request that finds one running waits for it (bounded by its deadline) and is answered with it. A
+    reading at a time: a request that finds one running waits for it and is answered with it - at most READ_DEADLINE_S and
+    WAIT_MARGIN_S, after which it is answered with what is held (or stored) marked refreshing, or with no reading, never a
+    hung worker (D2's review: the save after a reading is not bounded by the reading's deadline). A
     reading that failed is kept as the last attempt, not as the reading: the one before stays on screen with its age, and
     the next try comes FAIL_GAP_S later, not on every open. A reading that read every board but came short replaces the one
     before: it is the truth of now, shown as not complete. Every attempt's reader gets READ_DEADLINE_S, the refresh
@@ -632,7 +639,8 @@ class HeldReading:
     - `health()`: the trace, in a closed vocabulary - full_first, full_base_unusable, full_36h, full_count_<board>,
       full_delta_error_<code>, delta, delta_failed_<code>, full_deferred, store_not_configured, store_loaded,
       store_empty, store_other_schema, store_unusable, store_load_failed_<SQLSTATE or class>, store_saved, store_unchanged,
-      store_newer_held, store_refused, store_save_failed_<SQLSTATE or class>, seeded. Never a row or a count of rows."""
+      store_newer_held, store_refused, store_save_failed_<SQLSTATE or class>, seeded, wait_timeout. Never a row or a count
+      of rows."""
 
     def __init__(self, make_reader: Callable[[], MondayReader], clock: Callable[[], float] = time.monotonic,
                  ttl_s: float = HELD_TTL_S, deadline_s: float = READ_DEADLINE_S, fail_gap_s: float = FAIL_GAP_S,
@@ -686,7 +694,9 @@ class HeldReading:
                 return self.reading, self.last, False
             if at_once and self.reading is not None:
                 return self.reading, self.last, True
-        with self._lock:
+        if not self._lock.acquire(timeout=max(0.0, self.deadline_s + WAIT_MARGIN_S)):
+            return self._waited_out()
+        try:
             if force:
                 # strictly after: on a clock too coarse to tell them apart, a press reads once more rather than take a
                 # reading that may have started before it
@@ -696,6 +706,19 @@ class HeldReading:
                 return self.reading, self.last, False
             self._read()
             return self.reading, self.last, False
+        finally:
+            self._lock.release()
+
+    def _waited_out(self) -> tuple:
+        """A request whose wait for the reading in progress ran out: what is held - or, on an instance that holds none, the
+        stored reading - marked refreshing, and nothing read; with neither, no reading (the route says it is unavailable).
+        Said in the trace (`wait_timeout`)."""
+        logger.warning("desk request waited out the reading in progress")
+        self._note(["wait_timeout"])
+        if self.reading is None and self.store is not None:
+            self._seed()
+        with self._state:
+            return self.reading, self.last, self.reading is not None
 
     def age_s(self) -> Optional[int]:
         return None if self.reading_at is None else max(0, int(self.clock() - self.reading_at))
