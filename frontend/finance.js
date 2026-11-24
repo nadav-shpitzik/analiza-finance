@@ -1,6 +1,23 @@
 /* The finance desk ("כספים", knowledge backlog 0280 and docs/design/finance-desk-spec.md there).
  *
- * Drawn by app.js on the charge boards, into #fin-root, from /api/finance - which answers a tab only to
+ * Ported from analiza-metrics frontend/finance.js at da671b2 (knowledge backlog 0301, D2), faithfully: the same
+ * behaviour and the same words. What changed with the move, and only that:
+ * 1. the paths: GET /api/desk and POST /api/desk/refresh, /api/desk/totals, /api/desk/export-link;
+ * 2. an answer may carry no view yet (`view: null`, nothing read on the server): said, with the refresh, and never
+ *    put over a view already on the screen (takeNewer);
+ * 3. what the server no longer sends is read in the browser, as the person, through mondayCall when its detail is
+ *    shown (the ID number already was): a refund's bank account in its details, a company's ח.פ in its billing details
+ *    (liveEntry). The list "החזר לביצוע" lost its column "פרטי חשבון": filling it would read every refund's account;
+ * 4. a company's billing details are shown read only: their edit went through analiza-metrics' server (its account
+ *    route, which this service does not have), and comes back from the browser;
+ * 5. the usage batches (POST /api/usage, not in this service yet) stop quietly at the first failure;
+ * 6. three sentences that would no longer be true: a guest is told so (this gate refuses one by name), the ID number's
+ *    "no access" no longer sends her to the Excel file (whose server reads no ID number), and the chip "אין תנאי תשלום"
+ *    opens the company's ledger without promising an edit there.
+ * In the comments below, app/finance.py and app/finance_api.py are analiza-metrics' modules: their port to this
+ * service is under way, and each rule named there is the one the port keeps.
+ *
+ * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
  * computation (app/finance.py) as a Decimal string, and is only formatted here. The students tab is one list
  * by the bookkeeper's state of each payment, a period and the search box (Nadav 10.11: "לפי סטטוסים אצלה"),
@@ -86,13 +103,15 @@
     voucher_label_drift: ["תווית אחת בסטטוס שובר משה\"ע ששמה השתנה במאנדיי", "תוויות בסטטוס שובר משה\"ע ששמן השתנה במאנדיי"],
     label_drift_b2b: ["תווית סטטוס אחת בחיובים העסקיים ששמה השתנה במאנדיי", "תוויות סטטוס בחיובים העסקיים ששמן השתנה במאנדיי"],
     label_unknown_b2c: ["תקבול אחד עם סטטוס שהמסך לא מכיר: הוא ב\"חריג, לבדיקה\" ולא נספר בכסף", "תקבולים עם סטטוס שהמסך לא מכיר: הם ב\"חריג, לבדיקה\" ולא נספרו בכסף"],
-    label_unknown_b2b: ["חיוב עסקי אחד עם סטטוס שהמסך לא מכיר: הוא ב\"חריג, לבדיקה\" ולא נספר ביתרה הפתוחה", "חיובים עסקיים עם סטטוס שהמסך לא מכיר: הם ב\"חריג, לבדיקה\" ולא נספרו ביתרה הפתוחה"],
-    /* round 3, slice 2: the bank account is read live with every reading, for "החזר לביצוע" only, and that read failed */
-    bank_unread: ["החזר לביצוע אחד שפרטי החשבון שלו לא נקראו ממאנדיי. רענון יקרא אותם שוב", "החזרים לביצוע שפרטי החשבון שלהם לא נקראו ממאנדיי. רענון יקרא אותם שוב"]
+    label_unknown_b2b: ["חיוב עסקי אחד עם סטטוס שהמסך לא מכיר: הוא ב\"חריג, לבדיקה\" ולא נספר ביתרה הפתוחה", "חיובים עסקיים עם סטטוס שהמסך לא מכיר: הם ב\"חריג, לבדיקה\" ולא נספרו ביתרה הפתוחה"]
+    /* "bank_unread" left with the move (D2): the server no longer reads a bank account, so its read cannot fail; the
+       page's own read says a failure in the refund's details (bankCell) */
   };
   /* a note that changes what the numbers mean, or what she can act on, is said on the page, not behind "פרטים" */
-  var LOUD = { label_unknown_b2c: 1, label_unknown_b2b: 1, bank_unread: 1 };
+  var LOUD = { label_unknown_b2c: 1, label_unknown_b2b: 1 };
   var ERRORS = {
+    /* D2: this service's gate refuses a guest by name (app/desk/gate.py); the words are D1's */
+    guest: "אורחים לא רואים את השולחן.",
     not_a_board_member: "התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם.",
     members_unavailable: "לא הצלחנו לבדוק עכשיו מי רשאי לראות את לוחות החיובים. נסו שוב בעוד דקה.",
     finance_unavailable: "לא הצלחנו לקרוא עכשיו את לוחות החיובים. נסו שוב בעוד כמה דקות."
@@ -190,9 +209,8 @@
     to_refund: { h: "סכום לזיכוי", n: 1, t: "credit_approved", opt: function (r) { return num(r.credit_approved) > 0; },
       c: function (r) { return num(r.credit_approved) ? money2(r.credit_approved) : NOT_SET; } },
     method: { h: "אופן החזר", xs: 1, c: function (r) { return lbl(r, "refund_method"); } },
-    bank: { h: "פרטי חשבון", xs: 1, opt: function (r) { return r.bank && (r.bank.bank_account || r.bank.bank); }, c: function (r) {
-      return bankText(r.bank, false) + (r.bank && r.bank.bank_holder ? "<div class=\"fin-subtle\">" + esc(r.bank.bank_holder) + "</div>" : "");
-    } },
+    /* "פרטי חשבון" left the list "החזר לביצוע" with the move (D2): the server sends no bank account, and the page reads
+       one only when its refund's details open (bankCell) - a column would read every refund's account */
     /* a refund's two dates, side by side wherever a refund is listed, with the day it was asked for before them */
     asked: { h: "תאריך בקשת ביטול", c: function (r) { return r.asked_date ? d(r.asked_date) : NOT_SET; } },
     /* always on a refund to execute; in a list of done refunds only when one of them has the date (older ones do not) */
@@ -251,7 +269,7 @@
   var SC_COLS = {
     "": ["date", "student", "rep", "cohort", "received", "channel", "invoice", "receipt", "state", "open"],
     exception: ["date", "student", "rep", "cohort", "received", "to_refund", "channel", "invoice", "receipt", "notes", "open"],
-    refund_to_execute: ["asked", "last_day", "planned", "student", "cohort", "to_refund", "method", "bank", "received", "invoice", "open"],
+    refund_to_execute: ["asked", "last_day", "planned", "student", "cohort", "to_refund", "method", "received", "invoice", "open"],
     refunded: ["refund_date", "last_day", "planned", "student", "cohort", "refunded", "method", "invoice", "credit_ref", "open"]
   };
   /* "החזר לביצוע" has its own order (refundKey); every other state is a field */
@@ -287,7 +305,7 @@
   }
   function billedNoDue(r) { return r.flags.indexOf("billed_no_due") !== -1; }
   function cls(k) { return " class=\"k-" + k + (COLS[k].n ? " n" : "") + (COLS[k].xs ? " hide-xs" : "") + "\""; }
-  /* the list's totals come from the server (GET /api/finance/totals, the same filter as the Excel file): asked once
+  /* the list's totals come from the server (GET /api/desk/totals, the same filter as the Excel file): asked once
      per filter and reading, and drawn as the table's last row when they land */
   var TOTALS = {};
   function totalsFor(params) {
@@ -297,7 +315,7 @@
     TOTALS[key] = { body: null };
     params.taken = (BODY && BODY.taken_at) || "";
     var qs = Object.keys(params).map(function (k) { return k + "=" + encodeURIComponent(params[k] || ""); }).join("&");
-    deps.api("/api/finance/totals?" + qs).then(function (body) { TOTALS[key].body = body; redraw(); })
+    deps.api("/api/desk/totals?" + qs).then(function (body) { TOTALS[key].body = body; redraw(); })
       .catch(function () { TOTALS[key].body = { failed: true }; });
     return null;
   }
@@ -571,7 +589,6 @@
      refund (first, where a refund is in play: its two dates side by side), the payment's own row (no heading: it is the row
      opened), its enrollment, its cohort */
   function detailHtml(r) {
-    var bank = bankText(r.bank, true);
     var others = ROWS.sc.filter(function (x) { return x.person === r.person && x.id !== r.id; });
     var refund = refundInPlay(r) ? block("החזר", "", [
       [LAST_DAY_LABEL, lastDayCell(r)], [PLANNED_LABEL, COLS.planned.c(r)],
@@ -579,7 +596,9 @@
       ["סכום החזר", r.refund_typed != null ? money2(r.refund_typed) : NOT_SET],
       ["תאריך החזר", r.refund_date ? d(r.refund_date) : NOT_SET], ["אופן החזר", lbl(r, "refund_method")],
       ["אסמכתת זיכוי", ltr(r.credit_ref) || NONE]]) +
-      (bank ? "<div class=\"fin-dx-box\"><span class=\"fin-subtle\">פרטי חשבון</span> " + bank + "</div>" : "") : "";
+      /* a refund to execute (the only rows whose account the old server read): its bank account, read live as the person
+         now that its details are open (D2, bankCell) */
+      (r.state === "refund_to_execute" ? "<div class=\"fin-dx-box\"><span class=\"fin-subtle\">פרטי חשבון</span> " + bankCell(r) + "</div>" : "") : "";
     var payment = block("", "", [
       ["סטטוס תשלום", lbl(r, "status")], ["שליחת קבלה", lbl(r, "receipt")],
       ["סכום ששולם", COLS.received.c(r)], ["תאריך תקבול", paidDate(r)],
@@ -636,7 +655,7 @@
       var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" ? "" : f.state,
         period: b2 ? "" : state.sc.period, customer: tab === "b2b" ? state.b2.customer : "",
         q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
-      return deps.post("/api/finance/export-link", body);
+      return deps.post("/api/desk/export-link", body);
     }).then(function (res) {
       var url = new URL(res.url, window.location.href).href;
       /* monday may sandbox the view against downloads: a new tab escapes it, and the file names itself */
@@ -1160,10 +1179,8 @@
       if (pending) { refreshAfterWrite(tries); return; }
       if (BODY) { BODY.refreshing = true; }
       redraw();
-      pending = deps.post("/api/finance/refresh").then(function (next) {
-        var newer = next.taken_at !== (BODY && BODY.taken_at);
-        took(next);
-        if (newer) { VIEW = next.view; index(VIEW); }
+      pending = deps.post("/api/desk/refresh").then(function (next) {
+        takeNewer(next);
         redraw();
         if (!settled() && tries < 2) { later(function () { refreshAfterWrite(tries + 1); }, 5000); }
       }, function (e) {
@@ -1394,8 +1411,9 @@
      batches and is kept in the service's own Postgres (desk_events; app/usage.py holds the closed list of kinds and
      fields, and refuses anything else). An event is its kind, the page's age, the tab and the list's state, and its own
      closed words and counts: NEVER a name, an amount, the search's text, an ID number or an item id - a search goes as
-     its shape (how many characters, which kind, how many rows with the filters and without). Best effort: a batch that
-     fails is dropped, a server with nowhere to keep them stops the sending for the visit, and nothing waits for it. */
+     its shape (how many characters, which kind, how many rows with the filters and without). Best effort: nothing waits
+     for it. D2: this service has no POST /api/usage yet, so the first batch that fails - for any reason - stops the
+     sending for the visit, quietly: never a word on the screen. */
   var USE_MAX = 20, USE_FLUSH_MS = 30000, USE_SEARCH_MS = 1500;
   var USE = { q: [], timer: null, session: "", at: 0, off: false, opened: false, search: null, lastQuery: "" };
   function useSession() {
@@ -1424,16 +1442,17 @@
       if (USE.timer && USE.timer.unref) { USE.timer.unref(); }    /* node (the tests): a waiting batch never holds the process */
     }
   }
-  /* `leaving`: the page is going out of sight, so the request is asked to outlive it (fetch keepalive, in app.js) */
+  /* `leaving`: the page is going out of sight, so the request is asked to outlive it (fetch keepalive, in desk.js) */
   function flushUse(leaving) {
     if (USE.timer) { clearTimeout(USE.timer); USE.timer = null; }
     if (!USE.q.length || USE.off || !deps || !deps.post) { return; }
     var events = USE.q.splice(0, USE_MAX);
     Promise.resolve().then(function () {
       return deps.post("/api/usage", { desk: "finance", session: USE.session, events: events }, !!leaving);
-    }).catch(function (e) {
-      /* nowhere to keep them, or a server without the route: no more for this visit */
-      if (e && (e.status === 404 || e.status === 503 || e.error === "usage_unavailable")) { USE.off = true; }
+    }).catch(function () {
+      /* nowhere to keep them, a server without the route (D2: this one, for now), or any other failure: no more for this
+         visit, and nothing said */
+      USE.off = true;
     });
   }
   /* a search as its shape, never its text: digits only (an amount, a reference, an ID number - its length tells), an
@@ -1470,82 +1489,161 @@
     if (USE.search && USE.search.unref) { USE.search.unref(); }
   }
 
-  /* ---------- the student's ID number, in a payment's details (16.11) ----------
-     Chava asked for the ID number nearer to hand than the Excel file (a receipt in Hashavshevet needs it), and has a CRM
-     seat since 16.11. It is read live IN THE BROWSER, AS THE PERSON, when a payment's details open: monday.api() of the
-     SDK, through mondayCall like every read of the page, so monday's own permissions decide - without access to the
-     Leads board monday answers nothing, and the cell says so. Never through this service's server: the server's answer
-     carries no ID number (app/finance.py visible_part), the reading and the database hold none, and the page keeps it in
-     its memory only - read again when a newer reading of the boards lands - never in storage and never in a usage event
-     (USE). The rule is the Excel file's
-     (app/finance.py with_id_numbers): the first of the payment's leads, in monday's order, that holds one. */
+  /* ---------- what is read live in the browser, as the person (16.11; D2) ----------
+     The student's ID number, in a payment's details (16.11): Chava asked for it nearer to hand than the Excel file (a
+     receipt in Hashavshevet needs it), and has a CRM seat since 16.11. It is read live IN THE BROWSER, AS THE PERSON, when
+     a payment's details open: monday.api() of the SDK, through mondayCall like every read of the page, so monday's own
+     permissions decide - without access to the Leads board monday answers nothing, and the cell says so. Never through
+     this service's server: the server's answer carries no ID number (app/finance.py visible_part), the reading and the
+     database hold none, and the page keeps it in its memory only - read again when a newer reading of the boards lands -
+     never in storage and never in a usage event (USE). The rule is the Excel file's (app/finance.py with_id_numbers): the
+     first of the payment's leads, in monday's order, that holds one.
+     D2, the move: this service's server never reads an ID number, a bank account or a business number (app/monday/
+     client.py NEVER_READ), so two more details are read here the same way, each only when it is shown: a refund to
+     execute's bank account when its details open (the old server read it with every reading), and a company's ח.פ when
+     its ledger shows the billing details. Each is kept in this page's memory only, by its row, and never sent anywhere:
+     not to the server, not in a usage event, not to the console. */
   var ID_TITLE = "ת.ז";
   var LEADS_BOARD = "5089697337", ID_COLUMN = "text_mkzvem4", ID_LEADS_MAX = 10;
-  var READ_IDS = "query ($i: [ID!], $c: [String!], $b: [ID!]) { items(ids: $i) { id board { id } column_values(ids: $c) { id text } } " +
+  /* Student Charge's bank account, as the old server read it for "החזר לביצוע" (app/finance.py BANK_FIELDS) */
+  var BANK_COLUMNS = { bank_holder: "text_mm8cxm9y", bank: "text_mm8cv3v3", bank_branch: "text_mm8cgc0d", bank_account: "text_mm8ckgh8" };
+  /* Accounts' "ח.פ" (app/account_writer.py FIELDS) */
+  var ACCOUNTS_BOARD = "5089697343", VAT_COLUMN = "text_mm3y3gm7";
+  var READ_CELLS = "query ($i: [ID!], $c: [String!], $b: [ID!]) { items(ids: $i) { id board { id } column_values(ids: $c) { id text } } " +
     "boards(ids: $b) { id columns(ids: $c) { id } } }";
-  var IDS = {};        /* by payment id: { phase: "reading" | "ok" | "failed", number, code, stale, shown } - memory only */
+  /* by payment id, by payment id, by account id: { phase: "reading" | "ok" | "failed", value, code, stale, shown } - memory
+     only */
+  var IDS = {}, BANKS = {}, VATS = {};
   var ID_ERRORS = {
-    /* the Excel file reads it on the server for every member of Student Charge, so it is said where else to find it */
-    denied: "אין לך גישה ללוח הלידים במאנדיי (ת.ז נמצאת גם בקובץ האקסל)", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח הלידים",
+    /* D2: no longer "(ת.ז נמצאת גם בקובץ האקסל)" - this service's server never reads an ID number, so its file has none */
+    denied: "אין לך גישה ללוח הלידים במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח הלידים",
     columns_changed: "העמודה ת.ז לא נמצאה בלוח הלידים; נדב צריך לבדוק", not_found: "הליד לא נמצא בלוח הלידים",
     rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראה ממאנדיי"
   };
+  var BANK_ERRORS = {
+    denied: "אין לך גישה לפרטי החשבון במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח Student Charge",
+    columns_changed: "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge; נדב צריך לבדוק",
+    not_found: "התקבול לא נמצא בלוח Student Charge",
+    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראו ממאנדיי"
+  };
+  var VAT_ERRORS = {
+    denied: "אין לך גישה ללוח החברות במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח החברות",
+    columns_changed: "העמודה ח.פ לא נמצאה בלוח החברות; נדב צריך לבדוק", not_found: "החברה לא נמצאה בלוח החברות",
+    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקרא ממאנדיי"
+  };
+  /* the cells of `ids` on `board`, read as the person: {item id: {column: text}} for the items monday returned on that
+     board. A board that answers nothing is "denied" (the Leads board without a CRM seat answers nothing), a column it
+     lacks "columns_changed", no item at all "not_found"; monday's own refusal comes by mondayErr's code */
+  function readCells(board, ids, cols) {
+    return mondayCall(READ_CELLS, { i: ids, c: cols, b: [board] }).then(function (data) {
+      var b = (data.boards || []).filter(function (x) { return x && String(x.id) === board; })[0];
+      if (!b) { throw { code: "denied" }; }
+      var have = (b.columns || []).map(function (c) { return c && c.id; });
+      if (cols.some(function (c) { return have.indexOf(c) === -1; })) { throw { code: "columns_changed" }; }
+      var got = Object.create(null);
+      (data.items || []).forEach(function (it) {
+        if (!it || String((it.board || {}).id) !== board) { return; }
+        var cells = Object.create(null), seen = {};
+        cols.forEach(function (c) { cells[c] = ""; });
+        (it.column_values || []).forEach(function (c) {
+          if (!c || cols.indexOf(c.id) === -1 || seen[c.id]) { return; }
+          seen[c.id] = 1;
+          cells[c.id] = String(c.text == null ? "" : c.text).trim();
+        });
+        got[String(it.id)] = cells;
+      });
+      if (!Object.keys(got).length) { throw { code: "not_found" }; }
+      return got;
+    });
+  }
   /* the number, or "" when none of the leads holds one; a refusal by code (ID_ERRORS) */
   function readIdNumber(r) {
     var ids = (r.lead_ids || []).slice(0, ID_LEADS_MAX).map(String);
-    return mondayCall(READ_IDS, { i: ids, c: [ID_COLUMN], b: [LEADS_BOARD] }).then(function (data) {
-      var board = (data.boards || []).filter(function (b) { return b && String(b.id) === LEADS_BOARD; })[0];
-      /* the Leads board answers nothing to a person without access to it (no CRM seat) */
-      if (!board) { throw { code: "denied" }; }
-      if (!(board.columns || []).some(function (c) { return c && c.id === ID_COLUMN; })) { throw { code: "columns_changed" }; }
-      var got = {};
-      (data.items || []).forEach(function (it) {
-        if (!it || String((it.board || {}).id) !== LEADS_BOARD) { return; }
-        var cell = (it.column_values || []).filter(function (c) { return c && c.id === ID_COLUMN; })[0];
-        got[String(it.id)] = cell ? String(cell.text == null ? "" : cell.text).trim() : "";
-      });
-      if (!Object.keys(got).length) { throw { code: "not_found" }; }
-      return ids.map(function (x) { return got[x] || ""; }).filter(Boolean)[0] || "";
+    return readCells(LEADS_BOARD, ids, [ID_COLUMN]).then(function (got) {
+      return ids.map(function (x) { return (got[x] || {})[ID_COLUMN] || ""; }).filter(Boolean)[0] || "";
     });
   }
-  /* the payment's entry: read when its details first draw, and again once a newer reading of the boards has landed (a
-     return to the view, "רענון": a number corrected in monday then shows) or on "לנסות שוב". While the next one is on
-     its way the last number stays on the screen. A read is asked only by a draw that finds no entry or a stale one, and
-     the redraw its answer brings finds a fresh one: no read asks for another */
-  function idEntry(r) {
-    var e = IDS[r.id];
+  /* a payment's bank account, its four cells by the names bankText reads; a refusal by code (BANK_ERRORS) */
+  function readBank(r) {
+    var keys = Object.keys(BANK_COLUMNS);
+    return readCells(BOARD.sc, [String(r.id)], keys.map(function (k) { return BANK_COLUMNS[k]; })).then(function (got) {
+      var cells = got[String(r.id)];
+      if (!cells) { throw { code: "not_found" }; }
+      var out = {};
+      keys.forEach(function (k) { out[k] = cells[BANK_COLUMNS[k]]; });
+      return out;
+    });
+  }
+  /* a company's ח.פ, or ""; a refusal by code (VAT_ERRORS) */
+  function readVat(aid) {
+    return readCells(ACCOUNTS_BOARD, [String(aid)], [VAT_COLUMN]).then(function (got) {
+      var cells = got[String(aid)];
+      if (!cells) { throw { code: "not_found" }; }
+      return cells[VAT_COLUMN];
+    });
+  }
+  /* a detail's entry in its store: read when it first draws, and again once a newer reading of the boards has landed (a
+     return to the view, "רענון": a value corrected in monday then shows) or on "לנסות שוב". While the next one is on its
+     way the last value stays on the screen. A read is asked only by a draw that finds no entry or a stale one, and the
+     redraw its answer brings finds a fresh one: no read asks for another. `said` hears the result (the ID number's usage
+     words); the value itself goes nowhere */
+  function liveEntry(store, key, read, said) {
+    var e = store[key];
     if (!e || (e.stale && e.phase !== "reading")) {
       if (!deps || !deps.monday) { return { phase: "outside" }; }
-      e = readIdInto(r, e && e.phase === "ok" ? e : null);
+      e = readInto(store, key, read, said, e && e.phase === "ok" ? e : null);
     }
     return e.phase === "reading" && e.shown ? e.shown : e;
   }
-  function readIdInto(r, shown) {
-    var mine = IDS[r.id] = { phase: "reading", shown: shown };
-    readIdNumber(r).then(function (n) { mine.phase = "ok"; mine.number = n; },
+  function readInto(store, key, read, said, shown) {
+    var mine = store[key] = { phase: "reading", shown: shown };
+    read().then(function (v) { mine.phase = "ok"; mine.value = v; },
       function (err) { mine.phase = "failed"; mine.code = (err && err.code) || "monday"; })
       .then(function () {
         mine.shown = null;
-        if (mine.phase === "ok") { use(mine.number ? "id_shown" : "id_empty"); }
-        else { use("id_failed", { code: useWord(mine.code) || "monday" }); }
-        if (IDS[r.id] === mine && VIEW) { redraw(); }
+        if (said) { said(mine); }
+        if (store[key] === mine && VIEW) { redraw(); }
       });
     return mine;
   }
-  /* a newer reading of the boards: every number held is read again at its next draw, the last one shown meanwhile */
-  function idsStale() { Object.keys(IDS).forEach(function (k) { IDS[k].stale = true; }); }
+  /* a newer reading of the boards: every value held is read again at its next draw, the last one shown meanwhile */
+  function liveStale() {
+    [IDS, BANKS, VATS].forEach(function (store) { Object.keys(store).forEach(function (k) { store[k].stale = true; }); });
+  }
+  function liveFailed(words, code, attr, key) {
+    return "<span class=\"fin-badtext\">" + esc(words[code] || words.monday) + "</span> <button type=\"button\" class=\"fin-linkbtn\" " +
+      attr + "=\"" + esc(key) + "\">לנסות שוב</button>";
+  }
+  function idSaid(e) {
+    if (e.phase === "ok") { use(e.value ? "id_shown" : "id_empty"); }
+    else { use("id_failed", { code: useWord(e.code) || "monday" }); }
+  }
   function idCell(r) {
     if (!(r.lead_ids || []).length) { return NOT_SET; }
-    var e = idEntry(r);
+    var e = liveEntry(IDS, r.id, function () { return readIdNumber(r); }, idSaid);
     if (e.phase === "outside") { return subtle("מוצגת רק כשהתצוגה פתוחה מתוך מאנדיי"); }
     if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
-    if (e.phase === "failed") {
-      return "<span class=\"fin-badtext\">" + esc(ID_ERRORS[e.code] || ID_ERRORS.monday) + "</span> <button type=\"button\" class=\"fin-linkbtn\" " +
-        "data-id-retry=\"" + esc(r.id) + "\">לנסות שוב</button>";
-    }
-    if (!e.number) { return subtle("אין בליד"); }
-    return "<bdi dir=\"ltr\" class=\"fin-idnum\">" + esc(e.number) + "</bdi> <button type=\"button\" class=\"fin-iconbtn\" data-id-copy=\"" +
+    if (e.phase === "failed") { return liveFailed(ID_ERRORS, e.code, "data-id-retry", r.id); }
+    if (!e.value) { return subtle("אין בליד"); }
+    return "<bdi dir=\"ltr\" class=\"fin-idnum\">" + esc(e.value) + "</bdi> <button type=\"button\" class=\"fin-iconbtn\" data-id-copy=\"" +
       esc(r.id) + "\" aria-label=\"" + COPY_LABEL + "\" title=\"" + COPY_LABEL + "\">" + COPY_ICON + "</button>";
+  }
+  /* a refund to execute's bank account in its details, as the old page showed it (bankText, the holder last), or "-" when
+     monday holds none of its four cells */
+  function bankCell(r) {
+    var e = liveEntry(BANKS, r.id, function () { return readBank(r); });
+    if (e.phase === "outside") { return subtle("מוצגים רק כשהתצוגה פתוחה מתוך מאנדיי"); }
+    if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
+    if (e.phase === "failed") { return liveFailed(BANK_ERRORS, e.code, "data-bank-retry", r.id); }
+    return bankText(e.value, true) || NOT_SET;
+  }
+  /* a company's ח.פ in its billing details, as the old page showed it (left to right), or "-" when monday holds none */
+  function vatCell(aid) {
+    var e = liveEntry(VATS, aid, function () { return readVat(aid); });
+    if (e.phase === "outside") { return subtle("מוצג רק כשהתצוגה פתוחה מתוך מאנדיי"); }
+    if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
+    if (e.phase === "failed") { return liveFailed(VAT_ERRORS, e.code, "data-vat-retry", aid); }
+    return e.value ? ltr(e.value) : NOT_SET;
   }
   /* the copy button is an icon, no word (Nadav 16.11): the clipboard's usual two sheets, in the row's open icon's style;
      its name is said to a screen reader and on hover */
@@ -1556,7 +1654,7 @@
     "stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
   /* the number to the clipboard: the browser's own way, or the old one inside an iframe that does not allow it */
   function copyId(id) {
-    var e = IDS[id], text = e && e.phase === "ok" ? e.number : "";
+    var e = IDS[id], text = e && e.phase === "ok" ? e.value : "";
     if (!text) { return; }
     function said(ok) { use("id_copied", { code: ok ? "" : "failed" }); flash(ok ? "ת.ז הועתקה." : "לא הצלחנו להעתיק: לסמן את המספר ולהעתיק ידנית."); }
     function old() {
@@ -1572,206 +1670,34 @@
     else { old(); }
   }
 
-  /* ---------- the customer's billing details, in the ledger (round 3, slice 3) ----------
-     Written by the SERVER (POST /api/finance/account, app/account_writer.py): built when Chava had no CRM seat, so monday
-     refused her own write on Accounts (she has one since 16.11; the write stays here until the knowledge repo decides -
-     docs/architecture.md "finance" item 13). Four columns, the server's form contract (view.b2b.account_form), and an Update on the account
-     naming who, before and after. The page shows what will be written first, sends what it showed with it, and when monday
-     holds something else by then the server says so and the page shows the new values. */
-  var BILL = null;     /* { aid, phase: "edit" | "confirm" | "saving" | "done" | "failed", draft, error, focus } */
-  var ACCOUNT_ERRORS = {
-    bad_vat_id: "ח.פ: 9 ספרות בדיוק, בלי מקפים ובלי רווחים.",
-    bad_hash_key: "מפתח חשבשבת: עד 15 אותיות באנגלית או ספרות.",
-    bad_invoice_name: "חשבונית על שם: עד 120 תווים, בשורה אחת.",
-    bad_terms: "תנאי תשלום: לבחור אחד מהרשימה.",
-    changed_since_read: "בינתיים פרטי החברה השתנו במאנדיי. הערכים שמוצגים עכשיו הם העדכניים: לבדוק, ולשמור שוב.",
-    account_busy: "שמירה אחרת של החברה הזאת עוד רצה. לנסות שוב בעוד רגע.",
-    account_not_on_desk: "החברה הזאת לא מופיעה בחיובים שבמסך, ולכן אי אפשר לערוך אותה מכאן.",
-    account_not_found: "החברה לא נמצאה בלוח החברות (אולי נמחקה). לא נכתב כלום.",
-    columns_changed: "עמודה של פרטי החיוב השתנתה בלוח החברות, ולכן לא נכתב כלום. נדב צריך לבדוק.",
-    labels_drift: "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נכתב כלום. נדב צריך לבדוק.",
-    write_unverified: "מאנדיי ענתה, אבל הערך שנשמר אינו מה שנשלח. לבדוק את החברה במאנדיי.",
-    write_failed: "מאנדיי לא קיבלה את הכתיבה, ולא נכתב כלום.",
-    write_failed_maybe: "החיבור למאנדיי נקטע באמצע הכתיבה, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב.",
-    answer_lost: "התשובה מהשרת לא הגיעה, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב.",
-    monday_unavailable: "לא הצלחנו לקרוא את החברה במאנדיי, ולא נכתב כלום. לנסות שוב בעוד רגע.",
-    writer_not_configured: "השרת עוד לא מוגדר לכתוב למאנדיי, ולא נכתב כלום.",
-    view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אי אפשר לערוך מכאן.",
-    not_a_board_member: "עריכת פרטי חיוב פתוחה רק לחברי לוח B2B Charge.",
-    finance_unavailable: "לא הצלחנו לבדוק עכשיו שהחברה מופיעה בחיובים, ולא נכתב כלום. לנסות שוב בעוד רגע."
-  };
-  var HASH_KEY_RE = /^[0-9A-Za-z-]{1,15}$/;
+  /* ---------- the customer's billing details, in the ledger (round 3, slice 3; D2) ----------
+     Four columns of Accounts, under the server's form contract (view.b2b.account_form): its fields and their monday
+     titles, in its order. In analiza-metrics the server also wrote them (its account route): this service has no
+     such route and never writes Accounts from the browser's request, so the details are shown READ ONLY here, with one
+     line saying their edit comes back - from the browser, as the person, like every other write of the page. The ח.פ is
+     read live as the person when the details show (vatCell): the server never reads it. */
+  var BILL_LATER = "עריכת פרטי החיוב תחזור בקרוב, מהדפדפן";
   function billForm() { return (VIEW.b2b && VIEW.b2b.account_form) || null; }
-  function termsLabel(id) { var t = (billForm().terms || []).filter(function (x) { return x.id === id; })[0]; return t ? t.label : ""; }
-  function termsId(label) { var t = (billForm().terms || []).filter(function (x) { return x.label === label; })[0]; return t ? t.id : ""; }
-  function openBilling(aid, focus) {
-    var mine = VIEW.b2b && VIEW.b2b.by_customer[aid];
-    if (!mine || !mine.billing || !billForm()) { return; }
-    var cur = mine.billing;
-    BILL = { aid: aid, phase: "edit", error: "", focus: focus || "vat_id", touched: {},
-      draft: { vat_id: cur.vat_id, hash_key: cur.hash_key, invoice_name: cur.invoice_name, terms: termsId(cur.terms) } };
-    use("bill", { phase: "edit" });
-  }
-  /* a box's value: what she typed, or - a box she did not touch - what monday holds now. An untouched box kept the value
-     it opened with, so after "changed since read" (or a newer reading) the next save wrote it back over the new one
-     (review 11.11) */
-  function billDraft(b, cur, key) {
-    if (b.touched && b.touched[key]) { return b.draft[key]; }
-    return key === "terms" ? termsId(cur.terms) : cur[key];
-  }
-  /* a typed detail the server would refuse, in its words; "" when it may be written */
-  function billError(key, v) {
-    if (key === "vat_id") { return v && !/^[0-9]{9}$/.test(v) ? ACCOUNT_ERRORS.bad_vat_id : ""; }
-    if (key === "hash_key") { return v && !HASH_KEY_RE.test(v) ? ACCOUNT_ERRORS.bad_hash_key : ""; }
-    if (key === "invoice_name") {
-      return v.length > num(billForm().invoice_name_max) || CONTROL.test(v) ? ACCOUNT_ERRORS.bad_invoice_name : "";
-    }
-    return "";
-  }
-  /* what differs from what the page shows, in the server's rules: {fields, expected, lines} or {error} */
-  function billPlan(b, cur) {
-    var fields = {}, expected = {}, lines = [], error = "";
-    billForm().fields.forEach(function (f) {
-      var raw = String(billDraft(b, cur, f.key) || ""), v = f.key === "terms" ? raw : raw.trim();
-      var now = cur[f.key] || "", to = f.key === "terms" ? termsLabel(v) : v;
-      if (f.key === "terms" && !v) { return; }            /* the terms are never cleared from here */
-      if (to === now) { return; }
-      /* only a detail that changes is checked: a value monday holds that the form would not take typed (a ח.פ with
-         dashes, a name with a mark) blocked setting the terms beside it (review 11.11) */
-      error = error || billError(f.key, v);
-      fields[f.key] = v;
-      expected[f.key] = now;
-      lines.push("<li><b>" + esc(f.title) + "</b>: עכשיו " + esc(now ? "\"" + now + "\"" : "ריק") + ", ייכתב " + esc(to ? "\"" + to + "\"" : "ריק") + "</li>");
-    });
-    return error ? { error: error } : { fields: fields, expected: expected, lines: lines };
-  }
-  function billStatus(b, mine) {
-    var close = "<button type=\"button\" class=\"fin-linkbtn\" data-bill-close=\"1\">סגירה</button>";
-    if (b.phase === "confirm") {
-      return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה ייכתב\"><p>ייכתב בלוח החברות, בחברה " + esc("\"" + mine.name + "\"") + ":</p><ul>" +
-        b.plan.lines.join("") + "</ul><p class=\"fin-subtle\">השרת של המסך כותב את זה, כי ללוח החברות אין גישה בלי מושב CRM; על החברה " +
-        "נכתב עדכון בשמך: מה היה ומה נכתב.</p><div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" " +
-        "data-bill-save=\"1\">שמירה</button><button type=\"button\" class=\"fin-btn\" data-bill-back=\"1\">חזרה לעריכה</button></div></div>";
-    }
-    if (b.phase === "saving") { return "<p class=\"fin-act-msg\" role=\"status\">שומר בלוח החברות...</p>"; }
-    if (b.phase === "done" && b.nothing) {
-      return "<p class=\"fin-act-msg\" role=\"status\">הפרטים כבר כך בלוח החברות, ולא נכתב כלום. " + close + "</p>";
-    }
-    if (b.phase === "done") {
-      return "<p class=\"fin-act-msg " + (b.posted ? "ok\" role=\"status\">נכתב בלוח החברות, ועל החברה נכתב עדכון." :
-        "bad\" role=\"alert\">נכתב בלוח החברות, אבל העדכון על החברה לא נכתב: מי שינה ומה היה רשום רק ביומן של המסך.") + " " + close + "</p>";
-    }
-    if (b.phase === "failed") { return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + " " + close + "</p>"; }
-    if (b.phase === "edit" && b.error) { return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + "</p>"; }
-    return "";
-  }
   function billingPanel(aid, mine) {
     var form = billForm();
     if (!form || !mine || !mine.billing) { return ""; }
-    var cur = mine.billing, b = BILL && BILL.aid === aid ? BILL : null;
-    var editing = !!b && (b.phase === "edit" || b.phase === "confirm" || b.phase === "saving");
-    var viewer = CAN.why === "view_only";
-    var head = "<div class=\"fin-billing-head\"><h2>פרטי חיוב</h2><span class=\"fin-subtle\">של החברה, בלוח החברות</span>" +
-      (editing || viewer ? "" : "<button type=\"button\" class=\"fin-btn\" data-bill-edit=\"" + esc(aid) + "\">עריכה</button>") + "</div>";
-    var body;
-    if (!editing) {
-      body = facts(form.fields.map(function (f) {
-        var v = cur[f.key];
-        if (f.key === "terms") { return [f.title, v ? "<bdi>" + esc(v) + "</bdi>" : mine.terms_missing ? NO_TERMS : NOT_SET]; }
-        return [f.title, v ? (f.key === "invoice_name" ? esc(v) : ltr(v)) : NOT_SET];
-      })) + (viewer ? "<p class=\"fin-act-why\">" + esc(ACCOUNT_ERRORS.view_only) + "</p>" : "");
-    } else {
-      var off = b.phase !== "edit" ? " disabled" : "";
-      body = "<div class=\"fin-billing-form\">" + form.fields.map(function (f) {
-        var id = "fin-bill-" + f.key, v = billDraft(b, cur, f.key) == null ? "" : billDraft(b, cur, f.key);
-        var control = f.key === "terms"
-          ? "<select id=\"" + id + "\" class=\"fin-select\" data-bill=\"terms\"" + off + "><option value=\"\"" + (v ? "" : " selected") + ">" +
-            esc(cur.terms && !termsId(cur.terms) ? "\"" + cur.terms + "\" (לא ברשימה)" : "בחירה") + "</option>" + form.terms.map(function (t) {
-              return "<option value=\"" + esc(t.id) + "\"" + (t.id === v ? " selected" : "") + ">" + esc(t.label) + "</option>";
-            }).join("") + "</select>"
-          : "<input id=\"" + id + "\" class=\"fin-input\" type=\"text\" data-bill=\"" + f.key + "\" dir=\"" + (f.key === "invoice_name" ? "auto" : "ltr") + "\"" +
-            (f.key === "vat_id" ? " inputmode=\"numeric\" maxlength=\"9\"" : f.key === "hash_key" ? " maxlength=\"15\"" : " maxlength=\"" + num(form.invoice_name_max) + "\"") +
-            " value=\"" + esc(v) + "\"" + off + ">";
-        /* what monday holds now, beside each box: after "changed since read" it is the new value, and she sees it */
-        var held = cur[f.key] ? (f.key === "invoice_name" || f.key === "terms" ? "<bdi>" + esc(cur[f.key]) + "</bdi>" : ltr(cur[f.key])) : "ריק";
-        return "<label class=\"fin-act-field\" for=\"" + id + "\"><span>" + esc(f.title) + "</span>" + control +
-          "<small class=\"fin-subtle\">במאנדיי עכשיו: " + held + (f.hint ? " · " + esc(f.hint) : "") + "</small>" +
-          (f.key === "hash_key" ? "<small class=\"fin-billing-note\">" + esc(form.mon43) + "</small>" : "") + "</label>";
-      }).join("") + "</div>" + (b.phase === "edit" ? "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-bill-go=\"1\">המשך</button>" +
-        "<button type=\"button\" class=\"fin-btn\" data-bill-close=\"1\">ביטול</button></div>" : "");
-    }
-    return "<section class=\"fin-panel fin-billing\" aria-label=\"פרטי חיוב\">" + head + body + (b ? billStatus(b, mine) : "") + "</section>";
+    var cur = mine.billing;
+    var head = "<div class=\"fin-billing-head\"><h2>פרטי חיוב</h2><span class=\"fin-subtle\">של החברה, בלוח החברות</span></div>";
+    var body = facts(form.fields.map(function (f) {
+      var v = cur[f.key];
+      /* whatever the answer carries under this key, the ח.פ shown is the one monday gives the person now */
+      if (f.key === "vat_id") { return [f.title, vatCell(aid)]; }
+      if (f.key === "terms") { return [f.title, v ? "<bdi>" + esc(v) + "</bdi>" : mine.terms_missing ? NO_TERMS : NOT_SET]; }
+      return [f.title, v ? (f.key === "invoice_name" ? esc(v) : ltr(v)) : NOT_SET];
+    })) + "<p class=\"fin-act-why\">" + esc(BILL_LATER) + "</p>";
+    return "<section class=\"fin-panel fin-billing\" aria-label=\"פרטי חיוב\">" + head + body + "</section>";
   }
-  function billTyped(key, value) {
-    if (!BILL) { return; }
-    BILL.draft[key] = value;
-    BILL.touched = BILL.touched || {};
-    BILL.touched[key] = true;
-  }
-  function billGo() {
-    var b = BILL, mine = b && VIEW.b2b.by_customer[b.aid];
-    if (!b || b.phase !== "edit" || !mine) { return; }
-    var plan = billPlan(b, mine.billing);
-    if (plan.error) { use("bill", { phase: "invalid" }); b.error = plan.error; redraw(); return; }
-    if (!plan.lines.length) { use("bill", { phase: "nothing" }); b.error = "אין שינוי: כל הפרטים כבר כך."; redraw(); return; }
-    b.plan = plan;
-    b.error = "";
-    b.phase = "confirm";
-    use("bill", { phase: "confirm", fields: Object.keys(plan.fields).length });
-    redraw();
-  }
-  function billSave() {
-    var b = BILL;
-    if (!b || b.phase !== "confirm") { return; }
-    b.phase = "saving";
-    redraw();
-    deps.post("/api/finance/account", { account_id: b.aid, fields: b.plan.fields, expected: b.plan.expected }).then(function (res) {
-      var mine = VIEW.b2b && VIEW.b2b.by_customer[b.aid];
-      if (mine && res.values) {
-        mine.billing = res.values;
-        mine.terms = res.values.terms;
-        mine.terms_missing = !res.values.terms;
-      }
-      b.phase = "done";
-      b.posted = !!res.update_posted;
-      b.nothing = !(res.changed || []).length;
-      use("bill", { phase: b.nothing ? "nothing" : "done", fields: Math.min((res.changed || []).length, 10),
-        code: b.nothing || b.posted ? "" : "update_missing" });
-      redraw();
-      flash(b.nothing ? "פרטי החיוב כבר כך בלוח החברות, ולא נכתב כלום." : b.posted ? "פרטי החיוב נכתבו בלוח החברות." :
-        "פרטי החיוב נכתבו, אבל העדכון על החברה לא נכתב.");
-      if (!b.nothing) { refreshAfterWrite(0); }
-    }, function (e) {
-      var body = (e && e.body) || {}, key = e && e.error;
-      use("bill", { phase: "failed", code: useWord(key) || "answer_lost" });
-      if (key === "changed_since_read" && body.values) {
-        var mine = VIEW.b2b && VIEW.b2b.by_customer[b.aid];
-        if (mine) { mine.billing = body.values; }
-        b.phase = "edit";
-        b.error = ACCOUNT_ERRORS.changed_since_read;
-        redraw();
-        return;
-      }
-      b.phase = "failed";
-      /* no answer from the server (the connection, a proxy that stopped waiting) or its own failure: the write may have
-         run to its end, so "nothing was written" is never said for it (review 11.11) */
-      var lost = !key || key === "internal" || (!ACCOUNT_ERRORS[key] && num(e && e.status) >= 500);
-      b.error = key === "write_failed" && body.maybe_written ? ACCOUNT_ERRORS.write_failed_maybe
-        : key === "rate_limited" ? "יותר מדי שמירות בשעה האחרונה, ולא נכתב כלום. אפשר לשמור שוב בעוד " + (num(e.retryAfter) || 60) + " שניות."
-          : lost ? ACCOUNT_ERRORS.answer_lost
-            : ACCOUNT_ERRORS[key] || "השמירה נכשלה (" + (key || "שגיאה") + "), ולא נכתב כלום.";
-      redraw();
-      flash(b.error);
-      /* what may be in monday is read again, so the ledger shows it */
-      if (lost || key === "write_unverified" || (key === "write_failed" && body.maybe_written)) { refreshAfterWrite(0); }
-    });
-  }
-  /* "אין תנאי תשלום" beside a company that has an account: a way to its ledger, where its terms are edited */
+  /* "אין תנאי תשלום" beside a company that has an account: a way to its ledger, where its billing details show */
   function noTerms(aid) {
     var mine = aid && VIEW.b2b && VIEW.b2b.by_customer[aid];
     if (!mine || !mine.billing || !billForm()) { return NO_TERMS; }
     return "<button type=\"button\" class=\"fin-chip fin-chiplink\" data-terms=\"" + esc(aid) + "\" title=\"" +
-      esc("פתיחת הכרטסת של החברה, לעריכת תנאי תשלום") + "\">" + esc(FLAG.terms_missing) + "</button>";
+      esc("פתיחת הכרטסת של החברה") + "\">" + esc(FLAG.terms_missing) + "</button>";
   }
 
   /* ---------- frame ---------- */
@@ -1828,7 +1754,7 @@
     return new Date(at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
   var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
-    "actInput", "act", "bill", "billEdit", "terms", "idCopy"];
+    "actInput", "act", "terms", "idCopy"];
   function focusKey() {
     var a = document.activeElement;
     if (!a || a === root || !root.contains(a) || !a.dataset) { return ""; }
@@ -1852,6 +1778,7 @@
     return out;
   }
   function render() {
+    if (!VIEW) { noReading(); return; }        /* D2: nothing read on the server yet */
     var keep = focusKey(), scrolls = tableScrolls(), a = document.activeElement;
     /* an input being typed into keeps its caret: a redraw (a total landing, a newer reading) builds it anew */
     var caret = keep && a && a.tagName === "INPUT" && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
@@ -1881,13 +1808,21 @@
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">" + esc(text) + "</p>" +
       "<button class=\"fin-btn\" type=\"button\" data-retry=\"1\">לנסות שוב</button></div></div>";
   }
+  /* D2: an answer with no view - the server has not read the boards yet (its first open, or an instance that has not
+     read) - says so, with the refresh that reads them; a failed last attempt is said under it */
+  function noReading() {
+    var failed = BODY && BODY.last_attempt && BODY.last_attempt.ok === false;
+    root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">הנתונים עוד לא נקראו</p>" +
+      (failed ? "<p class=\"fin-msg\">הקריאה האחרונה נכשלה.</p>" : "") +
+      "<button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div></div>";
+  }
 
   /* ---------- data ---------- */
   function index(v) {
-    idsStale();
+    liveStale();
     ROWS.sc = []; ROWS.b2 = [];
-    if (v.b2c) { ROWS.sc = v.b2c.rows; }
-    if (v.b2b) { ROWS.b2 = v.b2b.rows; }
+    if (v && v.b2c) { ROWS.sc = v.b2c.rows; }
+    if (v && v.b2b) { ROWS.b2 = v.b2b.rows; }
     applyWritten();
   }
   function errorText(e) {
@@ -1906,12 +1841,19 @@
      since, so a computer whose clock is off still counts it right */
   var bodyAt = 0;
   function took(body) { BODY = body; bodyAt = Date.now(); }
+  /* a later answer (the page's own second request, a refresh, a return): taken, and its view drawn when it is another
+     reading than the one on the screen. D2: an answer without a view (no reading yet on the instance that answered)
+     never replaces the view on the screen */
+  function takeNewer(next) {
+    if (!next.view && VIEW) { if (BODY) { BODY.refreshing = false; } return; }
+    var newer = next.taken_at !== (BODY && BODY.taken_at);
+    took(next);
+    if (newer || !VIEW) { VIEW = next.view || null; index(VIEW); }
+  }
   function followUp(body) {
     if (!body.refreshing || pending) { return pending; }
-    pending = deps.api("/api/finance?fresh=1").then(function (next) {
-      var newer = next.taken_at !== (BODY && BODY.taken_at);
-      took(next);
-      if (newer) { VIEW = next.view; index(VIEW); }
+    pending = deps.api("/api/desk?fresh=1").then(function (next) {
+      takeNewer(next);
       redraw();
     }).catch(function () {
       if (BODY) { BODY.refreshing = false; redraw(); }
@@ -1932,12 +1874,15 @@
     if (typing) { q = document.getElementById("fin-q"); q.focus(); q.setSelectionRange(caret, caret); }
   }
   function load(fresh) {
-    var p = fresh ? deps.post("/api/finance/refresh") : deps.api("/api/finance");
+    var p = fresh ? deps.post("/api/desk/refresh") : deps.api("/api/desk");
     return p.then(function (body) {
-      took(body); VIEW = body.view; index(VIEW); render();
-      if (fresh && body.last_attempt && body.last_attempt.ok === false) { flash("הרענון נכשל, ומוצגים הנתונים הקודמים."); }
+      /* D2: an answer without a view never replaces the one on the screen (takeNewer); with none on it, it is said */
+      if (body.view || !VIEW) { took(body); VIEW = body.view || null; index(VIEW); }
+      else if (BODY) { BODY.refreshing = false; }
+      render();
+      if (fresh && VIEW && body.last_attempt && body.last_attempt.ok === false) { flash("הרענון נכשל, ומוצגים הנתונים הקודמים."); }
       /* the desk on the screen for the first time this visit: how long it took, and from which board */
-      if (!USE.opened) {
+      if (!USE.opened && VIEW) {
         USE.opened = true;
         use("open", { ms: Math.min(600000, Math.max(0, Math.round(Date.now() - USE.at))),
           board: deps.board === BOARD.b2 ? "b2" : deps.board === BOARD.sc ? "sc" : "", refreshing: !!body.refreshing });
@@ -1977,7 +1922,7 @@
     if (!VIEW || !refetchDue(BODY, bodyAt, Date.now(), refreshNotBefore, !!pending)) { return; }
     use("back", { how: how === "focus" ? "focus" : "visible" });
     BODY.refreshing = true; redraw();
-    pending = deps.post("/api/finance/refresh").catch(function (e) {
+    pending = deps.post("/api/desk/refresh").catch(function (e) {
       if (!e || e.error !== "rate_limited") { throw e; }
       /* "not yet" (429): a refresh was pressed inside the gap - by another reader, or by this one on the other charge
          board - so this instance already holds a reading that new. The plain open answers it without reading anything
@@ -1985,14 +1930,12 @@
          (the hostile review of 11.11: the page used to stay on its older reading) */
       notBefore(e);
       var shown = BODY && BODY.taken_at;
-      return deps.api("/api/finance").then(function (held) {
+      return deps.api("/api/desk").then(function (held) {
         if (!(Date.parse(held.taken_at) > Date.parse(shown))) { throw e; }
         return held;
       });
     }).then(function (next) {
-      var newer = next.taken_at !== (BODY && BODY.taken_at);
-      took(next);
-      if (newer) { VIEW = next.view; index(VIEW); }
+      takeNewer(next);
       redraw();
     }).catch(function () {
       if (BODY) { BODY.refreshing = false; redraw(); }
@@ -2011,8 +1954,8 @@
   /* ---------- events ---------- */
   function onClick(ev) {
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-unfilter],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
-      "[data-act],[data-act-go],[data-act-close],[data-terms],[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
-      "[data-id-copy],[data-id-retry],[data-ask]");
+      "[data-act],[data-act-go],[data-act-close],[data-terms]," +
+      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask]");
     if (!el || !root.contains(el)) { return; }
     /* the actions (round 3, slice 3): inside a row's details, so they never open or close the row */
     if (el.dataset.act) {
@@ -2028,33 +1971,22 @@
       }
       return;
     }
-    /* the ID number (16.11): inside a payment's details, read live as the person */
+    /* the ID number (16.11): inside a payment's details, read live as the person; a refund's bank account and a
+       company's ח.פ the same way (D2) */
     if (el.dataset.idCopy) { copyId(el.dataset.idCopy); return; }
     if (el.dataset.idRetry) { delete IDS[el.dataset.idRetry]; redraw(); return; }
+    if (el.dataset.bankRetry) { delete BANKS[el.dataset.bankRetry]; redraw(); return; }
+    if (el.dataset.vatRetry) { delete VATS[el.dataset.vatRetry]; redraw(); return; }
     /* "חסר כאן משהו? פנייה לנדב": the link opens the request form as it did; this only counts it */
     if (el.dataset.ask) { use("ask"); flushUse(false); return; }
     if (el.dataset.terms) {
-      /* "אין תנאי תשלום": the company's ledger, its billing details open on the terms */
+      /* "אין תנאי תשלום": the company's ledger, its billing details at the top (read only since D2) */
       state.b2.customer = el.dataset.terms; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
-      openBilling(el.dataset.terms, "terms");
       use("customer", { from: "terms" });
       render();
       var top = document.getElementById("content");
       if (top) { top.scrollTop = 0; }
       window.scrollTo(0, 0);
-      var sel = document.getElementById("fin-bill-terms");
-      if (sel) { sel.focus(); }
-      return;
-    }
-    if (el.dataset.billEdit) { openBilling(el.dataset.billEdit); redraw(); var first = document.getElementById("fin-bill-vat_id"); if (first) { first.focus(); } return; }
-    if (el.dataset.billGo) { billGo(); return; }
-    if (el.dataset.billSave) { billSave(); return; }
-    if (el.dataset.billBack) { if (BILL) { BILL.phase = "edit"; redraw(); } return; }
-    if (el.dataset.billClose) {
-      if (!BILL || BILL.phase !== "saving") {
-        if (BILL && (BILL.phase === "edit" || BILL.phase === "confirm")) { use("bill", { phase: "cancel" }); }
-        BILL = null; redraw();
-      }
       return;
     }
     if (el.dataset.open) {
@@ -2105,8 +2037,9 @@
     if (el.dataset.fintab) { state.tab = el.dataset.fintab; use("tab"); }
     else if (el.dataset.notes) { state.notes = !state.notes; use("notes", { open: !!state.notes }); render(); return; }
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
-    /* "רענון" reads the boards again, and the ID numbers of the open details with them */
-    else if (el.dataset.refresh) { use("refresh"); idsStale(); el.disabled = true; el.textContent = "מרענן..."; load(true); return; }
+    /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,
+       a ח.פ) */
+    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = "מרענן..."; load(true); return; }
     render();
     /* on a wide screen the app scrolls #content, not the window */
     var scroller = document.getElementById("content");
@@ -2116,7 +2049,6 @@
   var typing = null;
   function onInput(ev) {
     if (ev.target.dataset && ev.target.dataset.actInput !== undefined) { DRAFT[ev.target.dataset.actInput] = ev.target.value; return; }
-    if (ev.target.dataset && ev.target.dataset.bill !== undefined) { billTyped(ev.target.dataset.bill, ev.target.value); return; }
     if (ev.target.id !== "fin-q") { return; }
     clearTimeout(typing);
     typing = setTimeout(function () {
@@ -2126,7 +2058,7 @@
     }, 250);
   }
   function onKey(ev) {
-    /* Enter in an action's box presses its button; in the billing form, "המשך" */
+    /* Enter in an action's box presses its button */
     if (ev.key === "Enter" && ev.target.dataset && ev.target.dataset.actInput !== undefined) {
       ev.preventDefault();
       var k = ev.target.dataset.actInput, rk = k.slice(0, k.lastIndexOf(":"));
@@ -2134,18 +2066,17 @@
       if (btn && !btn.disabled) { btn.click(); }
       return;
     }
-    if (ev.key === "Enter" && ev.target.dataset && ev.target.dataset.bill !== undefined) { ev.preventDefault(); billGo(); return; }
     if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches("[data-bstate],[data-b2state],[data-row],[data-customer]")) { ev.preventDefault(); ev.target.click(); }
   }
   function onChange(ev) {
-    if (ev.target.dataset && ev.target.dataset.bill !== undefined) { billTyped(ev.target.dataset.bill, ev.target.value); return; }
     if (ev.target.id !== "fin-period") { return; }
     state.sc.period = ev.target.value; state.sc.open = {};
     use("period", { period: state.sc.period });
     redraw();
   }
 
-  /* app.js calls this once, on a charge board: deps = { api(path), post(path), monday, board } */
+  /* desk.js calls this once: deps = { api(path), post(path, payload, keep), monday (the SDK whenever monday supplied a
+     context, else null), board (the charge board the view sits on, else "") } */
   function mount(el, given) {
     root = el; deps = given;
     /* this visit, for the usage events (16.11): a random id, and the page's own clock from now */
@@ -2162,13 +2093,14 @@
     /* the view's window taking the focus back: after monday's item card closes over it, the first click in the view */
     window.addEventListener("focus", onFocus);
     /* round 3, slice 3: whether this person may write from here (monday's context) - asked beside the first reading, never
-       in its way: app.js shows the desk when this promise settles, and monday may be slow to answer, or not answer */
+       in its way: desk.js shows the desk when this promise settles, and monday may be slow to answer, or not answer */
     var first = load(false);
     readAbility();
     return first;
   }
-  /* the rest is for tests/test_finance_js.py only: the page's lists held to app/finance.py, its words, its return rule,
-     and its HTML for a view and a state, drawn without a document */
+  /* the rest is for the tests only (tests/test_desk_page.py here; analiza-metrics' tests/test_finance_js.py held the
+     page's lists to its app/finance.py): its words, its return rule, and its HTML for a view and a state, drawn without
+     a document */
   window.FinanceDesk = { mount: mount, _scFilter: scFilter, _b2Filter: b2Filter, _exportable: function (q) { return EXPORTABLE_Q.test(q); },
     _flags: function () { return { all: FLAG, on: FLAG_ON }; },
     _lastDayText: lastDayText, _refetchDue: refetchDue, _returnAfterMs: RETURN_AFTER_MS, _notes: function () { return { all: NOTE, loud: LOUD }; },
@@ -2180,7 +2112,7 @@
       Object.keys(COLS).forEach(function (k) { heads[k] = COLS[k].h; });
       return { heads: heads, sc: SC_COLS, b2: B2_COLS };
     },
-    /* round 3, slice 3: the allowlist, the one write, the plan, and an action and a billing edit driven step by step */
+    /* round 3, slice 3: the allowlist, the one write, the plan, and an action driven step by step */
     _writable: function () { return WRITABLE; }, _apiVersion: API_VERSION, _textMax: TEXT_MAX,
     _write: function (boardId, itemId, values) { return mondayWrite(boardId, itemId, values); },
     _refused: refusedColumns, _plan: planAction, _cleanInput: cleanInput, _mondayErr: mondayErr,
@@ -2189,13 +2121,6 @@
       startAction(rk, key);
     },
     _confirm: confirmAction, _actState: function () { return ACT; }, _can: function () { return CAN; },
-    _bill: function (aid, draft) {
-      openBilling(aid);
-      Object.keys(draft || {}).forEach(function (k) { billTyped(k, draft[k]); });
-      billGo();
-      return BILL;
-    },
-    _billSave: billSave, _billGo: billGo, _billState: function () { return BILL; },
     _show: function (st) {
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];
@@ -2207,7 +2132,6 @@
       deps = deps || { api: function () { return new Promise(function () {}); }, post: function () { return new Promise(function () {}); } };
       if (st && st.can) { CAN = st.can; st = Object.assign({}, st); delete st.can; }
       if (st && st.act !== undefined) { ACT = st.act; st = Object.assign({}, st); delete st.act; }
-      if (st && st.bill !== undefined) { BILL = st.bill; st = Object.assign({}, st); delete st.bill; }
       BODY = body; VIEW = body.view; index(VIEW); TOTALS = {};
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];

@@ -5,15 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>כספים - אנליזה</title>
 <link rel="stylesheet" href="/desk/desk.css">
+<link rel="stylesheet" href="/desk/finance.css">
 </head>
 <body data-theme="light">
-<!-- The desk's page (Analiza-Monday backlog 0301). D1 is the skeleton: the checks below prove, on a private board, that the
-     view loads inside monday with the SDK alive, that the server verifies the sessionToken and the boards' membership,
-     and that the desk's reading is whole. The page ships no data: everything comes from /api/desk. -->
-<main id="desk">
+<!-- The finance desk's page (Analiza-Monday backlog 0301). D2: the desk itself (finance.js, ported from analiza-metrics),
+     mounted by desk.js into #fin-root; /desk/?check=1 draws D1's self-check (check.js) instead. The page ships no data:
+     everything comes from /api/desk behind the sessionToken, and what the server never reads (an ID number, a bank
+     account, a ח.פ) is read by the page from monday, as the person. -->
+<section id="screen-loading">
+  <div class="loader"><div class="spinner"></div><div id="loader-text" role="status">טוען כספים</div></div>
+</section>
+<section id="screen-blocked" hidden>
+  <div class="empty"><div id="blocked-msg"></div></div>
+</section>
+<section id="screen-finance" hidden><div id="fin-root"></div></section>
+<main id="check" hidden>
   <header class="head">
     <h1>כספים</h1>
-    <p class="sub">השלד של השולחן החדש, לבדיקה על לוח פרטי. הלשוניות, החיפוש, הפרטים, הפעולות והאקסל נבנים במנה הבאה.</p>
+    <p class="sub">הבדיקה של השולחן: שש שורות, אחת לכל דבר שהתצוגה צריכה כדי לעבוד מתוך מאנדיי.</p>
   </header>
   <ol id="checks" class="checks" aria-live="polite"></ol>
   <section id="boards" class="boards" hidden>
@@ -39,6 +48,8 @@
   <p id="foot" class="foot"></p>
 </main>
 <script src="/desk/vendor/monday-sdk.js"></script>
+<script src="/desk/finance.js"></script>
+<script src="/desk/check.js"></script>
 <script src="/desk/desk.js"></script>
 </body>
 </html>

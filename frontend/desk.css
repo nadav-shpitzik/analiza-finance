@@ -1,4 +1,7 @@
-/* The finance desk's page, D1: the skeleton's checklist. Light and dark follow monday's theme (the page's context). */
+/* The finance desk's page: its frame. The desk itself is styled by finance.css (scoped under #screen-finance, as in
+   analiza-metrics); this file gives it what analiza-metrics' style.css gave it there - the page's grey under the desk's
+   white panels, its padding, the loader and the blocked line - and keeps D1's self-check (/desk/?check=1, #check) as it
+   was. Light and dark follow monday's theme (body[data-theme], set by desk.js and check.js). */
 :root {
   --bg: #ffffff;
   --fg: #1f2533;
@@ -8,6 +11,10 @@
   --no: #b42318;
   --wait: #8a6d00;
   --row-bad: #fdf1f0;
+  /* the desk's page, as analiza-metrics' board view had it (its style.css --bg, --grid, --primary) */
+  --page: #f6f7fb;
+  --grid: #e6e9f2;
+  --primary: #0073ea;
 }
 body[data-theme="dark"] {
   --bg: #1c1f3b;
@@ -18,35 +25,63 @@ body[data-theme="dark"] {
   --no: #ff8a80;
   --wait: #f0c94b;
   --row-bad: #3b2333;
+  --page: #181b34;
+  --grid: #383b60;
+  --primary: #69a7ef;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  background: var(--bg);
+  background: var(--page);
   color: var(--fg);
   font: 14px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
 }
-#desk { max-width: 980px; padding: 16px 20px 24px; }
-.head h1 { margin: 0 0 2px; font-size: 20px; }
-.sub { margin: 0 0 14px; color: var(--muted); }
-.checks { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line); }
-.check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; border-bottom: 1px solid var(--line); }
-.check .mark { flex: 0 0 18px; font-weight: 700; text-align: center; }
-.check .body { display: flex; flex-direction: column; min-width: 0; }
-.check .label { font-weight: 600; }
-.check .detail { color: var(--muted); overflow-wrap: anywhere; }
-.check .detail .part { unicode-bidi: isolate; }
-.is-ok .mark { color: var(--ok); }
-.is-no .mark { color: var(--no); }
-.is-no .detail { color: var(--no); }
-.is-wait .mark { color: var(--wait); }
-.is-info .mark { color: var(--muted); }
-.boards h2 { font-size: 15px; margin: 0 0 6px; }
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; min-width: 560px; }
-th, td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-thead th { color: var(--muted); font-weight: 600; }
-td.num { font-variant-numeric: tabular-nums; }
-td.mark-cell { text-align: center; }
-tr.bad { background: var(--row-bad); }
-.note, .foot { color: var(--muted); font-size: 12px; }
+body.is-check { background: var(--bg); }
+[hidden] { display: none !important; }
+
+/* ---- the desk's frame (analiza-metrics style.css: #content, .loader, .spinner, .empty) ---- */
+#screen-finance { padding: 20px; }
+@media (max-width: 560px) { #screen-finance { padding: 14px; } }
+/* The spinner waits 300ms before it shows: an answer that lands sooner goes straight to the desk, with no flash of a
+   loader in between. */
+.loader { display: flex; flex-direction: column; align-items: center; gap: 12px;
+          padding: 60px 0; color: var(--muted); animation: loader-in .2s ease .3s both; }
+@keyframes loader-in { from { opacity: 0; } to { opacity: 1; } }
+.spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid var(--grid); border-top-color: var(--primary);
+  animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 3s; }
+  .loader { animation-duration: .01s; }   /* no fade, but still no flash */
+}
+.empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+
+/* ---- D1's self-check, /desk/?check=1 ---- */
+#check { max-width: 980px; padding: 16px 20px 24px; }
+#check .head h1 { margin: 0 0 2px; font-size: 20px; }
+#check .sub { margin: 0 0 14px; color: var(--muted); }
+#check .checks { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line); }
+#check .check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+#check .check .mark { flex: 0 0 18px; font-weight: 700; text-align: center; }
+#check .check .body { display: flex; flex-direction: column; min-width: 0; }
+#check .check .label { font-weight: 600; }
+#check .check .detail { color: var(--muted); overflow-wrap: anywhere; }
+#check .check .detail .part { unicode-bidi: isolate; }
+#check .is-ok .mark { color: var(--ok); }
+#check .is-no .mark { color: var(--no); }
+#check .is-no .detail { color: var(--no); }
+#check .is-wait .mark { color: var(--wait); }
+#check .is-info .mark { color: var(--muted); }
+#check .boards h2 { font-size: 15px; margin: 0 0 6px; }
+#check .table-wrap { overflow-x: auto; }
+#check table { border-collapse: collapse; min-width: 560px; }
+#check th, #check td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+#check thead th { color: var(--muted); font-weight: 600; }
+#check td.num { font-variant-numeric: tabular-nums; }
+#check td.mark-cell { text-align: center; }
+#check tr.bad { background: var(--row-bad); }
+#check .note, #check .foot { color: var(--muted); font-size: 12px; }

@@ -647,7 +647,8 @@ def test_the_page_is_revalidated_on_every_open_and_links_its_assets_by_version(d
     assert resp.status_code == 200 and resp.headers["Cache-Control"] == "no-cache"
     assert resp.headers["content-type"].startswith("text/html")
     links = re.findall(r'(?:src|href)="(/desk/[^"]+)"', resp.text)
-    assert sorted(x.split("?")[0] for x in links) == ["/desk/desk.css", "/desk/desk.js", "/desk/vendor/monday-sdk.js"]
+    # D2: the desk (finance.js, finance.css), its glue (desk.js), the self-check (check.js), the frame and the SDK
+    assert sorted(x.split("?")[0] for x in links) == sorted(dr.STATIC_FILES)
     assert all(re.search(r"\?v=[0-9a-f]{12}$", x) for x in links)
     again = desk.client.get("/desk/", headers={"If-None-Match": resp.headers["ETag"]})
     assert again.status_code == 304
@@ -656,11 +657,12 @@ def test_the_page_is_revalidated_on_every_open_and_links_its_assets_by_version(d
 
 def test_an_asset_asked_by_its_version_is_kept_a_year_and_otherwise_revalidated(desk):
     page = desk.client.get("/desk/").text
-    js = re.search(r'src="(/desk/desk\.js\?v=[0-9a-f]+)"', page).group(1)
-    assert desk.client.get(js).headers["Cache-Control"] == dr.IMMUTABLE
-    plain = desk.client.get("/desk/desk.js")
-    assert plain.headers["Cache-Control"] == "no-cache" and "javascript" in plain.headers["content-type"]
-    assert desk.client.get("/desk/desk.js", headers={"If-None-Match": plain.headers["ETag"]}).status_code == 304
+    for path, (_rel, media) in dr.STATIC_FILES.items():
+        versioned = re.search(r'(?:src|href)="(%s\?v=[0-9a-f]+)"' % re.escape(path), page).group(1)
+        assert desk.client.get(versioned).headers["Cache-Control"] == dr.IMMUTABLE, path
+        plain = desk.client.get(path)
+        assert plain.headers["Cache-Control"] == "no-cache" and plain.headers["content-type"] == media, path
+        assert desk.client.get(path, headers={"If-None-Match": plain.headers["ETag"]}).status_code == 304, path
 
 
 def test_monday_may_embed_the_page_and_nothing_else_may(desk):
@@ -682,14 +684,20 @@ def test_the_sdk_is_analiza_metrics_copy_byte_for_byte():
 
 
 def test_the_page_draws_text_only_and_writes_no_em_dash():
-    js = (ROOT / "frontend" / "desk.js").read_text(encoding="utf-8")
-    assert not re.search(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function", js)
-    for name in ("index.html", "desk.js", "desk.css"):
+    """The glue and the self-check draw with textContent only. The desk (finance.js) builds HTML, as it did in
+    analiza-metrics, and escapes every value of an answer into it: tests/test_desk_page.py holds that."""
+    for name in ("desk.js", "check.js"):
+        js = (ROOT / "frontend" / name).read_text(encoding="utf-8")
+        assert not re.search(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function", js), name
+    finance = (ROOT / "frontend" / "finance.js").read_text(encoding="utf-8")
+    assert not re.search(r"outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function", finance)
+    for name in ("index.html", "desk.js", "desk.css", "check.js", "finance.js", "finance.css"):
         assert "—" not in (ROOT / "frontend" / name).read_text(encoding="utf-8"), name
 
 
 def test_the_page_asks_monday_as_the_person_with_a_read_only():
-    js = (ROOT / "frontend" / "desk.js").read_text(encoding="utf-8")
+    """The self-check's one read as the person (/desk/?check=1, check.js since D2)."""
+    js = (ROOT / "frontend" / "check.js").read_text(encoding="utf-8")
     calls = re.findall(r"monday\.api\(([^,]+),", js)
     assert calls == ["query"]
     assert re.search(r'var query = "query \(\$b: \[ID!\]\) \{ boards\(ids: \$b\) \{ id name \} \}";', js)
