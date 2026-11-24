@@ -517,6 +517,13 @@ def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_i
       sideways: tw.scrollWidth > tw.clientWidth + 1, frame: tw.clientHeight, table: Math.round(t.getBoundingClientRect().height),
       view: window.innerHeight, page: document.documentElement.scrollHeight > window.innerHeight };
   });
+  await page.waitForSelector("tfoot .fin-total");
+  out.steps[at + " total"] = await page.$eval("tfoot td.k-date", (td) => {
+    const b = td.querySelector("b"), n = td.querySelector(".fin-subtle");
+    /* its lines, by their tops: a number and a word are two bidi runs, two boxes on one line */
+    const lines = new Set([...n.getClientRects()].map((r) => Math.round(r.top))).size;
+    return { count: n.innerText, lines: lines, below: n.getBoundingClientRect().top > b.getBoundingClientRect().top + 2 };
+  });
   const top = await page.$eval(".fin-tw", (tw) => tw.getBoundingClientRect().top + window.scrollY);
   await page.evaluate((y) => window.scrollTo(0, y), top + 200);
   await page.waitForTimeout(100);
@@ -533,3 +540,5 @@ def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_i
     assert scrolled["frame"] < 0 and scrolled["head"] == 0, scrolled
     # narrow: the table wider than its frame scrolls in a frame as tall as the view (it was 78% of it)
     assert narrow["sideways"] and narrow["overflowY"] == "auto" and narrow["frame"] >= 0.9 * narrow["view"], narrow
+    # at its narrowest the totals' label wraps (QA 4) between "סה"כ" and its count, never inside "21 תקבולים"
+    assert got["steps"]["683x748 total"] == {"count": "21 תקבולים", "lines": 1, "below": True}, got["steps"]["683x748 total"]

@@ -429,7 +429,7 @@
       var f = COLS[k] && COLS[k].t, cell = "";
       if (f && t.sums[f] != null) { cell = money2(t.sums[f]); }
       else if (f && t.sums.partial_unknown) { cell = "<span class=\"fin-subtle\">חסר ב-" + plural(t.sums.partial_unknown, "חיוב אחד", "חיובים") + "</span>"; }
-      if (!cell && first && k !== "pick" && k !== "more") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
+      if (!cell && first && k !== "pick" && k !== "more") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle fin-nw\">" + plural(t.count, what[0], what[1]) + "</span>"; }
       return "<td" + cls(k) + ">" + cell + "</td>";
     }).join("") + "</tr></tfoot>";
   }
