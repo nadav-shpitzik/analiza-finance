@@ -66,14 +66,23 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   **Demo holds no documents** (every id probed, 22.11). The cleaning judges a number whole (`app/books/clean.py`'s
   docstring is the rule); a new text field goes through it, and a new number shape comes with its test.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
-  `query` is refused); `app/recon/reading.py` holds the profile, `NEVER_READ` (ID numbers, a sole proprietor's business number,
-  bank details: never in a profile) and `monday_side`, the guard every rule that matches the books to monday goes through.
+  `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
+  bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the
+  guard every rule that matches the books to monday goes through.
   `MONDAY_TOKEN` is a Replit Secret, reported as set or not.
 - **The actions (A1):** `app/recon/receipt_dates.py`, and `POST /api/actions/plan` / `POST /api/actions/verify` behind the sync
   key. They are the dry run and the read-back of a class-A fill (spec §7). The service never writes the charge boards: a session
   writes through the monday connector after Nadav's go, and then calls verify. A plan runs only on a whole reading (R0) and on a
   whole copy (`BooksStore.matching_snapshot`, one repeatable-read snapshot): the last finished run complete and ok, nothing in
   `books_retry`, and no hole in what is matched. A rule's bucket order is `BUCKETS`.
+- **The desk (D1, 24.11):** `app/desk/` and `frontend/`. The page `/desk/` is the Board View "כספים", a second feature of
+  analiza-metrics' monday app (the desk move plan §2, option A), so `MONDAY_CLIENT_SECRET` (a Replit Secret, reported as set
+  or not) is the value analiza-metrics holds. `/api/desk` verifies the sessionToken (`app/desk/auth.py`; Analiza's account
+  is pinned and nothing unpins it), refuses a guest, and gates each tab by membership of its charge board, fail closed
+  (`app/desk/gate.py`). It answers counts only. The desk's reading (`app/desk/reading.py`) has the old `read()`'s shape for
+  D2; the reader refuses every `NEVER_READ` column for every caller (an ID number, a bank account, an account's business
+  number), and a linked row answered from another board is a stranger, counted and dropped. The SDK is analiza-metrics'
+  copy (its sha256 is pinned by a test). uvicorn's access line never carries a sessionToken (`NoTokenInAccessLog`).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
