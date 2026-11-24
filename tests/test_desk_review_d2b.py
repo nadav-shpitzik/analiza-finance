@@ -129,6 +129,31 @@ def test_the_ids_cost_a_page_per_board_and_a_long_board_costs_a_page_more(monkey
     assert [r["id"] for r in kept["student_charge"]["rows"]] == ["101", "102", "103"]
 
 
+def test_a_charge_that_came_between_the_windows_and_the_ids_is_counted_with_the_ids_it_came_with():
+    """A refresh's items_count is the one its board's ids were paged with, never the windows' (one request earlier): a
+    charge created between the two is read by id as one that came, and the board - and the page's own check of it, rows
+    read against items_count - is whole by the count that holds it."""
+    from app.desk import view as fd
+    from tests.test_desk_mirror import TODAY
+
+    w = world()
+    h = holder(w)
+    h.get()
+    windows = w.answer_windows
+
+    def then_a_new_charge(query, var):
+        answered = windows(query, var)
+        if "104" not in w.items:
+            w.add(SC, 104, "תלמיד-דלת", status=status("שולם", 1), paid="700", enrollment=rel(), lead=rel(303))
+        return answered
+
+    w.answer_windows = then_a_new_charge
+    kept, _ = h.get()
+    assert kept["kind"] == "delta" and [r["id"] for r in kept["student_charge"]["rows"]] == ["101", "102", "103", "104"]
+    assert kept["student_charge"]["items_count"] == 4 and kept["complete"] is True
+    assert fd.build_view(kept, TODAY)["checks"]["b2c_ok"] is True
+
+
 def test_a_row_monday_adds_beside_a_charges_read_from_another_board_fails_the_boards_check():
     """A stranger beside the rows asked (by id monday answers an item of any board): the board's rows still reconcile with
     its ids, but its check is not whole, as a full reading's would not be."""
