@@ -649,6 +649,9 @@ def test_the_page_is_revalidated_on_every_open_and_links_its_assets_by_version(d
     links = re.findall(r'(?:src|href)="(/desk/[^"]+)"', resp.text)
     # D2: the desk (finance.js, finance.css), its glue (desk.js), the self-check (check.js), the frame and the SDK
     assert sorted(x.split("?")[0] for x in links) == sorted(dr.STATIC_FILES)
+    # the glue runs last: it mounts what finance.js and check.js define, with the SDK they all share
+    scripts = [x.split("?")[0] for x in re.findall(r'<script src="([^"]+)"', resp.text)]
+    assert scripts == ["/desk/vendor/monday-sdk.js", "/desk/finance.js", "/desk/check.js", "/desk/desk.js"]
     assert all(re.search(r"\?v=[0-9a-f]{12}$", x) for x in links)
     again = desk.client.get("/desk/", headers={"If-None-Match": resp.headers["ETag"]})
     assert again.status_code == 304
