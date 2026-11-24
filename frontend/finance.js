@@ -45,6 +45,57 @@
  * server's fault, with no refresh offered as its fix; an item's link (href) goes through esc() like every other value.
  * From the adversarial review of a32395f: the visit's id for the usage events is sixteen letters, never a digit
  * (useSession; the server refuses any other).
+ * From the QA of 24.11 (the desk inside monday, at the width Chava works at), each by its number in the QA report:
+ * QA 1 Ticking a row's box moved the table about 58 pixels down - the bar of picked rows came in above it - so the click
+ *      aimed at the next row's box unticked the first. The bar now holds its place wherever the list offers a box, at one
+ *      height (its buttons the row's own size), quiet while nothing is picked and saying what the box is for.
+ * QA 2 "ייצוא לאקסל" said nothing on the page. When the file's link opens, the page says the file is on its way and how
+ *      many rows it holds: the rows of the list exported, counted as the screen shows them (exportedCount; the companies'
+ *      list is one function, b2Rows, for the screen and the count). The file's name is the server's and is not said.
+ * QA 3 A search with a row outside the open list kept the open list's columns, so a payment found from "החזר לביצוע"
+ *      showed a refund's "-" where its own date, channel and receipt are. With any row outside the open list the search
+ *      is drawn with the general columns, on both tabs; with every row inside, the open list's own stay (1.4). And a row
+ *      found by a field its list does not show says which, and what it holds there ("נמצא לפי: הוחזרו 976.19 ₪",
+ *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
+ * QA 4 At full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut to "פר":
+ *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
+ *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
+ *      with rows as long as real ones (a students' list's narrowest width went from about 1210 to about 1070 pixels, and
+ *      to about 1090 with QA 6's chevron).
+ * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
+ *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
+ *      as a decision: it came with analiza-metrics' first import, 10.11).
+ * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
+ *      carries a chevron at its start (after the box where it has one), lit while the row is pointed at and turned while
+ *      its details are open, beside the pointer and the hover it had: a narrow column, and every list still fits (QA 4).
+ * QA 7 With a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב" and its
+ *      tiles - all its own. Its name heads the tab now, with the way back to every company ("כל החברות") beside it.
+ * QA 8 "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company opened from a
+ *      list or from "לפי לקוח" keeps where she was - the tile, the view, the page's height (state.b2.back) - and the way
+ *      back returns there; a company opens at its top, where its name is.
+ * QA 9 The table scrolled inside a frame of 78% of the view (about six rows inside monday) in a page that scrolls too. A
+ *      table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view (the
+ *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
+ *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
+ * QA 10 The page's words: a refresh on its way is "מתעדכן" on the button pressed as beside the reading's time (it was
+ *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" - in the list's cell finance.css draws "(לפי" and
+ *       ")" around the legend's term, whose markup tests/test_desk_parity_js.py holds, and the details and the row's
+ *       situation write it (CREATED_BY); an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
+ *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
+ *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
+ * QA 11 The totals: the total row of "לפי לקוח" has the count of "לטיפול" (the companies' counts shown, added: a count, no
+ *       money). The heading of "הכל" has its sum where the server made one: on the students' tab the period's "התקבלו"
+ *       (the view's), on the companies' tab - the view has none - the server's total of that very list, once it lands.
+ * QA 12 No change here: the QA could not read the console of the view's iframe, so tests/test_desk_browser.py holds that
+ *       the page logs no console error and throws nothing while it loads, opens details, confirms an action, refreshes.
+ * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
+ *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
+ *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
+ *      row sat in "חריג" with no chip.
+ * And with the server's QA 1 (24.11): in "החזר בוצע" the column of the refund counted (monday's "סכום החזר", or what was
+ *      paid for a full refund without it, the asterisk) was headed "סכום החזר" as if it were monday's column; it is
+ *      "הוחזרו", the desk's word for it on the tab's figure and in the Excel file. A refund's details keep "סכום החזר" for
+ *      monday's own value. The mark of what found a row reads "נמצא לפי: <field> <value>" with it.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -78,6 +129,8 @@
     refund_exceeds_paid: "סכום החזר גדול מסכום ששולם", amount_missing: "סכום ששולם לא הוקלד",
     credit_on_status: "סכום לזיכוי בסטטוס {status}", refund_amount_on_status: "סכום החזר בסטטוס {status}",
     refund_date_on_status: "תאריך החזר בסטטוס {status}", unlinked: "בלי הרשמה ובלי ליד מקור",
+    /* a receipt that went out on a payment that brought no money in: in "חריג, לבדיקה" (QA 24.11, the server's rule 6) */
+    receipt_no_money: "שליחת קבלה: יצאה, בסטטוס {status}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -87,12 +140,13 @@
   /* the same flag on the other board, where its column has another name */
   var FLAG_ON = { b2: { amount_missing: "סכום לחיוב (ללא מע\"מ) לא הוקלד" } };
   var BAD = { refund_overdue: 1, refund_last_day_passed: 1, refund_exceeds_paid: 1, invoice_late: 1, no_contract: 1,
-    over_deal_value: 1, status_unknown: 1, credit_on_status: 1, refund_amount_on_status: 1, refund_date_on_status: 1 };
+    over_deal_value: 1, status_unknown: 1, credit_on_status: 1, refund_amount_on_status: 1, refund_date_on_status: 1,
+    receipt_no_money: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
     billed_no_invoice: 1, terms_missing: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
-    "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
+    "receipt_no_money", "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
     "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
@@ -150,7 +204,7 @@
     /* the students list: a state ("tasks", "" for all, or a state key), a period key, the payments opened */
     sc: { state: "tasks", period: "", open: {} },
     /* the companies list: a state, a customer (account id), the list or the customers, the charges opened */
-    b2: { state: "tasks", customer: "", view: "list", open: {} } };
+    b2: { state: "tasks", customer: "", view: "list", open: {}, back: null } };
 
   /* ---------- helpers ---------- */
   function num(x) { var n = Number(x); return isNaN(n) ? 0 : n; }
@@ -168,6 +222,9 @@
   /* a row's way to monday: a quiet icon under a header of its own, and the row's name (nameLink); the details carry the
      button too */
   var OPEN_ICON = "<svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+  var MORE = "<span class=\"fin-more\" title=\"פרטים\"><svg viewBox=\"0 0 16 16\" width=\"14\" height=\"14\" aria-hidden=\"true\" " +
+    "focusable=\"false\"><path d=\"M4 6l4 4 4-4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" " +
+    "stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>";
   function openLink(r) {
     return "<a class=\"fin-open\" data-open=\"" + esc(r.id) + "\" href=\"" + esc(itemUrl(r.board, r.id)) + "\" target=\"_blank\" rel=\"noopener\"" +
       " aria-label=\"פתיחה במאנדיי\" title=\"פתיחה במאנדיי\">" + OPEN_ICON + "</a>";
@@ -217,7 +274,7 @@
   function termsMark(terms) { return terms ? " <bdi class=\"fin-subtle\">" + esc(terms) + "</bdi>" : " " + NO_TERMS; }
   var COLS = {
     date: { h: "תאריך תקבול", c: function (r) { return paidDate(r); } },
-    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r); } },
+    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
     /* Student Charge's "נציג מכירות" (17.11): the Owner of the payment's lead, read with the lead (app/finance.py lead_rep) */
     rep: { h: "נציג מכירות", xs: 1, c: function (r) { return r.rep ? esc(r.rep) : NOT_SET; } },
     cohort: { h: "מחזור", xs: 1, c: function (r) { return r.cohort_code ? "<span title=\"" + esc(r.cohort_title) + "\">" + ltr(r.cohort_code) + "</span>" : "<span class=\"fin-subtle\">-</span>"; } },
@@ -247,16 +304,19 @@
       if (!r.planned) { return NOT_SET; }
       return d(r.planned) + (r.flags.indexOf("refund_overdue") !== -1 ? " <span class=\"fin-badtext\">עבר</span>" : "");
     } },
-    refund_date: { h: "תאריך החזר", c: function (r) { return d(r.refund_date); } },
-    /* "סכום החזר"; a full refund without it counts what was paid, said by the asterisk under the list */
-    refunded: { h: "סכום החזר", n: 1, t: "refunded", c: function (r) {
+    /* QA 10 (24.11): an empty value is "-" in every column, as monday shows it - "תאריך החזר" was an empty cell */
+    refund_date: { h: "תאריך החזר", c: function (r) { return r.refund_date ? d(r.refund_date) : NOT_SET; } },
+    /* the refund counted (app/desk/view.py `refunded`): monday's "סכום החזר", or what was paid for a full refund without
+       it, said by the asterisk under the list. Its word is the desk's "הוחזרו", as the tab's figure and the Excel file
+       call it (QA 24.11): under "סכום החזר" it read as monday's column, which the details show as it is */
+    refunded: { h: "הוחזרו", n: 1, t: "refunded", c: function (r) {
       return refundGuessed(r) ? "<span class=\"fin-subtle\" title=\"סכום החזר ריק או 0: מוצג כל סכום ששולם\">" + money2(r.refunded) + "*</span>"
         : money2(r.refunded);
     } },
-    account: { h: "חברה", c: function (r) { return esc(r.ctx.account); } },
-    deal: { h: "עסקה", xs: 1, c: function (r) { return esc(r.ctx.deal); } },
-    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r); } },
-    course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course); } },
+    account: { h: "חברה", c: function (r) { return r.ctx.account ? esc(r.ctx.account) : NOT_SET; } },
+    deal: { h: "עסקה", xs: 1, c: function (r) { return r.ctx.deal ? esc(r.ctx.deal) : NOT_SET; } },
+    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
+    course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course) || NOT_SET; } },
     amount: { h: "סכום לחיוב (ללא מע\"מ)", n: 1, t: "amount", c: function (r) {
       if (!num(r.amount)) { return "-"; }
       return r.state === "cancelled" ? "<s class=\"fin-subtle\" title=\"בוטל: לא נספר\">" + money2(r.amount) + "</s>" : money2(r.amount);
@@ -270,14 +330,17 @@
     } },
     /* the due date and how it was counted: the company's terms beside it, or that it has none */
     due: { h: "מועד פירעון", c: function (r) {
-      if (!r.due) { return ""; }
+      if (!r.due) { return NOT_SET; }
       return d(r.due) + (r.flags.indexOf("terms_missing") !== -1 ? " " + noTerms(r.account_id) : r.account_terms ? " <bdi class=\"fin-subtle\">" + esc(r.account_terms) + "</bdi>" : "");
     } },
     b2state: { h: "שיבוץ", c: function (r) { return stateChip(r.state, VIEW.b2b.states, B2_COLOR); } },
     paid_so_far: { h: "סכום ששולם (כולל מע\"מ)", n: 1, t: "paid_so_far", c: function (r) { return r.paid_so_far != null ? money2(r.paid_so_far) : "<span class=\"fin-badtext\">לא הוקלד</span>"; } },
     balance: { h: "יתרה לגבייה (כולל מע\"מ)", n: 1, t: "balance", c: function (r) { return r.balance != null ? money2(r.balance) : "-"; } },
-    late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : ""; } },
+    late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : NOT_SET; } },
     notes: { h: "מה לבדוק", c: function (r) { return rowChips(r); } },
+    /* QA 6 (24.11): a row that opens its details by a click says so - a chevron at its start, turned while they are open
+       (finance.css), beside the pointer and the hover it had; a narrow column, so no list grows past its frame (QA 4) */
+    more: { h: "", c: function () { return MORE; } },
     open: { h: "פתיחה במאנדיי", c: function (r) { return openLink(r); } },
     /* 1.1 (D2): the box that picks a row for a batch, under a box that picks every row it can, and the row's own button -
        only on the rows that offer one of the two actions, where the person may write (pickable) */
@@ -344,8 +407,15 @@
   }
   /* "תאריך תקבול" as typed; where it was not, the day the row was created, marked so in the cell (QA 2.5) */
   var CREATED_WORD = "יום היצירה";
+  /* QA 10 (24.11): "יום היצירה" alone beside a date did not read without the legend, so it is said "(לפי יום היצירה)". In
+     the list's cell the markup stays the legend's term alone - tests/test_desk_parity_js.py holds it - and finance.css
+     draws "(לפי" and ")" around it, on a line of its own; the details and the row's situation say it in full */
+  var CREATED_BY = "(לפי " + CREATED_WORD + ")";
   function paidDate(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_WORD + "</span>";
+  }
+  function paidDateSaid(r) {
+    return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
   }
   function billedNoDue(r) { return r.flags.indexOf("billed_no_due") !== -1; }
   function cls(k) { return " class=\"k-" + k + (COLS[k].n ? " n" : "") + (COLS[k].xs ? " hide-xs" : "") + "\""; }
@@ -370,13 +440,17 @@
       var f = COLS[k] && COLS[k].t, cell = "";
       if (f && t.sums[f] != null) { cell = money2(t.sums[f]); }
       else if (f && t.sums.partial_unknown) { cell = "<span class=\"fin-subtle\">חסר ב-" + plural(t.sums.partial_unknown, "חיוב אחד", "חיובים") + "</span>"; }
-      if (!cell && first && k !== "pick") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
+      if (!cell && first && k !== "pick" && k !== "more") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle fin-nw\">" + plural(t.count, what[0], what[1]) + "</span>"; }
       return "<td" + cls(k) + ">" + cell + "</td>";
     }).join("") + "</tr></tfoot>";
   }
   function table(rows, cols, detail, opened, totals) {
     cols = cols.filter(function (k) { return !COLS[k].opt || rows.some(COLS[k].opt); });
-    return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t\"><thead><tr>" + cols.map(function (k) {
+    if (detail) { var at = cols[0] === "pick" ? 1 : 0; cols = cols.slice(0, at).concat(["more"], cols.slice(at)); }
+    /* a searched list's columns, while its rows are drawn: what a row shows, for the mark of what found it (QA 3) */
+    DRAWN = null;
+    if (searching()) { DRAWN = {}; cols.forEach(function (k) { DRAWN[k] = true; }); }
+    var html = "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t\"><thead><tr>" + cols.map(function (k) {
       return "<th" + cls(k) + ">" + (COLS[k].hh ? COLS[k].hh(rows) : esc(COLS[k].h)) + "</th>";
     }).join("") + "</tr></thead><tbody>" + rows.map(function (r) {
       var open = detail && (opened || state.sc.open)[r.id];
@@ -384,6 +458,8 @@
       return "<tr" + attrs + ">" + cols.map(function (k) { return "<td" + cls(k) + ">" + COLS[k].c(r) + "</td>"; }).join("") + "</tr>" +
         (open ? "<tr class=\"fin-detail\"><td colspan=\"" + cols.length + "\">" + detail(r) + "</td></tr>" : "");
     }).join("") + "</tbody>" + (totals ? totalsRow(cols, totals.body, totals.what) : "") + "</table></div>";
+    DRAWN = null;
+    return html;
   }
 
   /* ---------- students: one list by state ---------- */
@@ -424,15 +500,36 @@
     var v = Number(m[2]) * 100 + Number(((m[3] || "") + "00").slice(0, 2));
     return m[1] ? -v : v;
   }
-  function scMatch(r, q) {
-    q = String(q || "").trim().toLowerCase();
-    if (!q) { return true; }
+  /* the search box's fields, by board: an amount within a shekel (in agorot) of any of `nums`, or the text inside `texts`
+     joined - app/finance.py b2c_matches and b2b_matches. One list for the rule and for the mark that says which field
+     found a row (QA 3, foundMark) */
+  var MATCH = {
+    sc: { nums: ["money_in", "refunded", "credit_approved"], texts: ["name", "cohort_code", "cohort_title", "invoice", "credit_ref"] },
+    b2: { nums: ["amount", "paid_so_far", "balance"], texts: ["account", "deal", "course", "invoice", "name"] } };
+  function amountNear(a, n) { var x = a == null ? null : agorot(a); return !!x && Math.abs(x - n) < 100; }
+  /* the fields that find a row for a search (trimmed, lowercased), or null: its amounts near the number searched, else
+     its texts that hold the search - or, for a search the joined text holds across two of them, the ones it spans */
+  function matchedBy(r, q, m) {
     var numText = q.replace(/[,₪\s]/g, "");
     if (/^[0-9]+(\.[0-9]{1,2})?$/.test(numText)) {
-      var n = agorot(numText);
-      if ([r.money_in, r.refunded, r.credit_approved].some(function (a) { var x = agorot(a); return x && Math.abs(x - n) < 100; })) { return true; }
+      var n = agorot(numText), near = m.nums.filter(function (f) { return amountNear(r[f], n); });
+      if (near.length) { return near; }
     }
-    return [r.name, r.cohort_code, r.cohort_title, r.invoice, r.credit_ref].join(" ").toLowerCase().indexOf(q) !== -1;
+    var parts = m.texts.map(function (f) { return r[f] == null ? "" : String(r[f]); });
+    var at = parts.join(" ").toLowerCase().indexOf(q);
+    if (at === -1) { return null; }
+    var whole = m.texts.filter(function (f, i) { return parts[i].toLowerCase().indexOf(q) !== -1; });
+    if (whole.length) { return whole; }
+    var start = 0, spans = [];
+    parts.forEach(function (p, i) {
+      if (at < start + p.length && at + q.length > start) { spans.push(m.texts[i]); }
+      start += p.length + 1;
+    });
+    return spans.length ? spans : m.texts;
+  }
+  function scMatch(r, q) {
+    q = String(q || "").trim().toLowerCase();
+    return !q || !!matchedBy(r, q, MATCH.sc);
   }
   function scFilter(rows, b2c, st, periodKey, q) {
     var months = {}, tasks = {};
@@ -467,6 +564,27 @@
     return " <span class=\"fin-where\" title=\"" + esc("מחוץ לרשימה הפתוחה") + "\">" +
       (r.board === "b2" ? stateChip(r.state, VIEW.b2b.states, B2_COLOR) : stateChip(r.state)) + "</span>";
   }
+  /* QA 3 (24.11): a row a search found by a field its list does not show says which, and what that field holds - "976.19"
+     found a row by its refund while the row showed only "סכום ששולם" (₪1,000). The field is named by its column's
+     header; a field no column shows (a cohort's title, shown only on hover) by the column it belongs to */
+  var FOUND_COL = {
+    sc: { money_in: "received", refunded: "refunded", credit_approved: "to_refund", name: "student", cohort_code: "cohort",
+      cohort_title: "cohort", invoice: "invoice", credit_ref: "credit_ref" },
+    b2: { amount: "amount", paid_so_far: "paid_so_far", balance: "balance", account: "account", deal: "deal", course: "course",
+      invoice: "invoice", name: "charge" } };
+  var FOUND_HIDDEN = { cohort_title: 1 };       /* in a column that does not show it */
+  var FOUND_LTR = { cohort_code: 1, invoice: 1, credit_ref: 1, course: 1 };
+  var DRAWN = null;                              /* while a searched list's rows are drawn: its columns, by key */
+  function foundMark(r) {
+    var q = state.query.trim().toLowerCase(), m = MATCH[r.board], cols = FOUND_COL[r.board];
+    if (!DRAWN || !q || !m) { return ""; }
+    var by = matchedBy(r, q, m) || [];
+    if (!by.length || by.some(function (f) { return !FOUND_HIDDEN[f] && DRAWN[cols[f]]; })) { return ""; }
+    return " <span class=\"fin-found\">נמצא לפי: " + by.map(function (f) {
+      var v = m.nums.indexOf(f) !== -1 ? money2(r[f]) : FOUND_LTR[f] ? ltr(r[f]) : esc(r[f]);
+      return esc(COLS[cols[f]].h) + " " + v;
+    }).join(" · ") + "</span>";
+  }
   /* the head of a searched list: how many it found, and how many of them are outside the open list, named */
   function searchHead(rows, words, openName) {
     var out = rows.filter(function (r) { return OUTSIDE && OUTSIDE[r.id]; }).length;
@@ -495,8 +613,10 @@
     return "<div class=\"fin-states\" role=\"group\" aria-label=\"שיבוץ התקבולים\"><div class=\"fin-stategroup\">" +
       tile("tasks", "לטיפול", open, null, true) +
       tasks.map(function (s) { var x = p.states[s.key]; return tile(s.key, s.label, x.count, money(x.money), true); }).join("") +
+      /* QA 5 (24.11): every state, an empty one with its 0 - as a task's tile is - so it is clear the state exists and
+         holds nothing ("ביקש החזר, טרם אושר" went missing when empty) */
       "</div><div class=\"fin-stategroup rest\">" +
-      rest.filter(function (s) { return p.states[s.key].count; }).map(function (s) {
+      rest.map(function (s) {
         var x = p.states[s.key]; return tile(s.key, s.label, x.count, s.key === "no_money" ? null : money(x.money), false);
       }).join("") + tile("", "הכל", p.count, null, false) + "</div></div>";
   }
@@ -568,6 +688,10 @@
     refund_date_on_status: function (r) {
       return "תאריך החזר " + d(r.refund_date) + ", וסטטוס תשלום " + statusWord(r) + " ולא " + REFUNDED_LABELS;
     },
+    /* a receipt sent on a payment whose status brought no money in: the status or the receipt is wrong */
+    receipt_no_money: function (r) {
+      return "שליחת קבלה \"יצאה\", וסטטוס תשלום " + statusWord(r) + ": קבלה יצאה על כסף שלא נכנס";
+    },
     refund_amount_zero: function (r) {
       return "סטטוס תשלום " + statusWord(r) + ", וסכום החזר 0" +
         (r.status_idx === "4" ? ": נספר כל סכום ששולם, כמו שהסטטוס אומר" : "");
@@ -616,7 +740,7 @@
   var NONE = "<span class=\"fin-subtle\">טרם נרשמה</span>";
 
   function scSituation(r) {
-    var paid = "שולם " + money2(r.money_in) + " ב-" + d(r.date) + (r.date_from === "paid" ? "" : " (" + CREATED_WORD + ")") +
+    var paid = "שולם " + money2(r.money_in) + " ב-" + d(r.date) + (r.date_from === "paid" ? "" : " " + CREATED_BY) +
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>";
@@ -658,7 +782,7 @@
       (r.state === "refund_to_execute" ? "<div class=\"fin-dx-box\"><span class=\"fin-subtle\">פרטי חשבון</span> " + bankCell(r) + "</div>" : "") : "";
     var payment = block("", "", [
       ["סטטוס תשלום", lbl(r, "status")], ["שליחת קבלה", lbl(r, "receipt")],
-      ["סכום ששולם", COLS.received.c(r)], ["תאריך תקבול", paidDate(r)],
+      ["סכום ששולם", COLS.received.c(r)], ["תאריך תקבול", paidDateSaid(r)],
       ["סוג חיוב", lbl(r, "type")], ["ערוץ תשלום", lbl(r, "channel")],
       ["אסמכתת חשבונית", ltr(r.invoice) || NONE],
       /* the lead's ID number, read live as the person when the details open (16.11): idCell; then the lead's Owner (17.11).
@@ -681,16 +805,21 @@
   function b2cHtml() {
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
-    /* the open list's columns stay with a search: what is shown where stays (§1b, 1.4); the box and the row's button of
-       1.1 at its edges, where a row offers one of the two */
-    var cols = withRowActions(SC_COLS[one] || SC_COLS[""]);
-    var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
-    var sum = one && !q ? " · " + money(p.states[one].money) : "";
     OUTSIDE = null;
     if (q) {
       var open = idsOf(scFilter(ROWS.sc, v, key, state.sc.period, ""));
       OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
     }
+    /* the open list's columns stay with a search while every row it found is in that list: what is shown where stays
+       (§1b, 1.4). QA 3 (24.11): a row of another tile under a refund's columns showed "-" where its payment date, its
+       channel and its receipt are, so a search with a row outside the open list is drawn with the general columns, as a
+       search from "לטיפול" is. The box and the row's button of 1.1 at its edges, where a row offers one of the two */
+    var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
+    var cols = withRowActions(SC_COLS[outside ? "" : one] || SC_COLS[""]);
+    var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
+    /* a state's own money beside its count; QA 11 (24.11): "הכל" too, its period's "התקבלו" - a sum of the view, never
+       one made here. "לטיפול" mixes money in and refunds to make, so it has none */
+    var sum = q ? "" : one ? " · " + money(p.states[one].money) : !key ? " · " + money(p.money_in) : "";
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
@@ -714,9 +843,21 @@
     OUTSIDE = null;
     return figures + statesHtml(p) + panel(head + batchHtml(rows) + list);
   }
+  /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
+     count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
+  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"] };
+  function exportedCount(tab) {
+    return tab === "b2b_customers" ? customersShown(VIEW.b2b).length : tab === "b2b" ? b2Rows().length : scRows().length;
+  }
+  function exportSaid(tab, n) {
+    var what = EXPORT_WHAT[tab] || EXPORT_WHAT.b2c;
+    return "קובץ האקסל יורד: " + plural(n, what[0], what[1]) + ".";
+  }
   function exportList(tab) {
+    var count = 0;
     /* a newer reading on its way is waited for first, so the file is built from the list the reader then sees */
     return Promise.resolve(pending).then(function () {
+      count = exportedCount(tab);
       var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
       /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
       var all = searching() && tab !== "b2b_customers";
@@ -726,24 +867,21 @@
       return deps.post("/api/desk/export-link", body);
     }).then(function (res) {
       var url = new URL(res.url, window.location.href).href;
+      var said = function () { flash(exportSaid(tab, count)); };
       /* monday may sandbox the view against downloads: a new tab escapes it, and the file names itself */
       if (deps.monday) {
-        return Promise.resolve(deps.monday.execute("openLinkInTab", { url: url })).catch(function () { window.open(url, "_blank", "noopener"); });
+        return Promise.resolve(deps.monday.execute("openLinkInTab", { url: url })).catch(function () { window.open(url, "_blank", "noopener"); })
+          .then(said);
       }
       var a = document.createElement("a"); a.href = url; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove();
+      said();
     }).catch(function (e) { flash(errorText(e)); });
   }
 
   /* ---------- companies: one list by state, and the customers' aging ---------- */
   function b2Match(r, q) {
     q = String(q || "").trim().toLowerCase();
-    if (!q) { return true; }
-    var numText = q.replace(/[,₪\s]/g, "");
-    if (/^[0-9]+(\.[0-9]{1,2})?$/.test(numText)) {
-      var n = agorot(numText);
-      if ([r.amount, r.paid_so_far, r.balance].some(function (a) { var x = a == null ? null : agorot(a); return x && Math.abs(x - n) < 100; })) { return true; }
-    }
-    return [r.account, r.deal, r.course, r.invoice, r.name].join(" ").toLowerCase().indexOf(q) !== -1;
+    return !q || !!matchedBy(r, q, MATCH.b2);
   }
   /* The SAME rule as app/finance.py filter_b2b (tests/test_finance_js.py runs both on the same rows). */
   function b2Filter(rows, b2b, st, customer, q) {
@@ -756,6 +894,11 @@
     if (customer && !st) { return sortRows(out, "ledger_key"); }   /* one customer, every state: the ledger, oldest first */
     var key = st === "tasks" ? "_" : st;
     return sortRows(out, Object.prototype.hasOwnProperty.call(B2_SORT, key) ? B2_SORT[key] : "demand");
+  }
+  /* the companies' list on the screen: a search over every charge (1.2), or the tile and the company chosen */
+  function b2Rows() {
+    var b = VIEW.b2b, f = state.b2;
+    return searching() ? b2Filter(ROWS.b2, b, "", "", state.query) : b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
   }
   function b2Situation(r) {
     var terms = r.account_terms ? " · <bdi>" + esc(r.account_terms) + "</bdi>" : r.flags.indexOf("terms_missing") !== -1 ? " · " + noTerms(r.account_id) : "";
@@ -798,7 +941,9 @@
     var tasks = b.states.filter(function (s) { return s.task; }), rest = b.states.filter(function (s) { return !s.task; });
     var open = tasks.reduce(function (a, s) { return a + N[s.key].count; }, 0);
     function t(s) {
-      var x = N[s.key], m = s.key === "cancelled" ? null : money(x.money);
+      /* "בוטל" is counted in no sum; "ממתין לנתונים" sums a typed amount (app/desk/view.py B2B_STATES), and with none typed
+         its 0 said "nothing to bill" of charges whose amount is not known yet (QA 10, 24.11): no amount then */
+      var x = N[s.key], m = s.key === "cancelled" || (s.key === "pending" && !num(x.money)) ? null : money(x.money);
       if (s.key === "partial" && x.count) {
         m += " <small>סכום לחיוב (ללא מע\"מ)</small>" + (x.balance_unknown ? "<br><span class=\"fin-badtext\">סכום ששולם (כולל מע\"מ) לא הוקלד " +
           (x.balance_unknown === 1 ? "בחיוב אחד" : "ב-" + NF.format(x.balance_unknown) + " חיובים") + "</span>"
@@ -808,7 +953,7 @@
     }
     return "<div class=\"fin-states\" role=\"group\" aria-label=\"שיבוץ החיובים\"><div class=\"fin-stategroup\">" +
       tile("tasks", "לטיפול", open, null, true, "data-b2state", cur, B2_COLOR) + tasks.map(t).join("") +
-      "</div><div class=\"fin-stategroup rest\">" + rest.filter(function (s) { return N[s.key].count; }).map(t).join("") +
+      "</div><div class=\"fin-stategroup rest\">" + rest.map(t).join("") +            /* an empty state too (QA 5) */
       tile("", "הכל", mine ? mine.count : b.count, null, false, "data-b2state", cur, B2_COLOR) + "</div></div>";
   }
   /* the aging by customer, narrowed by the search box: a customer's name holds the text (app/finance.py filter_customers) */
@@ -867,7 +1012,9 @@
     var foot = t && !t.failed && !t.other_reading && t.sums && exportable() ? "<tfoot><tr class=\"fin-total\">" + cols.map(function (col, i) {
       var k = col.key;
       if (k === "name") { return "<td><b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, "חברה אחת", "חברות") + "</span></td>"; }
-      if (k === "terms" || k === "tasks") { return "<td></td>"; }
+      if (k === "terms") { return "<td></td>"; }
+      /* QA 11 (24.11): "לטיפול" is a count, so its total is the companies' counts, shown, added - no money */
+      if (k === "tasks") { return "<td class=\"n\">" + NF.format(shown.reduce(function (a, c) { return a + num(c.tasks); }, 0)) + "</td>"; }
       if (k === "partial_balance") { return numCell(t.sums.partial_count - t.sums.partial_unknown ? t.sums.partial_balance : 0, false, i); }
       return numCell(t.sums[k], k === "open", i);
     }).join("") + "</tr></tfoot>" : "";
@@ -888,13 +1035,17 @@
     var b = VIEW.b2b, f = state.b2;
     var who = f.customer ? (b.rows.filter(function (x) { return x.account_id === f.customer; })[0] || {}).account : "";
     var q = searching();
-    var rows = q ? b2Filter(ROWS.b2, b, "", "", state.query) : b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
+    var rows = b2Rows();
     var key = f.state === "tasks" ? "" : f.state;
     var what = f.state === "tasks" ? "לטיפול" : f.state ? stateLabel(b.states, f.state) : "כל החיובים";
     var views = "<div class=\"fin-seg\" role=\"group\" aria-label=\"תצוגה\">" +
       "<button type=\"button\" class=\"fin-btn" + (f.view === "list" ? " on" : "") + "\" aria-pressed=\"" + (f.view === "list") + "\" data-b2view=\"list\">רשימה</button>" +
       "<button type=\"button\" class=\"fin-btn" + (f.view === "customers" ? " on" : "") + "\" aria-pressed=\"" + (f.view === "customers") + "\" data-b2view=\"customers\">לפי לקוח</button></div>";
     var mine = f.customer && b.by_customer[f.customer];
+    /* QA 7 (24.11): with a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב"
+       and its tiles - all of them its own. It heads the tab now, with the way back to every company */
+    var company = f.customer ? "<div class=\"fin-co\"><h2 class=\"fin-co-name\">" + esc((mine && mine.name) || who || "") + "</h2>" +
+      "<button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button></div>" : "";
     /* a chosen customer: its own figures and its aging, as a ledger card (כרטסת) opens with */
     var figures = mine ? figs([["יתרה פתוחה", money(mine.open)], ["מתוכה בפיגור", money(mine.overdue)],
       [stateLabel(b.states, "to_bill"), money(mine.to_bill)]], "הסכומים ללא מע\"מ") +
@@ -917,10 +1068,18 @@
       OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
     }
     var found = q ? searchHead(rows, ["חיוב אחד", "חיובים", "החיובים"], what + (who ? " · " + who : "")) : null;
+    var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
+      q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
+    /* a state's own money beside its count (the view's); QA 11 (24.11): "הכל" too - the view has no sum of every charge,
+       so it is the server's total of this very list (GET /api/desk/totals, its "סכום לחיוב (ללא מע"מ)" in the table's last
+       row), said once it lands, of this reading only. Never a sum made here */
+    var all = btot.body && !btot.body.failed && !btot.body.other_reading && btot.body.sums ? btot.body.sums.amount : null;
+    var sum = f.customer ? "" : f.state && f.state !== "tasks" && f.state !== "cancelled" ? money(b.numbers[f.state].money)
+      : !f.state && all != null ? money(all) : "";
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + (who ? " <span class=\"fin-subtle\">· " + esc(who) + "</span>" +
       (mine && (mine.terms || mine.terms_missing) ? termsMark(mine.terms) : "") : "")) + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "חיוב אחד", "חיובים") +
-      (f.state && f.state !== "tasks" && !f.customer && f.state !== "cancelled" ? " · " + money(b.numbers[f.state].money) + " ללא מע\"מ" : "")) +
+      (sum ? " · " + sum + " ללא מע\"מ" : "")) +
       (who ? " · <button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button>" : "") + "</div>" +
       (found ? found.about : aboutHtml("b2b", f.state)) + "</div><div class=\"fin-actions\">" + views +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2b\"" + (rows.length && VIEW.checks.b2b_ok && exportable() ? "" : " disabled") +
@@ -928,15 +1087,16 @@
     /* the ledger: oldest first, with the open money owed up to each charge. A search in a ledger finds every company's
        charges, so it is drawn as the list of every charge, with its company and its tile */
     var ledger = f.customer && !f.state && !q;
-    var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"] : (B2_COLS[key] || B2_COLS[""]);
-    var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
-      q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
+    /* QA 3: as on the students' tab, a search with a charge outside the open list is drawn with the general columns */
+    var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
+    var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"]
+      : (B2_COLS[outside ? "" : key] || B2_COLS[""]);
     var list = rows.length ? table(rows, bcols, b2Detail, state.b2.open, exportable() ? btot : null)
       : empty(q ? "אין חיובים שמתאימים לחיפוש." : f.state === "tasks" && !f.customer ? "אין חיובים לטיפול." : "אין כאן חיובים.",
         /* no search, one company in one state: that company's every charge, its ledger */
         !q && f.customer && f.state !== "" ? "<button class=\"fin-linkbtn\" type=\"button\" data-b2state=\"\">כל החיובים של החברה</button>" : "");
     OUTSIDE = null;
-    return figures + b2Tiles(b) + panel(head + list);
+    return company + figures + b2Tiles(b) + panel(head + list);
   }
 
   /* ---------- actions from the desk (round 3, slice 3) ----------
@@ -1555,6 +1715,8 @@
   /* at most this many rows in one batch: its rows are read in one request, and monday's items(ids:) answers 25 at most */
   var BATCH_MAX = 25;
   var PICKED = {};     /* the rows picked for a batch, by "sc:123"; only the rows of the list on the screen count */
+  /* the bar with nothing picked (QA 1): where the picks will show, and what the box at a row's start does */
+  var PICK_HINT = "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד.";
   var BATCH = null;    /* the batch on the screen: { action, a, items: [{ key, row, name, verdict, why, live, plan, result }],
                           phase: "reading" | "confirm" | "nothing" | "writing" | "done" | "failed", at, total, error } */
   function busyBatch() { return !!BATCH && (BATCH.phase === "reading" || BATCH.phase === "writing"); }
@@ -1741,9 +1903,15 @@
         (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
           "</ul>" : "") + "</div>";
     }
-    /* no batch: the rows picked in this list, and one button per action they offer */
+    /* no batch: the rows picked in this list, and one button per action they offer. QA 1 (24.11): wherever the list
+       offers a box, the bar holds its place - a quiet line when nothing is picked, which also says what the box is for -
+       so a pick never moves the rows under the next click (the second row's box was unticking the first) */
+    if (!rows.some(pickable)) { return ""; }
     var picked = pickedIn(rows);
-    if (!picked.length) { return ""; }
+    if (!picked.length) {
+      return "<div class=\"fin-batch fin-batchbar idle\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" + esc(PICK_HINT) +
+        "</span></div>";
+    }
     var by = {};
     picked.forEach(function (r) { var a = rowAction(r); (by[a.key] = by[a.key] || { a: a, n: 0 }).n += 1; });
     return "<div class=\"fin-batch fin-batchbar\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" +
@@ -2431,9 +2599,9 @@
   function listKey() {
     return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.b2.state, state.b2.view, state.b2.customer, state.query]);
   }
-  /* A table taller or wider than its box scrolls inside it (QA 2.8), and a redraw builds it anew: opening a row's details,
-     or a newer reading landing, must not throw the reader back to the box's top. Each list keeps its scroll across a
-     redraw; another list starts at its top. */
+  /* A table wider than its frame scrolls inside it (QA 2.8; since QA 9 only such a table, fitFrames), and a redraw builds it
+     anew: opening a row's details, or a newer reading landing, must not throw the reader back to the box's top. Each list
+     keeps its scroll across a redraw; another list starts at its top. */
   function tableScrolls() {
     var out = {};
     [].forEach.call(root.querySelectorAll ? root.querySelectorAll(".fin-tw[data-list]") : [], function (el) {
@@ -2441,12 +2609,30 @@
     });
     return out;
   }
+  /* QA 9 (24.11): one scroll. A table that fits its frame scrolls with the page, its header held at the top of the view;
+     one wider than its frame (a narrow view) gets the frame that scrolls (fin-tw-x, as tall as the view), so its sideways
+     scrollbar is in reach. Measured after every drawing, and again when the view's width changes */
+  function fitFrames() {
+    [].forEach.call(root && root.querySelectorAll ? root.querySelectorAll(".fin-tw") : [], function (el) {
+      var t = el.querySelector("table");
+      el.classList.remove("fin-tw-x");
+      if (t && t.offsetWidth > el.clientWidth + 1) { el.classList.add("fin-tw-x"); }
+    });
+  }
+  var refit = false;
+  function onResize() {
+    if (refit || !VIEW) { return; }
+    refit = true;
+    var again = function () { refit = false; fitFrames(); };
+    if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
+  }
   function render() {
     if (!VIEW) { noReading(); return; }        /* D2: nothing read on the server yet */
     var keep = focusKey(), scrolls = tableScrolls(), a = document.activeElement;
     /* an input being typed into keeps its caret: a redraw (a total landing, a newer reading) builds it anew */
     var caret = keep && a && a.tagName === "INPUT" && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
     paint();
+    fitFrames();
     [].forEach.call(root.querySelectorAll ? root.querySelectorAll(".fin-tw[data-list]") : [], function (el) {
       var at = scrolls[el.getAttribute("data-list")];
       if (at) { el.scrollTop = at[0]; el.scrollLeft = at[1]; }
@@ -2457,11 +2643,14 @@
       if (caret && back.setSelectionRange) { try { back.setSelectionRange(caret[0], caret[1]); } catch (e) { /* not a text box */ } }
     }
   }
+  /* a newer reading on its way: one word on the refresh button pressed and beside the reading's time (QA 10, 24.11: the
+     button said "מרענן" and the header "מתעדכן" of the same thing) */
+  var REFRESHING = "מתעדכן";
   var SEARCH_ICON = "<svg class=\"fin-searchicon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\">" +
     "<circle cx=\"7\" cy=\"7\" r=\"4.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M10.5 10.5 13.5 13.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
   function paint() {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1><span class=\"fin-asof\">נכון ל-" + esc(asOf()) +
-      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">מתעדכן</span>" : "") + "</span>" +
+      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>" : "") + "</span>" +
       "<span class=\"fin-spacer\"></span><span class=\"fin-searchbox\">" + SEARCH_ICON +
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
@@ -2698,13 +2887,11 @@
     if (el.dataset.terms) {
       /* "אין תנאי תשלום": the company's ledger, its billing details at the top, and for one who may edit them, their form
          on the terms (D2: read live first) */
-      state.b2.customer = el.dataset.terms; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
+      openCompany(el.dataset.terms);
       use("customer", { from: "terms" });
       render();
       if (canBill()) { startBill(el.dataset.terms, "terms"); }
-      var top = document.getElementById("content");
-      if (top) { top.scrollTop = 0; }
-      window.scrollTo(0, 0);
+      scrollPageTo(0);
       return;
     }
     if (el.dataset.open) {
@@ -2738,26 +2925,48 @@
     }
     if (el.dataset.b2view) {
       state.b2.view = el.dataset.b2view;
-      if (el.dataset.b2view === "customers") { state.b2.customer = ""; }   /* "לפי לקוח" is every customer */
+      /* "לפי לקוח" is every customer: a company left this way leaves no way back to keep */
+      if (el.dataset.b2view === "customers") { state.b2.customer = ""; state.b2.back = null; }
       use("view", { view: el.dataset.b2view === "customers" ? "customers" : "list" });
       redraw(); return;
     }
     if (el.dataset.customer !== undefined) {
-      state.b2.customer = el.dataset.customer; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
+      /* a company opens at its top, where its name is (QA 7); "כל החברות" goes back to where she was (QA 8) */
+      var y = 0;
+      if (el.dataset.customer) { openCompany(el.dataset.customer); } else { y = leaveCompany(); }
       use("customer", { from: el.dataset.customer ? "aging" : "all" });
-      redraw(); return;
+      render(); scrollPageTo(y); return;
     }
     if (el.dataset.fintab) { state.tab = el.dataset.fintab; use("tab"); }
     else if (el.dataset.notes) { state.notes = !state.notes; use("notes", { open: !!state.notes }); render(); return; }
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
     /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,
        a ח.פ) */
-    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = "מרענן..."; load(true); return; }
+    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return; }
     render();
     /* on a wide screen the app scrolls #content, not the window */
     var scroller = document.getElementById("content");
     if (scroller) { scroller.scrollTop = 0; }
     window.scrollTo(0, 0);
+  }
+  /* QA 8 (24.11): "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company
+     opened from a list or from "לפי לקוח" keeps where she was - the tile, the view and how far down the page - and the
+     way back returns there; a tile chosen inside the company does not change it */
+  function openCompany(aid) {
+    var f = state.b2;
+    if (!f.customer) { f.back = { state: f.state, view: f.view, y: window.scrollY || 0 }; }
+    f.customer = aid; f.state = ""; f.view = "list"; f.open = {};
+  }
+  function leaveCompany() {
+    var f = state.b2, back = f.back || { state: "", view: "list", y: 0 };
+    f.customer = ""; f.state = back.state; f.view = back.view; f.open = {}; f.back = null;
+    return back.y;
+  }
+  /* the page at a height: the window, or on a wide screen the app's #content (analiza-metrics' frame) */
+  function scrollPageTo(y) {
+    var scroller = document.getElementById("content");
+    if (scroller) { scroller.scrollTop = y; }
+    window.scrollTo(0, y);
   }
   var typing = null;
   function onInput(ev) {
@@ -2809,6 +3018,8 @@
     document.addEventListener("visibilitychange", onVisible);
     /* the view's window taking the focus back: after monday's item card closes over it, the first click in the view */
     window.addEventListener("focus", onFocus);
+    /* monday's sidebar opened or closed, the window resized: whether each table still fits its frame (QA 9) */
+    window.addEventListener("resize", onResize);
     /* round 3, slice 3: whether this person may write from here (monday's context) - asked beside the first reading, never
        in its way: desk.js shows the desk when this promise settles, and monday may be slow to answer, or not answer */
     var first = load(false);

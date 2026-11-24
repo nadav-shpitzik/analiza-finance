@@ -57,7 +57,8 @@ global.document = { visibilityState: "visible", activeElement: null, body: { app
 Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: input.clipboard === "none" ? {} :
   { clipboard: { writeText(t) { if (input.clipboard === "refuses") { return Promise.reject(new Error("denied")); }
     copied.push(t); return Promise.resolve(); } } } });
-global.window = { scrollY: 0, scrollTo() {}, open() {}, location: { href: "https://desk.test/desk/" },
+let scrolled = null;                                /* where a step scrolled the page last, if it did */
+global.window = { scrollY: 0, scrollTo(x, y) { this.scrollY = y; scrolled = y; }, open() {}, location: { href: "https://desk.test/desk/" },
   addEventListener(t, f) { (listeners["window:" + t] = listeners["window:" + t] || []).push(f); },
   crypto: require("crypto").webcrypto };
 const root = { innerHTML: "", addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
@@ -123,9 +124,11 @@ const deps = { api: (p) => answer("GET " + p),
   },
   monday: monday, board: input.board === undefined ? "5093448677" : input.board, later: (fn) => fn(), today: () => "2026-11-24",
   useFlushMs: input.useFlushMs, useSearchMs: input.useSearchMs, mondayWaitMs: input.mondayWaitMs };
+let clicked = null;
 function click(ds, cls) {
   const el = { dataset: ds, classList: { contains: (c) => (cls || []).indexOf(c) !== -1 }, closest: () => null,
     getAttribute: () => "", disabled: false, textContent: "" };
+  clicked = el;
   handlers.click({ target: { closest: (sel) => sel.indexOf("[data-") !== -1 ? el : null }, preventDefault() {} });
 }
 const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 0)); } };
@@ -136,6 +139,8 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
   const steps = [];
   for (const step of input.steps || []) {
     let refused = null;
+    scrolled = null;
+    if (step.scrollY !== undefined) { window.scrollY = step.scrollY; }      /* how far down she is before the step */
     if (step.mutate) { Object.keys(step.mutate).forEach((b) => Object.keys(step.mutate[b]).forEach((id) => Object.assign(boards[b][id], step.mutate[b][id]))); }
     if (step.show) { F._show(step.show); }
     if (step.click) { click(step.click[0], step.click[1]); }
@@ -160,8 +165,10 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.wait) { await new Promise((r) => setTimeout(r, step.wait)); }
     await settle();
     const act = F._actState(), b = F._batchState();
-    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error,
-      refused: refused, can: F._can(), sent: sent.length,
+    /* the element a step clicked, as the click left it (a button that says it is busy) */
+    const pressed = step.click && clicked ? { text: clicked.textContent, disabled: clicked.disabled } : null;
+    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error, pressed: pressed,
+      refused: refused, can: F._can(), sent: sent.length, scrolled: scrolled,
       plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
       /* 1.1: the batch on the screen, row by row */
       batch: b ? { phase: b.phase, error: b.error || "", items: b.items.map((it) => ({ key: it.key, verdict: it.verdict || null,
@@ -326,6 +333,319 @@ def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_compan
     assert {"tab": "b2b", "state": "overdue", "customer": "7701", "q": ""} in totals
 
 
+def heads_of(html: str) -> list:
+    return [re.sub(r"<[^>]+>", "", x) for x in re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)]
+
+
+def cells_of(html: str, row_id: str) -> dict:
+    """A row's cells by their column key (k-...), as drawn."""
+    row = html[html.index('data-row="%s"' % row_id):]
+    row = row[:row.index("</tr>")]
+    return {m.group(1): m.group(2) for m in re.finditer(r'<td class="k-(\w+)[^"]*">(.*?)</td>', row)}
+
+
+def test_a_search_with_a_row_outside_the_open_list_is_drawn_with_the_general_columns():
+    """QA 3 (24.11): in "החזר לביצוע", a name from "הושלם" was found and marked "● הושלם", but under the refund's columns -
+    "תאריך בקשת ביטול" and "אופן החזר" with "-", and no payment date, channel or receipt. With any row outside the open list
+    the search is drawn with the general columns, as a search from "לטיפול" is; with every row inside, the open list's
+    own columns stay (§1b, 1.4). The same on the companies' tab."""
+    refund = {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}
+    got = drive(answer(), [{"show": dict(refund, query="תלמיד/ה 1")}, {"show": dict(refund, query="תלמיד/ה 3")},
+                           {"show": dict(refund, query="")},
+                           {"show": {"tab": "b2b", "query": "חיוב 3", "b2": {"state": "overdue", "view": "list", "customer": "",
+                                                                             "open": {}}}},
+                           {"show": {"tab": "b2b", "query": "חיוב 1", "b2": {"state": "overdue", "view": "list", "customer": "",
+                                                                             "open": {}}}}], monday=world())
+    outside, inside, plain, b2_outside, b2_inside = [s["html"] for s in got["steps"]]
+    general = ["תאריך תקבול", "סטודנט/ית", "נציג מכירות", "מחזור", "סכום ששולם", "ערוץ תשלום", "אסמכתת חשבונית",
+               "שליחת קבלה", "שיבוץ", "פתיחה במאנדיי"]
+    assert [h for h in heads_of(outside) if h] == general
+    assert cells_of(outside, "3101")["date"] == "03.11.26" and cells_of(outside, "3101")["receipt"] == "יצאה"
+    assert "fin-where" in cells_of(outside, "3101")["student"]
+    # every row found inside the open list: the refund's columns, as with no search
+    assert [h for h in heads_of(inside) if h] == [h for h in heads_of(plain) if h]
+    assert "תאריך בקשת ביטול" in heads_of(inside) and "ערוץ תשלום" not in heads_of(inside)
+    # the companies: a partly paid charge found from "בפיגור" is drawn under the general columns, with its tile
+    assert "שיבוץ" in heads_of(b2_outside) and "ימים בפיגור" not in heads_of(b2_outside)
+    assert "ימים בפיגור" in heads_of(b2_inside) and "שיבוץ" not in heads_of(b2_inside)
+
+
+def test_a_row_found_by_a_field_its_list_does_not_show_says_which_and_what_it_holds():
+    """QA 3 (24.11): a search "976.19" found a row by its refund amount while the row showed only what was paid (₪1,000).
+    Such a row says, under its name, which field found it and what that field holds - in the field's monday name; a row
+    whose list shows the field, or found by its name, says nothing more."""
+    import html as h
+    v = with_row(view(), sc_row("3107", "תלמיד/ה 7", "refunded", status="תשלום הוחזר", status_idx="4", money_in="1000",
+                                paid_typed="1000", net="23.81", refunded="976.19", refund_typed="976.19",
+                                refund_date="2026-11-10", credit_approved="976.19"))
+    v["b2b"]["rows"][2]["paid_so_far"] = "9000"
+    shows = lambda tab, st, q, **f: {"show": dict({"tab": tab, "query": q}, **({"sc": dict({"state": st, "period": "", "open": {}}, **f)}
+                                                                             if tab == "b2c" else
+                                                                             {"b2": dict({"state": st, "view": "list", "customer": "",
+                                                                                          "open": {}}, **f)}))}
+    got = drive(answer(v), [shows("b2c", "refund_to_execute", "976.19"), shows("b2c", "refunded", "976.19"),
+                            shows("b2c", "tasks", "סייבר"), shows("b2c", "refund_to_execute", "תלמיד/ה 7"),
+                            shows("b2b", "overdue", "9000"), shows("b2b", "partial", "9000"), shows("b2c", "tasks", "")],
+                monday=world())
+    pages = [h.unescape(s["html"]) for s in got["steps"]]
+    found = lambda page, rid: re.findall(r'<span class="fin-found">(.*?)</span>$', cells_of(page, rid).get(
+        "student", cells_of(page, rid).get("charge", "")))
+    # the general columns show what was paid, not the refund: which field found the row, and its value
+    assert found(pages[0], "3107") == ["נמצא לפי: הוחזרו <bdi>976.19 ₪</bdi> · סכום לזיכוי <bdi>976.19 ₪</bdi>"]
+    # "החזר בוצע" shows "הוחזרו": nothing to say
+    assert found(pages[1], "3107") == [] and "fin-found" not in pages[1]
+    # a cohort's title shows only on hover: the row says it was found by its cohort
+    assert found(pages[2], "3101") == ["נמצא לפי: מחזור הגנת סייבר"]
+    # found by its name, which the row shows: nothing more
+    assert "fin-found" not in pages[3]
+    # the companies: "סכום ששולם (כולל מע"מ)" is not a column of the general list, and is one of "שולם חלקית"'s
+    assert found(pages[4], "9903") == ['נמצא לפי: סכום ששולם (כולל מע"מ) <bdi>9,000.00 ₪</bdi>']
+    assert "fin-found" not in pages[5]
+    # no search, no mark
+    assert "fin-found" not in pages[6]
+
+
+def tile_of(html: str, attr: str, key: str) -> str:
+    """A state's tile or pill, as drawn: <div class="fin-state ..." ... data-<attr>="key" ...>...</div>."""
+    m = re.search(r'<div class="(fin-state[^"]*)"[^>]*%s="%s"[^>]*>(.*?)</div>' % (attr, key), html)
+    return (m.group(1) + " | " + re.sub(r"<[^>]+>", " ", m.group(2)).split()[0] + " " +
+            " ".join(re.sub(r"<[^>]+>", " ", m.group(2)).split()[1:])) if m else ""
+
+
+def test_an_empty_state_keeps_its_pill_with_its_0_as_an_empty_tile_keeps_its_tile():
+    """QA 5 (24.11): the pill "ביקש החזר, טרם אושר" disappeared when empty, while an empty task's tile stays with its ✓. Every
+    state stays, an empty one muted with its 0, on both tabs; pressed, its list says it is empty."""
+    got = drive(answer(), [{"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}},
+                           {"click": [{"bstate": "refund_asked"}]},
+                           {"show": {"tab": "b2b", "b2": {"state": "tasks", "view": "list", "customer": "", "open": {}}}}],
+                monday=world())
+    b2c, pressed, b2b = [s["html"] for s in got["steps"]]
+    for key, label in (("refund_asked", "ביקש החזר, טרם אושר"), ("no_money", "ללא תקבול")):
+        assert tile_of(b2c, "data-bstate", key).startswith("fin-state zero dot | 0 " + label), key
+    for key in ("open", "planned", "pending", "paid", "cancelled"):
+        assert tile_of(b2b, "data-b2state", key).startswith("fin-state zero dot | 0 "), key
+    # a state with rows is drawn as before, and "הכל" closes the row
+    assert tile_of(b2c, "data-bstate", "done").startswith("fin-state dot | 1 הושלם")
+    assert re.findall(r'data-bstate="([^"]*)"', b2c)[-5:] == ["refund_asked", "done", "refunded", "no_money", ""]
+    assert "אין כאן תקבולים." in pressed and 'aria-pressed="true" data-bstate="refund_asked"' in pressed
+
+
+def test_a_refresh_on_its_way_has_one_word_on_the_button_and_beside_the_readings_time():
+    """QA 10 (24.11): the refresh button said "מרענן…" and the header "מתעדכן" of the same thing; "מתעדכן" is kept."""
+    assert "מרענן" not in code_of(PAGE)
+    got = drive(steps=[{"click": [{"refresh": "1"}]}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer(refreshing=True)}]})
+    assert got["steps"][0]["pressed"] == {"text": "מתעדכן...", "disabled": True}
+    assert '<span class="fin-refreshing">מתעדכן</span>' in got["first"]
+
+
+def test_a_date_that_was_not_typed_says_by_what_it_is_dated_and_an_empty_value_is_a_dash():
+    """QA 10 (24.11): "יום היצירה" beside a payment date did not read without the legend - it says "(לפי יום היצירה)": in
+    the details and the row's situation as text, in the list's cell drawn around the legend's term by finance.css (the
+    cell's markup is held by tests/test_desk_parity_js.py). And in "החזר בוצע" an empty "תאריך החזר" was an empty cell
+    while every other empty value is "-": so is it now, and every column's empty value."""
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3101":
+            r["date_from"] = "created"
+        if r["id"] == "3105":
+            r["refund_date"] = ""
+    for r in v["b2b"]["rows"]:
+        if r["id"] == "9902":
+            r.update(course="", ctx={"account": "חברה ג", "deal": ""})
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}},
+                            {"show": {"tab": "b2c", "sc": {"state": "refunded", "period": "", "open": {}}}},
+                            {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}}],
+                monday=world())
+    every, refunded, b2_all = [s["html"] for s in got["steps"]]
+    said = '03.11.26 <span class="fin-subtle">(לפי יום היצירה)</span>'
+    assert fact(detail_of(every, "3101"), "תאריך תקבול") == said
+    assert "שולם <bdi>4,000.00 ₪</bdi> ב-03.11.26 (לפי יום היצירה)" in detail_of(every, "3101")
+    assert cells_of(every, "3101")["date"] == '03.11.26 <span class="fin-subtle">יום היצירה</span>'
+    css = (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert 'table.fin-t tbody td.k-date > .fin-subtle::before { content: "(לפי "; }' in css
+    assert 'table.fin-t tbody td.k-date > .fin-subtle::after { content: ")"; }' in css
+    dash = '<span class="fin-subtle">-</span>'
+    assert cells_of(refunded, "3105")["refund_date"] == dash
+    assert cells_of(b2_all, "9902")["due"] == dash and cells_of(b2_all, "9902")["deal"] == dash
+    # no cell of a row is empty: a value, or "-" (the row's box and its button are no values)
+    for page, rid in ((every, "3101"), (refunded, "3105"), (b2_all, "9902")):
+        empty = [k for k, x in cells_of(page, rid).items() if not x.strip() and k not in ("pick", "rowact", "notes")]
+        assert not empty, (rid, empty)
+
+
+def test_a_pending_tile_says_no_amount_while_none_is_typed():
+    """QA 10 (24.11): "ממתין לנתונים ₪0" said there was nothing to bill of charges whose amount is not known yet. With no
+    amount typed the tile says none; a typed amount is summed and said (app/desk/view.py B2B_STATES: "a typed amount may
+    sit here, and the tile sums it")."""
+    def pending(amount):
+        v = view()
+        v["b2b"]["numbers"]["pending"] = {"count": 2, "money": amount}
+        return drive(answer(v), [{"show": {"tab": "b2b", "b2": {"state": "tasks", "view": "list", "customer": "",
+                                                                 "open": {}}}}], monday=world())["steps"][0]["html"]
+    assert tile_of(pending("0"), "data-b2state", "pending") == "fin-state dot | 2 ממתין לנתונים"
+    assert tile_of(pending("1500"), "data-b2state", "pending") == "fin-state dot | 2 ממתין לנתונים 1,500 ₪"
+
+
+def test_a_receipt_sent_on_a_payment_that_brought_no_money_in_is_a_red_chip_and_a_sentence_in_its_details():
+    """The server's new exception (QA 24.11, approved by Nadav; branch qa-server): a payment of "ללא תקבול" whose "שליחת קבלה"
+    is "יצאה" sits in "חריג, לבדיקה" with the flag receipt_no_money. Until the page knew it, the row was there with no
+    chip. The page draws it in the server's words - a contradiction between two columns, so red - in the server's order,
+    and says it in the row's details; tests/test_desk_parity_js.py holds the words and the order to the server's."""
+    v = with_row(view(), sc_row("3108", "תלמיד/ה 8", "exception", status="לא שולם", status_idx="0", money_in="0", counted=False,
+                                paid_typed="4000", net="0", receipt="יצאה", receipt_idx="1", flags=["unlinked", "receipt_no_money"]))
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "exception", "period": "", "open": {"3108": True}}}}],
+                monday=world())
+    html = got["steps"][0]["html"]
+    assert cells_of(html, "3108")["notes"] == (
+        '<div class="fin-chips"><span class="fin-chip bad">שליחת קבלה: יצאה, בסטטוס &quot;לא שולם&quot;</span>'
+        '<span class="fin-chip q">בלי הרשמה ובלי ליד מקור</span></div>')
+    assert ("<li>שליחת קבלה &quot;יצאה&quot;, וסטטוס תשלום &quot;לא שולם&quot;: קבלה יצאה על כסף שלא נכנס</li>"
+            in detail_of(html, "3108"))
+    flags = node(LOAD + "console.log(JSON.stringify(F._flags()));", None)
+    assert flags["all"]["receipt_no_money"] == "שליחת קבלה: יצאה, בסטטוס {status}"
+    order = json.loads(re.search(r"var FLAG_ORDER = (\[.*?\]);", PAGE.read_text(encoding="utf-8"), flags=re.S).group(1))
+    assert order[order.index("refund_date_on_status") + 1] == "receipt_no_money"
+
+
+def test_a_row_that_opens_its_details_says_so_with_a_chevron_at_its_start():
+    """QA 6 (24.11): nothing said a row opens on a click (there is no "פרטים" button). Every row of a list that opens its
+    details carries a chevron at its start - after the box where the row has one, first where the list has none - under
+    an empty header, decorative for a screen reader (the row says aria-expanded); the companies by customer, whose rows
+    open a company's ledger, have none."""
+    got = drive(answer(receipts_view()), [
+        {"show": TASKS}, {"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {"3102": True}}}},
+        {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+        {"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}}],
+        monday=receipts_world(), context=WRITES)
+    tasks, opened, b2_all, customers = [s["html"] for s in got["steps"]]
+    more = ('<td class="k-more"><span class="fin-more" title="פרטים"><svg viewBox="0 0 16 16" width="14" height="14" '
+            'aria-hidden="true" focusable="false">')
+    for html, first in ((tasks, ["k-pick", "k-more", "k-date"]), (b2_all, ["k-more", "k-demand"])):
+        assert re.findall(r'<th class="(k-[a-z_]+)', html)[:len(first)] == first
+        assert '<th class="k-more"></th>' in html
+        rows = re.findall(r'<tr class="fin-rowbtn[^"]*" data-row="[^"]+"', html)
+        assert len(rows) >= 3 and html.count(more) == len(rows)
+    assert '<tr class="fin-rowbtn open" data-row="3102" tabindex="0" aria-expanded="true">' in opened
+    assert "fin-more" not in customers and 'data-customer="7701"' in customers
+    css = (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert "tr.fin-rowbtn.open .fin-more svg { transform: rotate(180deg); }" in css
+
+
+def test_an_open_company_heads_its_tab_with_its_name_and_the_way_back():
+    """QA 7 (24.11): with a company open, its name was only in the list's heading, far down; the sums, "פרטי חיוב" and the
+    tiles above it are that company's alone, with no name. Its name heads the tab now, with the way back, above them; with
+    no company open there is no such head."""
+    got = drive(answer(), [{"show": LEDGER}, {"show": {"tab": "b2b", "b2": {"state": "overdue", "view": "list",
+                                                                               "customer": "7701", "open": {}}}},
+                           {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+                           {"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}}],
+                monday=world(), board=B2_BOARD)
+    ledger, one_tile, every, customers = [s["html"] for s in got["steps"]]
+    head = ('<div class="fin-co"><h2 class="fin-co-name">חברה ג</h2><button class="fin-linkbtn" type="button" '
+            'data-customer="">כל החברות</button></div>')
+    assert head in ledger and ledger.index(head) < ledger.index('class="fin-figs"') < ledger.index("פרטי חיוב")
+    assert ledger.index("פרטי חיוב") < ledger.index('class="fin-states"')
+    assert '<h2 class="fin-co-name">חברה א</h2>' in one_tile
+    assert "fin-co" not in every and "fin-co" not in customers
+
+
+def test_the_way_back_from_a_company_returns_to_the_tile_the_view_and_the_place_she_came_from():
+    """QA 8 (24.11): "כל החברות" went back to "הכל" and "רשימה", not where she came from ("לטיפול" and "לפי לקוח"). A company
+    opened from "לפי לקוח", or from a list by its "אין תנאי תשלום", opens at its top (its name, QA 7); the way back returns
+    to the tile, the view and the height of the page she left - a tile chosen inside the company changes none of them."""
+    customers = {"tab": "b2b", "b2": {"state": "tasks", "view": "customers", "customer": "", "open": {}}}
+    got = drive(answer(), [{"show": customers}, {"scrollY": 420, "click": [{"customer": "7703"}]},
+                           {"click": [{"b2state": "to_bill"}]}, {"click": [{"customer": ""}]},
+                           {"click": [{"b2view": "list"}]}], monday=world(), board=B2_BOARD)
+    _shown, opened, inside, back, listed = got["steps"]
+    assert opened["scrolled"] == 0 and '<h2 class="fin-co-name">חברה ג</h2>' in opened["html"]
+    assert '<h2 class="fin-co-name">חברה ג</h2>' in inside["html"]
+    assert back["scrolled"] == 420 and "fin-co" not in back["html"]
+    assert "<h2>לפי לקוח</h2>" in back["html"] and 'aria-pressed="true" data-b2view="customers"' in back["html"]
+    # and the tile she had chosen before "לפי לקוח" is still hers on the list
+    assert "<h2>לטיפול</h2>" in listed["html"] and 'aria-pressed="true" data-b2state="tasks"' in listed["html"]
+    # from a list's tile, by a company's "אין תנאי תשלום"
+    got = drive(answer(), [{"show": {"tab": "b2b", "b2": {"state": "to_bill", "view": "list", "customer": "", "open": {}}}},
+                           {"scrollY": 150, "click": [{"terms": "7703"}]}, {"click": [{"customer": ""}]}],
+                monday=world(), board=B2_BOARD)
+    _shown, opened, back = got["steps"]
+    assert opened["scrolled"] == 0 and back["scrolled"] == 150
+    assert "<h2>לחיוב החודש</h2>" in back["html"] and 'aria-pressed="true" data-b2state="to_bill"' in back["html"]
+
+
+def totals_call(**params) -> str:
+    """The page's request for a list's totals, as it asks it: its filter in its order, then the reading it shows."""
+    from urllib.parse import quote
+    from tests.desk_page_view import TAKEN
+    return "GET /api/desk/totals?" + "&".join("%s=%s" % (k, quote(v, safe="")) for k, v in list(params.items()) + [("taken", TAKEN)])
+
+
+def test_the_totals_say_the_count_of_tasks_by_customer_and_the_sum_of_every_row_where_the_server_made_it():
+    """QA 11 (24.11): the total row of "לפי לקוח" had nothing under "לטיפול" (a count): it says the companies' tasks now.
+    And the heading of "הכל" had no sum: on the students' tab it is the period's "התקבלו", a figure of the view; on the
+    companies' tab, where the view has none, the server's total of that very list once it lands (the table's last row says
+    the same) - never a sum made in the page, and none while it has not landed or failed."""
+    customers = {"count": 3, "sums": {"to_bill": "20000", "partial_balance": "11650", "partial_count": 1, "partial_unknown": 0,
+                                      "partial_unknown_amount": "0", "open": "22627.12", "overdue": "15000",
+                                      **{"aging_" + k: "0" for k in ("current", "d1_30", "d31_60", "d61_90", "d90", "no_due")}}}
+    every = {"count": 3, "sums": {"amount": "52500", "open_money": "22627.12", "paid_so_far": "9000", "balance": "11650",
+                                  "partial_unknown": 0}}
+    answers = {"GET /api/desk": [{"body": answer()}],
+               totals_call(tab="b2b_customers", q=""): [{"body": customers}],
+               totals_call(tab="b2b", state="", customer="", q=""): [{"body": every}],
+               totals_call(tab="b2b", state="overdue", customer="", q=""): [{"reject": {"error": "http_500"}}]}
+    got = drive(steps=[{"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2b", "b2": {"state": "overdue", "view": "list", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}},
+                       {"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}}],
+                monday=world(), answers=answers)
+    by_customer, b2_all, overdue, b2c_all, tasks = [s["html"] for s in got["steps"]]
+    foot = by_customer[by_customer.index("<tfoot>"):]
+    assert '<td><b>סה"כ</b> <span class="fin-subtle">3 חברות</span></td><td></td>' in foot
+    tasks_at = [c["key"] for c in view()["b2b"]["aging_columns"]].index("tasks")
+    assert re.findall(r"<td[^>]*>(.*?)</td>", foot)[tasks_at] == "3"
+    head = lambda html: re.search(r'<div class="fin-listhead"><div><h2>.*?</h2><div class="fin-subtle">(.*?)</div>', html).group(1)
+    assert head(b2_all) == '3 חיובים · <bdi>52,500 ₪</bdi> ללא מע"מ'
+    assert head(overdue) == 'חיוב אחד · <bdi>15,000 ₪</bdi> ללא מע"מ'          # a state's own, as before
+    assert head(b2c_all) == "5 תקבולים · <bdi>18,450 ₪</bdi>" and head(tasks) == "3 תקבולים"
+    # the companies' "הכל" before its totals land, or when they failed: its count alone
+    got = drive(steps=[{"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}],
+                         totals_call(tab="b2b", state="", customer="", q=""): [{"reject": {"error": "http_500"}}]})
+    assert head(got["steps"][0]["html"]) == "3 חיובים"
+
+
+def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
+    """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
+    link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of
+    the list it exported: a tile, a search over every row, a company's list, the companies by customer."""
+    def exported(monday):
+        return drive(answer(), [
+            {"show": {"tab": "b2c", "query": "", "sc": {"state": "tasks", "period": "", "open": {}}}},
+            {"click": [{"export": "b2c"}]},
+            {"show": {"tab": "b2c", "query": "תלמיד", "sc": {"state": "done", "period": "2026-11", "open": {}}}},
+            {"click": [{"export": "b2c"}]},
+            {"show": {"tab": "b2b", "query": "", "b2": {"state": "overdue", "view": "list", "customer": "", "open": {}}}},
+            {"click": [{"export": "b2b"}]},
+            {"show": {"tab": "b2b", "query": "", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+            {"click": [{"export": "b2b_customers"}]}],
+            monday=monday, answers={"GET /api/desk": [{"body": answer()}],
+                                    "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?x=1"}}] * 4})
+    said = ["קובץ האקסל יורד: 3 תקבולים.", "קובץ האקסל יורד: 5 תקבולים.", "קובץ האקסל יורד: חיוב אחד.",
+            "קובץ האקסל יורד: 3 חברות."]
+    inside = exported(world())
+    assert inside["toasts"] == said and len(inside["executed"]) == 4
+    outside = exported({"absent": True})
+    assert outside["toasts"] == said and outside["executed"] == []
+    # a link that was refused says why, and never that a file is on its way
+    got = drive(answer(), [{"click": [{"export": "b2c"}]}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/export-link": [{"reject": {"error": "not_a_board_member"}}]})
+    assert got["toasts"] == ["התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם."]
+
+
 def test_every_monday_request_of_the_page_goes_through_the_one_door():
     """finance.js calls monday.api in one place (mondayCall) and composes each of its two mutations in one place - the
     columns in mondayWrite, and since D2 (ADR-0188) a billing edit's Update in mondayUpdate; every read - a row before a
@@ -364,14 +684,17 @@ def test_the_page_heads_mondays_columns_by_their_monday_names_and_lays_out_the_r
     """The page's half of the old test; that its states are the server's (B2C_STATES, B2B_STATES) waits for the port."""
     cols = node(LOAD + "console.log(JSON.stringify(F._columns()));", None)
     heads = cols["heads"]
-    assert {k: heads[k] for k in ("received", "receipt", "to_refund", "refunded", "credit_ref", "invoice", "method",
+    assert {k: heads[k] for k in ("received", "receipt", "to_refund", "credit_ref", "invoice", "method",
                                   "refund_date", "asked", "last_day", "planned", "demand", "amount", "paid_so_far",
                                   "account", "course", "status", "payment", "open")} == {
-        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי", "refunded": "סכום החזר",
+        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי",
         "credit_ref": "אסמכתת זיכוי", "invoice": "אסמכתת חשבונית", "method": "אופן החזר", "refund_date": "תאריך החזר",
         "asked": "תאריך בקשת ביטול", "last_day": "מועד אחרון להחזר", "planned": "מועד העברה מתוכנן",
         "demand": "מועד דרישת תשלום", "amount": 'סכום לחיוב (ללא מע"מ)', "paid_so_far": 'סכום ששולם (כולל מע"מ)',
         "account": "חברה", "course": "קוד קורס", "status": "מצב חיוב", "payment": "סטטוס תשלום", "open": "פתיחה במאנדיי"}
+    # the refund counted is the desk's own word, as the tab's figure and the Excel file call it (QA 24.11): under "סכום
+    # החזר" it read as monday's column, which a refund's details show as it is
+    assert heads["refunded"] == "הוחזרו" and "סכום החזר" not in heads.values()
     refund = cols["sc"]["refund_to_execute"]
     i = refund.index("last_day")
     assert refund[i - 1:i + 2] == ["asked", "last_day", "planned"]              # the two dates side by side
@@ -713,11 +1036,32 @@ def test_the_bar_offers_each_action_its_picked_rows_offer_and_a_batch_takes_only
     assert 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(1)</span>' in bar
     assert 'data-batch="refund_done">סימון "תשלום הוחזר" <span class="fin-subtle">(1)</span>' in bar
     assert [i["key"] for i in got["steps"][3]["batch"]["items"]] == ["sc:3103"]
-    # a pick in a list that is not on the screen is not in its bar, nor in its batch
+    # a pick in a list that is not on the screen is not in its bar, nor in its batch: that list's bar says none is picked
     got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]},
                        {"show": {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}}],
                 monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
-    assert "נבחרה שורה אחת" in got["steps"][1]["html"] and "fin-batchbar" not in got["steps"][2]["html"]
+    assert "נבחרה שורה אחת" in got["steps"][1]["html"]
+    assert "נבחרה שורה אחת" not in got["steps"][2]["html"] and "fin-batchbar idle" in got["steps"][2]["html"]
+
+
+def test_the_bar_holds_its_place_wherever_the_list_offers_a_box_and_says_what_the_box_is_for():
+    """QA 1 (24.11): ticking the first row's box inserted the bar above the table, the rows moved down ~58px, and the click
+    aimed at the second row's box unticked the first. The bar is there before any pick, quiet, wherever a row of the list
+    carries a box - and only there: a list with no box, or a person who may not write, has none."""
+    hint = "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד."
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3102"}]},
+                       {"show": {"tab": "b2c", "sc": {"state": "done", "period": "", "open": {}}}}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    idle, one, none, no_box = [s["html"] for s in got["steps"]]
+    bar = '<div class="fin-batch fin-batchbar idle" role="group" aria-label="השורות שנבחרו"><span>%s</span></div>' % hint
+    assert bar in idle and bar in none and hint not in one
+    assert 'class="fin-batch fin-batchbar" role="group"' in one and "נבחרה שורה אחת" in one
+    # the bar sits where it did, between the list's head and its table, in both
+    for html in (idle, one):
+        assert html.index("fin-listhead") < html.index("fin-batchbar") < html.index('<table class="fin-t">')
+    assert "fin-batchbar" not in no_box and "data-pick" not in no_box
+    got = drive(answer(receipts_view()), [{"show": TASKS}], monday={"absent": True})
+    assert "fin-batchbar" not in got["steps"][0]["html"]
 
 
 def test_a_new_pick_after_a_batch_drops_its_report_and_shows_the_bar_and_a_confirmation_cancelled_writes_nothing():

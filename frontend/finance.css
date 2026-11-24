@@ -118,11 +118,16 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-stategroup.rest .fin-state.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: var(--c); flex: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
 #screen-finance .fin-stategroup:not(.rest) .fin-state.dot .l::before { margin-top: calc(.65em - 4px); }
-/* nothing in it, nothing to mark: an empty state's dot is grey */
-#screen-finance .fin-stategroup:not(.rest) .fin-state.zero.dot .l::before { background: var(--fin-pending); }
+/* nothing in it, nothing to mark: an empty state's dot is grey - a tile's, and since QA 5 (24.11) a pill's, which now stays
+   with its 0 */
+#screen-finance .fin-stategroup:not(.rest) .fin-state.zero.dot .l::before,
+#screen-finance .fin-stategroup.rest .fin-state.zero.dot::before { background: var(--fin-pending); }
 
 /* the list: one panel, its head inside it, then the table */
-#screen-finance .fin-panel { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; overflow: hidden; }
+/* the panel clips its corners without being a scroll box ("clip", where a browser has it): a table's header held on top
+   then sticks to the view as the page scrolls (QA 9) */
+#screen-finance .fin-panel { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; overflow: hidden;
+  overflow: clip; }
 #screen-finance .fin-listhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 14px 16px 12px; }
 #screen-finance .fin-listhead h2 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
 /* a chosen state's sentence: what is in the list and why, in monday's labels, quiet under the list's title */
@@ -151,8 +156,12 @@ body[data-theme="dark"] #screen-finance {
    sideways scrollbar sat under the last row. Now the long cells wrap (names, chips, headers), so a list fits the panel on
    a laptop; where it still cannot (a phone), the table scrolls inside a box no taller than the screen, its header held
    on top, so the sideways scrollbar is always within reach */
-#screen-finance .fin-tw { position: relative; overflow: auto; max-height: 78vh; -webkit-overflow-scrolling: touch;
-  container-type: inline-size; }
+/* QA 9 (24.11): the table scrolled inside a frame of 78% of the view (about six rows inside monday) in a page that scrolls
+   too. A table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view - and
+   only one wider than its frame (a narrow view; finance.js fitFrames measures it) scrolls in a frame as tall as the view,
+   its sideways scrollbar in reach once the frame is in view */
+#screen-finance .fin-tw { position: relative; container-type: inline-size; }
+#screen-finance .fin-tw.fin-tw-x { overflow: auto; max-height: calc(100vh - 16px); -webkit-overflow-scrolling: touch; }
 #screen-finance table.fin-t { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 #screen-finance table.fin-t thead { position: sticky; top: 0; z-index: 1; }
 #screen-finance table.fin-t th { font-weight: 600; font-size: 12.5px; color: var(--fin-muted); text-align: right; padding: 8px 10px;
@@ -170,15 +179,31 @@ body[data-theme="dark"] #screen-finance {
 /* a row a search found outside the open list: its own tile under its name (D2, 1.2) */
 #screen-finance .fin-where { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); }
 #screen-finance .fin-where .fin-statechip { font-size: 12.5px; }
+/* QA 3 (24.11): a searched row found by a field its list does not show: which, and what it holds - quiet, under the name,
+   wrapping rather than widening the name's column */
+#screen-finance .fin-found { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); white-space: normal; }
 /* a company's and a deal's name wrap rather than widen the table; a date stays in one piece */
 #screen-finance table.fin-t td.k-account { min-width: 96px; }
 #screen-finance table.fin-t td.k-deal { min-width: 140px; }
 #screen-finance table.fin-t .k-date, #screen-finance table.fin-t td.k-demand, #screen-finance table.fin-t .k-planned,
 #screen-finance table.fin-t .k-refund_date, #screen-finance table.fin-t .k-asked, #screen-finance table.fin-t .k-last_day { white-space: nowrap; }
 #screen-finance table.fin-t td.k-due { min-width: 84px; }
+/* QA 10 (24.11): beside a payment date that was not typed, "(לפי יום היצירה)", on a line of its own under the date. The
+   cell's markup is the legend's term alone (finance.js paidDate; tests/test_desk_parity_js.py holds it), so the words
+   around it are drawn here; the details and the row's situation write them in full (paidDateSaid, CREATED_BY) */
+#screen-finance table.fin-t tbody td.k-date > .fin-subtle { display: block; white-space: normal; }
+#screen-finance table.fin-t tbody td.k-date > .fin-subtle::before { content: "(לפי "; }
+#screen-finance table.fin-t tbody td.k-date > .fin-subtle::after { content: ")"; }
 #screen-finance table.fin-t td.k-charge { min-width: 180px; }
 /* what to look at: its chips wrap inside the cell, never past the frame */
 #screen-finance table.fin-t td.k-notes { min-width: 170px; }
+/* QA 4 (24.11): at full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut
+   to "פר" and reached only by scrolling sideways: their widest cells could not wrap. A state's name and the totals' label
+   may wrap now, in their cell, rather than push the last column out (the date's "(לפי יום היצירה)" sits under the date);
+   a state's dot stays on its first line */
+#screen-finance table.fin-t td .fin-statechip { white-space: normal; align-items: flex-start; }
+#screen-finance table.fin-t td .fin-statechip::before { margin-top: calc(.725em - 4px); }
+#screen-finance table.fin-t tfoot td:not(.n) { white-space: normal; }
 #screen-finance table.fin-t td .fin-chip { white-space: normal; border-radius: 10px; }
 #screen-finance table.fin-t .k-open { width: 44px; text-align: center; }
 /* a row's name opens its monday card: a link by its underline, in the ink of the row until it is pointed at */
@@ -191,6 +216,15 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance a.fin-open:hover, #screen-finance a.fin-open:focus-visible { color: var(--fin-link); background: var(--fin-panel);
   box-shadow: inset 0 0 0 1px var(--fin-line); }
 #screen-finance tr.fin-rowbtn { cursor: pointer; }
+/* QA 6 (24.11): a row that opens its details says so at its start: a chevron, in the link's colour while the row is
+   pointed at, turned while its details are open. A narrow column: after the box it takes the box's side of the gap, and
+   first in a row it keeps the panel's own margin */
+#screen-finance table.fin-t .k-more { width: 22px; padding-inline-start: 4px; padding-inline-end: 0; color: var(--fin-muted); }
+#screen-finance .fin-more { display: inline-flex; vertical-align: middle; }
+#screen-finance .fin-more svg { transition: transform .15s ease; }
+#screen-finance tr.fin-rowbtn.open .fin-more svg { transform: rotate(180deg); }
+#screen-finance tr.fin-rowbtn:hover .fin-more, #screen-finance tr.fin-rowbtn:focus-visible .fin-more { color: var(--fin-link); }
+@media (prefers-reduced-motion: reduce) { #screen-finance .fin-more svg { transition: none; } }
 #screen-finance tr.fin-rowbtn:hover td { background: var(--fin-soft); }
 #screen-finance tr.fin-rowbtn:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: -2px; }
 #screen-finance tr.fin-rowbtn.open td { background: var(--fin-soft); border-bottom-color: transparent; }
@@ -231,6 +265,9 @@ body[data-theme="dark"] #screen-finance {
   #screen-finance .fin-state.anchor { grid-column: 1 / -1; }
   #screen-finance .fin-state.anchor .n { font-size: 26px; }
 }
+/* QA 7 (24.11): an open company heads its tab - its name, and the way back to every company beside it */
+#screen-finance .fin-co { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 12px; }
+#screen-finance .fin-co-name { margin: 0; font-size: 19px; font-weight: 600; }
 /* the companies tab: the list / by-customer switch */
 #screen-finance .fin-seg { display: inline-flex; }
 #screen-finance .fin-seg .fin-btn { border-radius: 0; }
@@ -347,9 +384,12 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-btn.fin-rowact { height: 28px; padding: 0 10px; font-size: 13px; }
 #screen-finance .fin-batch { margin: 0 16px 12px; }
 #screen-finance .fin-batch .fin-act-msg { margin-top: 0; }
-#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+/* QA 1 (24.11): the bar has one height whether a row is picked or not (its buttons the row's own size), and holds its
+   place wherever the list offers a box - quiet while nothing is picked - so a pick never moves the rows */
+#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 42px; padding: 6px 12px;
   border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-sel); font-size: 14px; }
-#screen-finance .fin-batchbar .fin-btn { gap: 6px; }
+#screen-finance .fin-batchbar .fin-btn { gap: 6px; height: 28px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-batchbar.idle { border-color: var(--fin-line); background: transparent; color: var(--fin-muted); font-size: 13px; }
 #screen-finance .fin-batch-plan ul, #screen-finance .fin-batch-done ul { max-height: 220px; overflow: auto; }
 #screen-finance .fin-batch-done p { margin: 6px 0 2px; font-size: 14px; }
 #screen-finance .fin-batch-done ul { margin: 0; padding-inline-start: 18px; font-size: 14px; }
