@@ -441,9 +441,28 @@ def test_the_table_has_analiza_metrics_columns_type_for_type(pg):
                    ("at", "timestamp with time zone", "NO", "now()"),
                    ("user_id", "bigint", "NO", None), ("session", "text", "NO", None), ("desk", "text", "NO", None),
                    ("kind", "text", "NO", None), ("tab", "text", "NO", "''::text"), ("state", "text", "NO", "''::text"),
-                   ("page_ms", "bigint", "NO", "0"), ("detail", "jsonb", "NO", "'{}'::jsonb")]
+                   ("page_ms", "bigint", "NO", "0"), ("detail", "jsonb", "NO", "'{}'::jsonb"),
+                   # the import's key (the move plan §4.4), after analiza-metrics' ten columns
+                   ("source", "text", "NO", "'analiza-finance'::text"), ("source_id", "bigint", "YES", None)]
     indexes = _sql(pg, "SELECT indexname FROM pg_indexes WHERE tablename = 'desk_events' ORDER BY indexname")
-    assert [i for (i,) in indexes] == ["desk_events_at", "desk_events_pkey", "desk_events_user_at"]
+    assert [i for (i,) in indexes] == ["desk_events_at", "desk_events_pkey", "desk_events_source", "desk_events_user_at"]
+
+
+@needs_pg
+def test_the_import_key_never_doubles_an_imported_row_and_never_binds_a_row_written_here(pg):
+    import psycopg
+
+    migrate.apply_migrations(pg)
+    ins = ("INSERT INTO desk_events (user_id, session, desk, kind, source, source_id) "
+           "VALUES (7, 's', 'finance', 'open', %s, %s)")
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute(ins, ("analiza-finance", None))
+        conn.execute(ins, ("analiza-finance", None))  # rows written here carry no source_id: never bound
+        conn.execute(ins, ("analiza-metrics", 41))
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            conn.execute(ins, ("analiza-metrics", 41))  # the same old row imported twice
+        assert conn.execute("SELECT count(*) FROM desk_events").fetchone()[0] == 3
+        assert conn.execute("SELECT source FROM desk_events ORDER BY id LIMIT 1").fetchone()[0] == "analiza-finance"
 
 
 def test_a_url_that_cannot_be_parsed_is_unreachable_by_its_class_never_its_text():
@@ -491,7 +510,12 @@ CREATE INDEX IF NOT EXISTS desk_events_user_at ON desk_events (user_id, at);
 def test_the_store_and_the_migration_name_the_same_usage_columns_and_the_table_is_analiza_metrics_004():
     sql = (migrate.MIGRATIONS_DIR / "005_desk_events.sql").read_text(encoding="utf-8")
     statements = "".join(line + "\n" for line in sql.splitlines() if not line.startswith("--"))
-    assert statements == METRICS_004
+    # analiza-metrics' 004, and the import's key (two columns at the end of the table, one unique index)
+    expected = METRICS_004.replace(
+        "  detail    jsonb NOT NULL DEFAULT '{}'::jsonb\n);",
+        "  detail    jsonb NOT NULL DEFAULT '{}'::jsonb,\n  source    text NOT NULL DEFAULT 'analiza-finance',\n"
+        "  source_id bigint\n);") + "CREATE UNIQUE INDEX IF NOT EXISTS desk_events_source ON desk_events (source, source_id);\n"
+    assert statements == expected
     body = sql[sql.index("CREATE TABLE IF NOT EXISTS desk_events"):]
     for col in store.DESK_TABLES["desk_events"]:
         assert "\n  %s " % col in body, col

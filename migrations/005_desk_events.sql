@@ -1,7 +1,9 @@
 -- 005_desk_events: how the desk is used (Analiza-Monday backlog 0301 D2). CREATE only.
 --
 -- analiza-metrics' migrations/004_desk_events.sql at da671b2, statement for statement: the same columns, types, defaults
--- and indexes, so D5 imports that history into this table row for row (the desk move plan §4.4). Nadav, 16.11: "נתוני
+-- and indexes, so D5 imports that history into this table row for row (the desk move plan §4.4). Plus the import's key, now
+-- and not in a later ADD: `source` ('analiza-finance' for a row written here, 'analiza-metrics' for an imported one) and
+-- `source_id` (the old row's id; NULL here), unique together, so an import run twice never doubles a row. Nadav, 16.11: "נתוני
 -- שימוש שלה שם, כדי שנוכל לשפר את זה עם הזמן".
 --
 -- One row per thing a reader did on the desk's page - opened it, chose a tab, a state or a period, searched, opened a
@@ -29,7 +31,10 @@ CREATE TABLE IF NOT EXISTS desk_events (
   tab       text NOT NULL DEFAULT '',
   state     text NOT NULL DEFAULT '',
   page_ms   bigint NOT NULL DEFAULT 0,
-  detail    jsonb NOT NULL DEFAULT '{}'::jsonb
+  detail    jsonb NOT NULL DEFAULT '{}'::jsonb,
+  source    text NOT NULL DEFAULT 'analiza-finance',
+  source_id bigint
 );
 CREATE INDEX IF NOT EXISTS desk_events_at ON desk_events (at);
 CREATE INDEX IF NOT EXISTS desk_events_user_at ON desk_events (user_id, at);
+CREATE UNIQUE INDEX IF NOT EXISTS desk_events_source ON desk_events (source, source_id);
