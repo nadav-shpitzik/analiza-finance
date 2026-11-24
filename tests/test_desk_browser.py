@@ -44,8 +44,9 @@ BANK = {"text_mm8cxm9y": "בעל/ת החשבון", "text_mm8cv3v3": "12", "text_
 VAT = {"7701": "500000001", "7702": "", "7703": "500000027"}
 
 
-def stub_app(log: list):
-    """This service's page routes, behind a stub of D2's API that records every request it is asked."""
+def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None):
+    """This service's page routes, behind a stub of D2's API that records every request it is asked: the hand-made view,
+    or `v`; a refresh answers `refreshed` when given (the reading after a write)."""
     from fastapi import FastAPI, Request
     from fastapi.responses import Response
 
@@ -53,7 +54,8 @@ def stub_app(log: list):
     from app.main import CSP
 
     app = FastAPI()
-    refreshed = {"n": 0}
+    count = {"n": 0}
+    held = {"view": v if v is not None else view()}       # the reading this stub holds: the latest it answered
 
     @app.middleware("http")
     async def record(request: Request, call_next):
@@ -66,24 +68,27 @@ def stub_app(log: list):
 
     @app.get("/api/desk")
     def desk():
-        return answer()
+        return answer(v) if v is not None else answer()
 
     @app.post("/api/desk/refresh")
     def refresh():
-        refreshed["n"] += 1
-        return answer(taken_at="2026-11-24T08:00:%02d+00:00" % (10 + refreshed["n"]))
+        count["n"] += 1
+        taken = "2026-11-24T08:00:%02d+00:00" % (10 + count["n"])
+        if refreshed is not None:
+            held["view"] = refreshed
+        return answer(held["view"], taken_at=taken)
 
     @app.get("/api/desk/totals")
     def totals(tab: str = "b2c", state: str = ""):
-        v = view()
+        shown = held["view"]
         if tab == "b2b_customers":
-            rows = v["b2b"]["customers"]
-            keys = ["to_bill", "partial_balance", "open"] + ["aging_" + b["key"] for b in v["b2b"]["bands"]]
+            rows = shown["b2b"]["customers"]
+            keys = ["to_bill", "partial_balance", "open"] + ["aging_" + b["key"] for b in shown["b2b"]["bands"]]
             sums = {k: str(sum(Decimal((c["aging"][k[6:]] if k.startswith("aging_") else c[k]) or 0) for c in rows))
                     for k in keys}
             sums.update(partial_count=sum(c["partial_count"] for c in rows), partial_unknown=0)
             return {"count": len(rows), "sums": sums}
-        part = v["b2c"] if tab == "b2c" else v["b2b"]
+        part = shown["b2c"] if tab == "b2c" else shown["b2b"]
         tasks = {s["key"] for s in part["states"] if s["task"]}
         rows = [r for r in part["rows"] if not state or (r["state"] in tasks if state == "tasks" else r["state"] == state)]
         fields = ("money_in", "refunded", "credit_approved") if tab == "b2c" else ("amount", "open_money", "paid_so_far", "balance")
