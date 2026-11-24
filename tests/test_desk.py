@@ -508,6 +508,7 @@ def desk(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     main.app.state.monday_transport = w.transport()
     main.app.state.desk = None
+    main.app.state.usage = None
     main.app.state.frontend_dir = None
 
     class D:
@@ -519,6 +520,7 @@ def desk(monkeypatch):
     yield d
     main.app.state.monday_transport = None
     main.app.state.desk = None
+    main.app.state.usage = None
 
 
 def test_without_the_client_secret_the_desk_says_so_and_asks_monday_nothing(desk, monkeypatch):
@@ -642,7 +644,8 @@ def test_the_audit_line_names_the_user_and_never_the_token(desk, caplog):
 def test_health_says_the_desk_without_a_count_or_a_secret(desk):
     before = desk.client.get("/health").json()["desk"]
     assert before == {"client_secret_set": True, "monday_token_set": True, "page": "/desk/", "last_reading": None,
-                      "members": {}}
+                      "members": {}, "usage": {"batches": 0, "stored": 0, "refused": 0, "failed": 0, "last_at": None,
+                                               "last_error": None}}
     desk.get(session_token(1))
     text = desk.client.get("/health").text
     after = json.loads(text)["desk"]

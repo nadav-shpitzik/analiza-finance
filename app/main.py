@@ -13,7 +13,8 @@ and the receiving host. Neither returns the key, a session string or the databas
 
 Since D1 of backlog 0301 (24.11) it also serves Chava's finance desk as it moves here (app/desk/): the page /desk/ of the
 monday Board View "כספים", and /api/desk behind the monday sessionToken and the charge boards' membership; since D2 the
-desk itself there, its refresh, its totals and its Excel files (app/desk/routes.py).
+desk itself there, its refresh, its totals and its Excel files, and POST /api/usage, how the desk is used, kept in
+`desk_events` (app/desk/routes.py).
 """
 
 from __future__ import annotations
@@ -105,9 +106,10 @@ async def security_headers(request: Request, call_next):
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request: Request, exc: RequestValidationError):
     """The desk's routes speak a closed vocabulary (analiza-metrics, the same handler for its /api): a body or a query that
-    does not fit them - a field the export link does not know, a user id that is not a number - is 400 `invalid_filter`,
-    never FastAPI's 422, which says back what was sent. Every other route keeps FastAPI's own answer."""
-    if request.url.path.startswith("/api/desk"):
+    does not fit them - a field the export link does not know, a user id that is not a number, a usage batch that carries
+    a user id - is 400 `invalid_filter`, never FastAPI's 422, which says back what was sent. Every other route keeps
+    FastAPI's own answer."""
+    if request.url.path.startswith("/api/desk") or request.url.path == "/api/usage":
         return JSONResponse({"error": "invalid_filter"}, status_code=400)
     return await request_validation_exception_handler(request, exc)
 

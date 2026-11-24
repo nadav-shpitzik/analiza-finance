@@ -17,11 +17,12 @@
 - GET /api/desk/totals: a list's totals exactly as the page filters it, from the reading the page shows; never a read.
 - POST /api/desk/export-link, GET /api/desk/export.xlsx: a list as an Excel file (app/desk/export.py) behind a link signed
   with this service's own key, EXPORT_LINK_S long.
+- POST /api/usage: what the reader did on the page, as closed words and counts (app/desk/usage.py), kept in `desk_events`
+  (app/desk/store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
 
 D2's routes are analiza-metrics app/finance_api.py at `da671b2` (`finance_view`, `finance_refresh`, `finance_totals`,
-`finance_export_link`, `finance_export_file`) on this service's gate and reading, with what changed said at each. Not
-ported: POST /api/finance/account (ADR-0188: a customer's billing details are the person's write, in the browser) and
-POST /api/usage (a later step: it needs a table, so a migration).
+`finance_export_link`, `finance_export_file`, `usage`) on this service's gate and reading, with what changed said at each.
+Not ported: POST /api/finance/account (ADR-0188: a customer's billing details are the person's write, in the browser).
 
 Nothing the page or its assets carry is data: everything comes from /api/desk, behind the sessionToken, and what the server
 never reads (an ID number, a refund's bank account, a company's ח.פ) the page reads from monday as the person. The service
@@ -52,8 +53,11 @@ from pydantic import BaseModel, ConfigDict
 
 from .. import config
 from ..monday.client import MondayReader
-from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, err, gate
+from .auth import AuthError, verify_session_token
+from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
+from .store import UsageStoreError, append_events
+from .usage import Refused, UsageStats, clean_batch
 from .view import (B2B_STATES, B2C_STATES, DESK_TZ, build_view, filter_b2b, filter_b2c, filter_customers, json_safe,
                    list_totals, query_exportable, today_in, visible_part)
 
@@ -92,10 +96,17 @@ EXPORT_KEY_CONTEXT = b"analiza-finance-desk-export|"
 # the lists a total or a file is of: the students', the companies', the aging by customer
 TABS = ("b2c", "b2b", "b2b_customers")
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# How the desk is used (analiza-metrics' limits, app/finance_api.py at da671b2): the page sends its events in batches -
+# when 20 wait, 30 seconds after the first, and when it goes out of sight - so an hour of steady work is some 120 batches
+# at most. They have their own limit and never take from the reader's desk budget (DESK_PER_USER_HOUR), which the desk's
+# own reads need.
+USAGE_BATCHES_PER_USER_HOUR = 240
+USAGE_BATCHES_PER_DAY = 20000
 
 _hashes: dict = {}
 _hash_lock = threading.Lock()
 _state_lock = threading.Lock()
+_usage_lock = threading.Lock()
 
 
 # ---- the state of one instance: the members, the reading, the budget ----------------------------------------------
@@ -132,16 +143,30 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
         return made
 
 
+def usage_state(state: Any) -> SimpleNamespace:
+    """One per instance: the usage batches' own limiter, and what /health says of them. Apart from desk_state, which is
+    made again when the monday token changes: a batch needs no monday, and its counts outlive a new token."""
+    with _usage_lock:
+        current = getattr(state, "usage", None)
+        if current is None:
+            current = SimpleNamespace(limiter=RateLimiter(USAGE_BATCHES_PER_USER_HOUR, USAGE_BATCHES_PER_DAY),
+                                      stats=UsageStats())
+            state.usage = current
+        return current
+
+
 def health_block(state: Any, cfg: config.Config) -> dict:
-    """The desk in /health: whether its two secrets are set, this instance's last reading (no count of rows), and whether
-    each board's members were read. Never a secret, a user or a row."""
+    """The desk in /health: whether its two secrets are set, this instance's last reading (no count of rows), whether
+    each board's members were read, and the usage batches: written, events refused, writes failed (`usage`). Never a
+    secret, a user, a row or an event."""
     from .reading import health_part
 
     current = getattr(state, "desk", None)
     return {"client_secret_set": bool(cfg.monday_client_secret), "monday_token_set": bool(cfg.monday_token),
             "page": "/desk/",
             "last_reading": None if current is None else health_part(current.reading.last),
-            "members": {} if current is None else current.members.state()}
+            "members": {} if current is None else current.members.state(),
+            "usage": usage_state(state).stats.health()}
 
 
 # ---- the page and its assets ----------------------------------------------------------------------------------------
@@ -563,3 +588,69 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         name, ascii_name = b2b_file_names(state_label, state, who, customer, today)
     _audit_link(u, "file", len(rows))
     return Response(content=data, headers=download_headers(name, ascii_name), media_type=XLSX)
+
+
+# ---- how the desk is used -------------------------------------------------------------------------------------------
+class UsageBody(BaseModel):
+    """A batch of usage events from the desk's page: the desk, the visit's random id, the events. Every part is checked by
+    app/desk/usage.py `clean_batch`; a field outside these three (a user id above all: it is the session's) is refused like
+    every body of the desk's that does not fit, 400 `invalid_filter` (app/main.py; analiza-metrics `UsageBody`)."""
+    model_config = ConfigDict(extra="forbid")
+    desk: Any = None
+    session: Any = None
+    events: Any = None
+
+
+@router.post("/api/usage")
+def desk_usage(request: Request, body: UsageBody) -> JSONResponse:
+    """A batch of what the reader did on the desk's page (Nadav 16.11: her usage, to improve the desk over time;
+    analiza-metrics `usage`, the same contract). Any signed-in reader of Analiza's account, for their own user id only:
+    the sessionToken and nothing else of the gate - no board's membership (the desk refusing someone is itself an event,
+    `load_failed`), no guest refusal, and never the reader's desk budget. Each event is checked against the closed
+    vocabulary, where a name, an amount, a search's text or an ID number cannot pass. Its own limit (USAGE_BATCHES_*).
+
+    `{stored, refused}`; 400 `bad_usage` for a batch of another shape; 503 `usage_unavailable` when nothing can be kept -
+    no DATABASE_URL, no table (`store_schema`), or a write that failed - said in /health's `desk.usage` by its word. The
+    page stops sending for the visit at its first failure, quietly. sync def on purpose: one short database write.
+
+    What changed with the move: the token is checked by this service's auth (Analiza's account pinned, nothing unpins
+    it); a batch that finds no database is counted in /health as `no_store` (analiza-metrics did not count it); a failed
+    write is said by the store's kind, not only its class; and the audit line is the desk's, `outcome=ok` or
+    `some_refused` with the events kept as `results` (the refused ones are counted in /health)."""
+    cfg = config.load()
+    if not cfg.monday_client_secret:
+        audit(None, "usage", "app_not_configured")
+        return err(503, "app_not_configured", missing=["MONDAY_CLIENT_SECRET"])
+    try:
+        identity = verify_session_token(bearer(request), cfg.monday_client_secret)
+    except AuthError as exc:
+        audit(None, "usage", exc.error_key)
+        return err(401, exc.error_key)
+    us = usage_state(request.app.state)
+    wait = us.limiter.check(identity.user_id)
+    if wait is not None:
+        audit(identity, "usage", "rate_limited")
+        return err(429, "rate_limited", headers={"Retry-After": str(wait)}, retry_after_seconds=wait)
+    try:
+        rows, refused = clean_batch(body.model_dump(), identity.user_id)
+    except Refused as r:
+        us.stats.note(error=r.code)
+        audit(identity, "usage", r.code)
+        return err(400, r.code)
+    if not cfg.database_url:
+        us.stats.note(refused=refused, error="no_store")
+        audit(identity, "usage", "no_store")
+        return err(503, "usage_unavailable")
+    try:
+        stored = append_events(cfg.database_url, rows)
+    except Exception as exc:  # noqa: BLE001 - said by its kind or its class, never its text; the page drops the batch
+        word = exc.kind if isinstance(exc, UsageStoreError) else type(exc).__name__
+        detail = exc.detail if isinstance(exc, UsageStoreError) else ""
+        us.stats.note(refused=refused, error=word)
+        logger.warning("usage not written (%s%s)", word, " " + detail if detail else "")
+        audit(identity, "usage", word)
+        return err(503, "usage_unavailable")
+    us.stats.note(stored=stored, refused=refused)
+    # closed words and one count: the refused events are counted in /health, never named
+    audit(identity, "usage", "some_refused" if refused else "ok", stored)
+    return JSONResponse({"stored": stored, "refused": refused})
