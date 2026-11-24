@@ -516,3 +516,51 @@ def test_the_file_writes_what_the_page_writes_for_a_nameless_label_and_a_company
     assert [charges[i]["תנאי תשלום"] for i in ("3", "4", "5")] == [fd.NO_TERMS, "שוטף+30", None]
     _h, ledger, _i = sheet(desk, {"tab": "b2b", "state": "", "customer": "A1"}, "חיובים")
     assert [r["תנאי תשלום"] for r in ledger.values()] == [fd.NO_TERMS]
+
+
+def test_each_total_is_also_a_number_in_the_second_sheet_the_files_own_as_made(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: the row under the list is a SUBTOTAL formula with no stored value: Excel computes it on opening the file,
+    and a preview (a phone, Quick Look) may show it empty. The formula stays - it follows the filter - and the second sheet
+    gives each total as a number, under a line that says they are the file's as made: the sum of the very cells the
+    formula sums, and for the students the page's own totals of the same list."""
+    s = snap([sc(1, st="4", paid="5000", refund="6000"), sc(2, paid="1234.56", credit_approved="100"), sc(3, st="0", paid="300")],
+             [b2(1, payment="0", amount="10000", paid="5000"), b2(2, payment="0", amount="2000"),
+              b2(3, payment="2", due="2026-09-01"), b2(4, billing="2", amount="50000")])
+    served(monkeypatch, s)
+    for body, name in (({"tab": "b2c", "state": ""}, "תקבולים"), ({"tab": "b2b", "state": ""}, "חיובים"),
+                       ({"tab": "b2b_customers"}, "לפי לקוח")):
+        wb = book(desk, body)
+        ws = wb[name]
+        heads, formulas = [x.value for x in ws[1]], total_row(wb[name])
+        info = [(r[0].value, r[1].value) for r in wb["פרטים"].iter_rows()]
+        keys, said = [k for k, _v in info], dict(info)
+        at = keys.index(fx.FILE_TOTALS[0])
+        assert formulas and '"%s"' % name in said[fx.FILE_TOTALS[0]] and "כפי שהופק" in fx.FILE_TOTALS[0]
+        # one number per formula, in the columns' order, right under the line that says what they are
+        assert keys[at + 1:at + 1 + len(formulas)] == [fx.total_label(h) for h in heads if h in formulas]
+        for h in formulas:
+            cells = [ws.cell(row=i, column=heads.index(h) + 1).value for i in range(2, said["שורות"] + 2)]
+            assert round(said[fx.total_label(h)], 2) == round(sum(v for v in cells if isinstance(v, (int, float))), 2), h
+    page = fd.list_totals("b2c", fd.filter_b2c(fd.build_view(s, TODAY)["b2c"], "", "", ""))
+    wb = book(desk, {"tab": "b2c", "state": ""})
+    said = {r[0].value: r[1].value for r in wb["פרטים"].iter_rows()}
+    assert [said['סה"כ ' + h] for h in ("סכום ששולם", fd.REFUNDED_WORD, "סכום לזיכוי")] == \
+        [float(page[k]) for k in ("money_in", "refunded", "credit_approved")] == [6234.56, 5000, 100]
+    # a header that says "סה"כ" itself is not said twice
+    assert fx.total_label('סה"כ יתרה פתוחה (ללא מע"מ)') == 'סה"כ יתרה פתוחה (ללא מע"מ)'
+
+
+def test_the_companies_file_says_its_paid_totals_leave_out_a_partly_paid_charge_without_its_paid_amount(desk, monkeypatch):  # noqa: F811
+    """The page gives "סכום ששולם (כולל מע"מ)" and "יתרה לגבייה" no total while a partly paid charge in its list has no paid
+    amount typed ("חסר ב-..."); the file's totals of the two, now numbers in its second sheet too, are without it, and say so."""
+    served(monkeypatch, snap([sc(1)], [b2(1, payment="0", amount="10000", paid="5000"), b2(2, payment="0", amount="2000")]))
+    said = {r[0].value: r[1].value for r in book(desk, {"tab": "b2b", "state": "partial"})["פרטים"].iter_rows()}
+    assert said['סה"כ יתרה לגבייה (כולל מע"מ)'] == 6800 and said['סה"כ סכום ששולם (כולל מע"מ)'] == 5000
+    assert said["שימו לב"].startswith('חיוב אחד ב"שולם חלקית" בלי סכום ששולם (כולל מע"מ)') and "בלעדיו" in said["שימו לב"]
+
+    def notes(*charges):
+        rows = fd.filter_b2b(fd.build_view(snap([sc(1)], list(charges)), TODAY)["b2b"], "partial", "", "")
+        return [r[1].value for r in openpyxl.load_workbook(io.BytesIO(fx.b2b_workbook(rows, {})))["פרטים"].iter_rows()
+                if r[0].value == "שימו לב"]
+    assert notes(b2(1, payment="0", amount="10000", paid="5000")) == []
+    assert notes(b2(1, payment="0", amount="1"), b2(2, payment="0", amount="2"))[0].startswith('2 חיובים ב"שולם חלקית"')
