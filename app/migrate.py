@@ -36,10 +36,11 @@ CONNECT_TIMEOUT_S = 10
 def checked_tables() -> dict:
     """The tables and columns the writes name, read from the stores: a copy here would drift."""
     from .books.store import BOOKS_TABLES
+    from .desk.store import DESK_TABLES
     from .recon.store import RECON_TABLES
     from .store import CHECKED_TABLES
 
-    return {**CHECKED_TABLES, **BOOKS_TABLES, **RECON_TABLES}
+    return {**CHECKED_TABLES, **BOOKS_TABLES, **RECON_TABLES, **DESK_TABLES}
 
 
 def _live_columns(cur, table: str) -> set:

@@ -30,14 +30,33 @@ columns are still checked to exist, so a renamed one ends the reading instead of
 THE SNAPSHOT has the shape of analiza-metrics' `read()`, so D2 ports `build_view` onto it: the two charge boards with their
 items_count and rows, the linked rows, the lead names and owners, and what was asked. Beside it, `checks` (counts only)
 and `complete`.
+
+THE REFRESH AND THE STORED COPY (D2, 24.11; analiza-metrics round 3 slice 2, app/finance.py `read_delta` and
+app/finance_mirror.py at da671b2). A full reading costs about 9 s and 28 requests (measured live 24.11), and D1 held it in
+the memory of one Autoscale instance only, so a cold open waited for one. Now:
+1. `read_delta` reads only what changed since the held reading started: each board with a window is asked which items
+   were updated, only those are read again by id and laid over the held reading, and the deciding leads are read again
+   every time (Leads has no window). The same snapshot, `kind` "delta", with its counts.
+2. `HeldReading` keeps the last reading in Postgres too (app/desk/store.py, `desk_readings`): an instance that holds none
+   answers an open with it at once, marked `refreshing`, and the page's own next request (`?fresh=1`) reads the next.
+   Never a thread after the answer (analiza-metrics ADR-0087): a request, every time.
+3. A full reading instead when nothing is held or stored, when the last full one is older than FULL_AFTER, when a charge
+   board's count disagrees with the rows (an archived or deleted charge never shows as updated), or when the refresh
+   failed in a way monday or its answer's shape allowed - at most once per FALLBACK_GAP; an error a full reading would
+   meet the same way (NO_FALLBACK) is the attempt's error as is. Each says why in /health (`HeldReading.health`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import math
+import re
 import threading
 import time
-from datetime import datetime, timezone
+from collections import Counter, deque
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 from ..monday.client import NEVER_READ, MondayError, MondayReader
@@ -94,6 +113,34 @@ ROW_COLUMNS = {key: [c for c in cols if c not in NEVER_READ] for key, cols in CH
 READ_DEADLINE_S = 50
 HELD_TTL_S = 60  # an open within a minute of a reading is answered with it
 FAIL_GAP_S = 20  # after a reading that failed, the next is tried this much later, not on every open
+
+# ---- the refresh (D2): analiza-metrics app/finance.py at da671b2, its constants with their reasons
+# the filter is day-grained: each item's `updated_at` makes the exact cut, at the held reading's start less this margin (a
+# clock between here and monday, and an item written while the held reading was being read)
+DELTA_MARGIN = timedelta(minutes=10)
+# a refresh takes about a second; past this it gives way to a full reading inside the same READ_DEADLINE_S
+DELTA_DEADLINE_S = 20
+# the boards a refresh asks what was updated lately (each with its columns check and its items_count), and the one it never
+# asks: Leads' columns are checked in the same request, and its deciding leads read there by id
+DELTA_KEYS = ("student_charge", "b2b_charge", "enrollments", "cohorts", "deals", "accounts")
+CHECK_ONLY_KEYS = ("leads",)
+CHARGE_KEYS = ("student_charge", "b2b_charge")
+LINKED_KEYS = ("enrollments", "leads", "cohorts", "deals", "accounts")
+# what a reading holds of monday: laid under the next refresh, and kept in Postgres (app/desk/store.py keeps these only)
+BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked")
+# the body's shape: a version and the columns each board's rows hold, so a reading kept under another shape (an older
+# deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA)
+BODY_SCHEMA = "1:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
+# a full reading at least this often: a change no refresh can see (a deleted enrollment, a renamed lead that decides
+# nothing) lives at most this long
+FULL_AFTER = timedelta(hours=36)
+# a refresh error a full reading would meet the same way: the attempt's error as it is, never a full reading - a rate limit
+# above all, since a full reading is some thirty requests sent into the very limit monday just named (hostile review 11.11)
+NO_FALLBACK = ("auth", "rate_limited", "unknown_column")
+# a refresh that keeps failing reads whole at most once per this span; in between its own error is the attempt's, so a
+# press every 5 s never prices a full reading (hostile review 11.11)
+FALLBACK_GAP = timedelta(seconds=30)
+RECENT_CODES = 20
 
 
 def _uniq(values: Iterable[Any]) -> list:
@@ -201,6 +248,7 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
     """The whole reading: the snapshot (analiza-metrics' shape), its counts, and whether it is complete. A reading that
     failed carries its closed code and no rows: monday's own code, or `crashed` with the class for anything else."""
     started = clock()
+    calls0 = reader.calls  # its own requests: a reader may have sent a refresh's first (HeldReading's fallback)
     read_at = _now_iso()
     out: dict = {"read_at": read_at, "full_read_at": read_at, "kind": "full", "complete": False, "error": None,
                  "detail": None, "checks": {}, "calls": 0, "seconds": 0.0}
@@ -241,92 +289,578 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
             asked={"enrollments": enr_ids, "leads": deciding, "cohorts": coh_ids, "deals": deal_ids,
                    "accounts": acct_ids},
             checks=checks, complete=all(c["ok"] for c in checks.values()))
-    out["calls"], out["seconds"] = reader.calls, round(clock() - started, 1)
+    out["calls"], out["seconds"] = reader.calls - calls0, round(clock() - started, 1)
     logger.info("desk reading in %.1fs, %d calls: complete=%s error=%s", out["seconds"], out["calls"], out["complete"],
                 out["error"])
     return out
 
 
+# ---------------------------------------------------------------- a refresh that reads only what changed (D2, 24.11)
+# analiza-metrics round 3, slice 2 (app/finance.py `read_delta`, `_delta`, `_read_new` at da671b2; live there since 11.11),
+# on this service's reader and its rules: no request after the deadline, NEVER_READ refused, and a row answered from another
+# board a stranger, dropped and counted. A refresh asks the six boards with a window which items were updated since the
+# held reading started (less DELTA_MARGIN), reads only those again by id, and lays them over the held reading. Leads has no
+# window (analiza-metrics, measured live 11.11: 521 of its 4,567 items updated in two days, of which the desk needed one):
+# the deciding leads are read again by id in the same request, every time, and a lead that newly decides, or that a payment
+# newly links to, is read by id after it. A lead that decides nothing is kept by its name and Owner only: a change to one
+# shows at the next full reading, within FULL_AFTER, as a deleted enrollment does.
+def window_days(gap: timedelta) -> int:
+    """How many days to ask for. Whether monday counts n calendar days (today among them) or n times 24 hours is not
+    verified, so n is the smallest whose calendar reading still covers the gap - n calendar days hold at least n - 1 whole
+    days, and a day of the clock change has 23 hours - and never less than 2, the shape verified live. A held reading is at
+    most FULL_AFTER old, so this is 2, or 3 after a quiet day (analiza-metrics, the same rule)."""
+    hours = max(gap.total_seconds(), 0.0) / 3600
+    return max(2, math.ceil(hours / 23) + 1)
+
+
+def instant(stamp: Any) -> Optional[datetime]:
+    """An ISO time from monday or from a reading as an aware instant (UTC when it carries no zone); None when absent or
+    unreadable."""
+    if isinstance(stamp, datetime):
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    if not stamp or not isinstance(stamp, str):
+        return None
+    try:
+        t = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+class DeltaMismatch(MondayError):
+    """A charge board's `items_count` disagrees with the rows a refresh holds: an item was archived or deleted, which never
+    shows as updated. Only a full reading knows which, so HeldReading reads whole."""
+
+    def __init__(self, key: str, count: Any, held: int):
+        super().__init__("count_mismatch", "%s: items_count %s, rows %d" % (key, count, held))
+        self.key = key
+
+
+class UnsafeBody(Exception):
+    """A reading whose text names a column of NEVER_READ: never written (app/desk/store.py `refuse_unsafe`). The name of
+    what was found is the message."""
+
+
+def own_rows(key: str, rows: list, asked: Iterable[Any], strangers: Counter) -> list:
+    """The rows of this board among the ids asked, once each. A row answered from another board, or for an id not asked, is
+    a stranger: dropped and counted under the board's key (by id monday answers an item of any board, review 22.11)."""
+    board_id, want, seen, kept = BOARDS[key], {str(x) for x in asked}, set(), []
+    for r in rows:
+        if r.get("board_id") != board_id or r["id"] not in want:
+            strangers[key] += 1
+            continue
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            kept.append(r)
+    return kept
+
+
+def merge_rows(held: list, read: list, asked: Iterable[Any], charge: bool) -> list:
+    """The rows a refresh read by id replace their held copies in place, and a new one joins at the end. An item monday no
+    longer returns (deleted, gone, or a stranger now) leaves; so does an archived one on a charge board (a full reading reads
+    a board's active items only) - but an archived enrollment, lead, cohort, deal or account stays, as a full reading keeps
+    it (analiza-metrics `merge_rows`; here a row carries its own `state`)."""
+    by_id = {str(r["id"]): r for r in held}
+    order = [str(r["id"]) for r in held]
+    got = {str(r["id"]): r for r in read}
+    for i in (str(x) for x in asked):
+        row = got.get(i)
+        if row is None or (charge and row.get("state") == "archived"):
+            by_id.pop(i, None)
+            continue
+        if i not in by_id:
+            order.append(i)
+        by_id[i] = row
+    return [by_id[i] for i in dict.fromkeys(order) if i in by_id]
+
+
+def names_read(rows: list, asked: Iterable[Any]) -> dict:
+    """The names a by-id read of leads gives, per id asked: None for one monday did not return (deleted, gone, a
+    stranger) - the leads `merge_rows` drops, and a full reading does not return."""
+    got = {str(r["id"]): r.get("name") or "" for r in rows}
+    return {str(i): got.get(str(i)) for i in asked}
+
+
+def reps_read(rows: list, asked: Iterable[Any]) -> dict:
+    """The Owners a by-id read of leads gives, per id asked, as `names_read`: None for one not returned."""
+    got = {str(r["id"]): lead_rep(r) for r in rows}
+    return {str(i): got.get(str(i)) for i in asked}
+
+
+def usable(snapshot: Any) -> bool:
+    """A held or stored reading a refresh can lay itself over: both times, both charge boards and the five lists, every
+    row with its id, what each list was asked for, and the linked leads' names and Owners."""
+    try:
+        return (instant(snapshot["read_at"]) is not None and instant(snapshot["full_read_at"]) is not None
+                and all(isinstance(r, dict) and "id" in r for k in CHARGE_KEYS for r in snapshot[k]["rows"])
+                and all(isinstance(r, dict) and "id" in r for k in LINKED_KEYS for r in snapshot[k])
+                and all(isinstance(snapshot["asked"][k], list) for k in LINKED_KEYS)
+                and isinstance(snapshot["lead_names"], dict)
+                and all(n is None or isinstance(n, str) for n in snapshot["lead_names"].values())
+                and isinstance(snapshot["lead_reps"], dict)
+                and all(n is None or isinstance(n, str) for n in snapshot["lead_reps"].values()))
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
+def body_of(snapshot: dict) -> dict:
+    """What a reading holds of monday (BODY_KEYS): what is kept, and what two readings are compared by."""
+    return {k: snapshot.get(k) for k in BODY_KEYS}
+
+
+def _read_new(reader: MondayReader, lists: dict, ids_read: dict, names: dict, reps: dict, strangers: Counter,
+              new: dict) -> None:
+    """What the held reading did not hold, by id, packed into as few requests as their ids allow: merged into its list and
+    counted as read; a lead's name - None for one monday did not return - goes into `names`, its Owner into `reps`."""
+    keys = [k for k in new if new[k]]
+    if not keys:
+        return
+    for k, rows in zip(keys, reader.read_items([(new[k], ROW_COLUMNS[k]) for k in keys], pack=True)):
+        mine = own_rows(k, rows, new[k], strangers)
+        lists[k] = merge_rows(lists[k], mine, new[k], charge=False)
+        ids_read[k] = ids_read[k] + new[k]
+        if k == "leads":
+            names.update(names_read(mine, new[k]))
+            reps.update(reps_read(mine, new[k]))
+
+
+def _delta_checks(out: dict, counts: dict, strangers: Counter, linked: list, names: dict) -> dict:
+    """The counts of a refresh, in the shapes a full reading gives (`check_board`, `by_id`), over what it holds now: a
+    charge board whole when its items_count, its rows and its distinct ids agree and no row of it was answered from another
+    board; a linked board by what it was asked for. The leads as a full reading counts them, every linked lead by its name;
+    which of them are archived a refresh does not know (the leads that decide nothing are not read again): None, never a
+    guess."""
+    checks: dict = {}
+    for k in CHARGE_KEYS:
+        rows = out[k]["rows"]
+        c = check_board(Board(k, BOARDS[k], tuple(ROW_COLUMNS[k])), counts[k], [r["id"] for r in rows], rows)
+        if strangers[k]:
+            c.update(strangers=c["strangers"] + strangers[k], ok=False)
+        checks[k] = c
+    for k in ("enrollments", "cohorts", "deals", "accounts"):
+        _kept, c = by_id(k, out["asked"][k], out[k])
+        c["strangers"] += strangers[k]
+        checks[k] = c
+    found = sum(1 for i in linked if names.get(i) is not None)
+    short = sum(1 for r in out["leads"] if not set(ROW_COLUMNS["leads"]) <= set(r))
+    checks["leads"] = {"board_id": LEADS_BOARD, "asked": len(linked), "rows": found, "missing": len(linked) - found,
+                       "strangers": strangers["leads"], "archived": None, "short_rows": short, "ok": short == 0}
+    return checks
+
+
+def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = time.monotonic) -> dict:
+    """The next reading from a held one: what changed on the six boards with a window since it started, and the deciding
+    leads again, laid over it - the same snapshot as `read_desk`, `kind` "delta", the held reading's `full_read_at`, and its
+    counts. Raises DeltaMismatch when a charge board's count says an item left it unseen, and MondayError for anything monday
+    or the shape of its answer did not allow: HeldReading then reads whole, or says why not."""
+    started = clock()
+    calls0 = reader.calls
+    now = datetime.now(timezone.utc)
+    held_at = instant(base.get("read_at")) if isinstance(base, dict) else None
+    if held_at is None or not usable(base):
+        raise MondayError("delta_shape", "the held reading cannot be laid under a refresh")
+    cut = held_at - DELTA_MARGIN
+    days = window_days(now - cut)
+    strangers: Counter = Counter()
+    asked = {k: [str(x) for x in base["asked"][k]] for k in LINKED_KEYS}
+    asked_set = {k: set(v) for k, v in asked.items()}
+    names, reps = dict(base["lead_names"]), dict(base["lead_reps"])
+    held_deciding = asked["leads"]
+    got = reader.changed_items([(BOARDS[k], CHECKED_COLUMNS[k]) for k in DELTA_KEYS],
+                               [(BOARDS[k], CHECKED_COLUMNS[k]) for k in CHECK_ONLY_KEYS], days,
+                               (held_deciding, ROW_COLUMNS["leads"]))
+    counts = dict(zip(DELTA_KEYS, got["counts"]))
+    windows = dict(zip(DELTA_KEYS, got["windows"]))
+    # the exact cut: what was updated after the held reading started (less the margin); an item whose time is missing or
+    # unreadable is read, never skipped
+    after = {k: _uniq(x["id"] for x in items if instant(x["updated_at"]) is None or instant(x["updated_at"]) > cut)
+             for k, items in windows.items()}
+    leads_got = own_rows("leads", got["rows"], held_deciding, strangers)
+
+    # read by id what changed: every changed charge, and the changed linked items the held reading asked for (the deciding
+    # leads were read above, whatever their time)
+    ids_read = {k: after[k] if k in CHARGE_KEYS else [i for i in after[k] if i in asked_set[k]] for k in DELTA_KEYS}
+    read = reader.read_items([(ids_read[k], ROW_COLUMNS[k]) for k in DELTA_KEYS], pack=True)
+    got_rows = {k: own_rows(k, rows, ids_read[k], strangers) for k, rows in zip(DELTA_KEYS, read)}
+    ids_read["leads"], got_rows["leads"] = list(held_deciding), leads_got
+    names.update(names_read(leads_got, held_deciding))
+    reps.update(reps_read(leads_got, held_deciding))
+    rows = {k: merge_rows(base[k]["rows"], got_rows[k], ids_read[k], charge=True) for k in CHARGE_KEYS}
+    for k in CHARGE_KEYS:
+        n = counts[k]
+        if not isinstance(n, int) or isinstance(n, bool):
+            raise MondayError("delta_shape", f"{k}: no items_count")
+        if n != len(rows[k]):
+            raise DeltaMismatch(k, n, len(rows[k]))
+    lists = {k: merge_rows(base[k], got_rows[k], ids_read[k], charge=False) for k in LINKED_KEYS}
+
+    # what the charges link to now that the held reading did not ask for: by id, by the same definitions as a full reading
+    # (an id asked before and missing then stays missing until the next full reading)
+    sc_rows, b2_rows = rows["student_charge"], rows["b2b_charge"]
+    need = {"enrollments": enrollment_ids(sc_rows),
+            "deals": sorted(_uniq(d for r in b2_rows for d in r.get(B2["deal"]) or []))}
+    linked = lead_ids(sc_rows)
+    # and the leads: those that may decide now - of the payments whose enrollments read so far name no cohort (an
+    # enrollment read below can only name one more, so they hold every lead that will decide) - that the held reading did
+    # not keep as deciding, and every lead a payment newly links to, for its name
+    maybe = leads_deciding(sc_rows, keep_only(lists["enrollments"], need["enrollments"]))
+    held = set(held_deciding)
+    _read_new(reader, lists, ids_read, names, reps, strangers, {
+        "enrollments": [i for i in need["enrollments"] if i not in asked_set["enrollments"]],
+        "leads": _uniq([i for i in linked if i not in names] + [i for i in maybe if i not in held]),
+        "deals": [i for i in need["deals"] if i not in asked_set["deals"]]})
+    enrollments, deals = keep_only(lists["enrollments"], need["enrollments"]), keep_only(lists["deals"], need["deals"])
+    need["leads"] = leads_deciding(sc_rows, enrollments)
+    need["cohorts"] = cohort_ids(enrollments, keep_only(lists["leads"], need["leads"]))
+    need["accounts"] = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
+                                    + [a for d in deals for a in d.get(DL["payer"]) or []]))
+    _read_new(reader, lists, ids_read, names, reps, strangers,
+              {k: [i for i in need[k] if i not in asked_set[k]] for k in ("cohorts", "accounts")})
+    out = {"student_charge": {"items_count": counts["student_charge"], "rows": sc_rows},
+           "b2b_charge": {"items_count": counts["b2b_charge"], "rows": b2_rows},
+           **{k: keep_only(lists[k], need[k]) for k in LINKED_KEYS},
+           # every linked lead's name: held, read again with the deciding leads, or read as newly linked; and its Owner
+           "lead_names": {i: names[i] for i in linked},
+           "lead_reps": {i: reps.get(i) for i in linked},
+           "asked": {k: list(need[k]) for k in LINKED_KEYS}}
+    checks = _delta_checks(out, counts, strangers, linked, names)
+    out.update(read_at=now.isoformat(timespec="microseconds"), full_read_at=base["full_read_at"], kind="delta",
+               complete=all(c["ok"] for c in checks.values()), error=None, detail=None, checks=checks,
+               calls=reader.calls - calls0, seconds=round(clock() - started, 1), window_days=days)
+    logger.info("desk refresh in %.1fs over %d days, %d calls: complete=%s, read by id %s", out["seconds"], days,
+                out["calls"], out["complete"], {k: len(v) for k, v in ids_read.items()})
+    return out
+
+
 def summary(reading: dict) -> dict:
-    """A reading without its rows: when, whether complete, why not, its cost and its counts. What a member's answer
-    and the operator's views may carry; /health carries less (`health_part`)."""
-    return {"read_at": reading.get("read_at"), "complete": bool(reading.get("complete")), "error": reading.get("error"),
-            "detail": reading.get("detail"), "seconds": reading.get("seconds"), "calls": reading.get("calls"),
-            "checks": reading.get("checks") or {}}
+    """A reading without its rows: when, which kind, whether complete, why not, its cost and its counts. What a member's
+    answer and the operator's views may carry; /health carries less (`health_part`)."""
+    return {"read_at": reading.get("read_at"), "kind": reading.get("kind"), "complete": bool(reading.get("complete")),
+            "error": reading.get("error"), "detail": reading.get("detail"), "seconds": reading.get("seconds"),
+            "calls": reading.get("calls"), "checks": reading.get("checks") or {}}
 
 
 def health_part(last: Optional[dict]) -> Optional[dict]:
-    """For the public /health: whether the last reading was complete and why not, its time and cost. No count of rows
-    (Nadav 19.11: the deployment is public)."""
+    """For the public /health: whether the last reading was complete and why not, which kind it was (D2: "full" or
+    "delta"), its time and cost. No count of rows (Nadav 19.11: the deployment is public)."""
     if last is None:
         return None
-    return {"read_at": last.get("read_at"), "complete": last.get("complete"), "error": last.get("error"),
-            "seconds": last.get("seconds"), "calls": last.get("calls"),
+    return {"read_at": last.get("read_at"), "kind": last.get("kind"), "complete": last.get("complete"),
+            "error": last.get("error"), "seconds": last.get("seconds"), "calls": last.get("calls"),
             "boards_whole": None if last.get("error") else
             sorted(k for k, c in (last.get("checks") or {}).items() if c.get("ok"))}
 
 
-class HeldReading:
-    """The desk's reading, one per instance, shared by every opener (in memory: D1 keeps no copy in Postgres).
+def _iso_s(t: datetime) -> str:
+    return t.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-    `get()` answers with the reading held when it is younger than HELD_TTL_S; otherwise it reads, one reading at a time:
-    a request that finds one running waits for it (bounded by its deadline) and is answered with it. A reading that
-    failed is kept as the last attempt, not as the reading: the one before stays on screen with its age, and the next
-    try comes FAIL_GAP_S later, not on every open. A reading that read every board but came short replaces the one
-    before: it is the truth of now, shown as not complete.
+
+def _why(exc: BaseException) -> str:
+    """A store's failure as a trace code's tail: its SQLSTATE or its class (app/desk/store.py `DeskStoreError`), never its
+    text, which can carry the database's host and user."""
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, str) and re.fullmatch(r"[A-Za-z0-9_]{1,40}", detail):
+        return detail
+    return type(exc).__name__
+
+
+def _failed(kind: Optional[str], code: str, detail: Any, calls: int = 0, seconds: float = 0.0) -> dict:
+    """An attempt that read nothing to show: its closed code and no rows, as a failed `read_desk` answers."""
+    return {"read_at": _now_iso(), "kind": kind, "complete": False, "error": code, "detail": str(detail)[:200],
+            "checks": {}, "calls": calls, "seconds": seconds}
+
+
+class HeldReading:
+    """The desk's reading, one per instance, shared by every opener, and since D2 its copy in Postgres (`store`,
+    app/desk/store.py; None without a database) and its refresh that reads only what changed.
+
+    D1's rules, kept: `get()` answers with the reading held when it is younger than HELD_TTL_S; otherwise it reads, one
+    reading at a time: a request that finds one running waits for it (bounded by its deadline) and is answered with it. A
+    reading that failed is kept as the last attempt, not as the reading: the one before stays on screen with its age, and
+    the next try comes FAIL_GAP_S later, not on every open. A reading that read every board but came short replaces the one
+    before: it is the truth of now, shown as not complete. Every attempt's reader gets READ_DEADLINE_S, the refresh
+    DELTA_DEADLINE_S of it.
 
     `get(force=True)` is the refresh press (D2, POST /api/desk/refresh): neither the age of the held reading nor the gap
     after a failure holds it back, and it is satisfied only by a reading that STARTED after it - one that was already
     running when it came may not hold what was just changed in monday, so it waits for that one and reads again
-    (analiza-metrics SharedReading, part 5). How often it may come is the route's to bound."""
+    (analiza-metrics SharedReading, part 5). How often it may come is the route's to bound.
+
+    D2's (analiza-metrics SharedReading parts 6 and 7, and FinanceMirror, at da671b2):
+    - `answer(stale_ok=True)` is a plain open (GET /api/desk without `fresh`): past its span the reading held is answered at
+      once, whatever its age, marked `refreshing`, and nothing is read; an instance that holds none answers with the stored
+      reading the same way (`seeded`: never fresh, however young, since this instance did not read it). The page asks for
+      the next in a request of its own (`?fresh=1`, which is `get()`). A seed never replaces a reading that landed meanwhile.
+    - a reading is a refresh over the reading held, or over the stored one when none is held (`read_delta`); a full reading
+      when there is neither, when the last full one is older than FULL_AFTER, when a charge board's count disagrees, or
+      when the refresh failed in a way a full reading may not (once per FALLBACK_GAP at most); an error a full reading would
+      meet the same way (NO_FALLBACK) is the attempt's own.
+    - a reading without an error is kept in the store unless it holds what the store already holds; a reading older than
+      the stored one never replaces it (another instance's). The store is best effort, with traces: a store that fails is
+      said in /health and the desk reads monday.
+    - `health()`: the trace, in a closed vocabulary - full_first, full_base_unusable, full_36h, full_count_<board>,
+      full_delta_error_<code>, delta, delta_failed_<code>, full_deferred, store_not_configured, store_loaded,
+      store_empty, store_other_schema, store_unusable, store_load_failed_<SQLSTATE or class>, store_saved, store_unchanged,
+      store_newer_held, store_refused, store_save_failed_<SQLSTATE or class>, seeded. Never a row or a count of rows."""
 
     def __init__(self, make_reader: Callable[[], MondayReader], clock: Callable[[], float] = time.monotonic,
-                 ttl_s: float = HELD_TTL_S, deadline_s: float = READ_DEADLINE_S, fail_gap_s: float = FAIL_GAP_S):
-        self.make_reader, self.clock = make_reader, clock
+                 ttl_s: float = HELD_TTL_S, deadline_s: float = READ_DEADLINE_S, fail_gap_s: float = FAIL_GAP_S,
+                 store: Any = None, now: Optional[Callable[[], datetime]] = None,
+                 delta_deadline_s: float = DELTA_DEADLINE_S):
+        self.make_reader, self.clock, self.store = make_reader, clock, store
+        self.now = now or (lambda: datetime.now(timezone.utc))
         self.ttl_s, self.deadline_s, self.fail_gap_s = ttl_s, deadline_s, fail_gap_s
+        self.delta_deadline_s = delta_deadline_s
         self.reading: Optional[dict] = None
         self.reading_at: Optional[float] = None
+        self.seeded = False  # the reading held came from the store, not from this instance: never fresh
         self.last: Optional[dict] = None
         self.last_at: Optional[float] = None
         self.started_at: Optional[float] = None  # when the last attempt started: what a forced get() is measured by
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # one reading at a time
+        self._state = threading.Lock()  # the state, written in one step by a reading and by a seed
+        self._seed_lock = threading.Lock()  # one seed at a time
+        self._seed_tried_at: Optional[float] = None
+        # the read_at of the reading whose content this instance knows the store holds: a refresh that changed nothing is
+        # not written, so the stored row's own read_at may be older
+        self._stored_at: Optional[str] = None
+        self._fallback_at: Optional[datetime] = None  # when the last full reading a failed refresh fell back to began
+        self._recent: deque = deque(maxlen=RECENT_CODES)
+        self.trace: dict = {"last_codes": [], "last_full": None, "last_delta": None, "last_delta_error": None,
+                            "stored_read_at": None}
 
     def _young(self, at: Optional[float], limit: float) -> bool:
         return at is not None and 0 <= self.clock() - at < limit
 
+    def _fresh(self) -> bool:
+        return self.reading is not None and not self.seeded and self._young(self.reading_at, self.ttl_s)
+
+    def _failed_just_now(self) -> bool:
+        return self.last is not None and bool(self.last.get("error")) and self._young(self.last_at, self.fail_gap_s)
+
     def get(self, force: bool = False) -> tuple:
-        """(the reading to show or None, the last attempt's summary or None)."""
+        """(the reading to show or None, the last attempt's summary or None): a reading past its span is read now."""
+        reading, last, _refreshing = self.answer(force=force)
+        return reading, last
+
+    def answer(self, force: bool = False, stale_ok: bool = False) -> tuple:
+        """(the reading to show or None, the last attempt's summary or None, refreshing). With `stale_ok` (a plain open),
+        a reading past its span - held, or stored when none is - is answered at once, `refreshing` true."""
         asked = self.clock()
+        at_once = stale_ok and not force
+        if at_once and self.reading is None and self.store is not None:
+            self._seed()
+        with self._state:
+            if not force and (self._fresh() or self._failed_just_now()):
+                return self.reading, self.last, False
+            if at_once and self.reading is not None:
+                return self.reading, self.last, True
         with self._lock:
             if force:
                 # strictly after: on a clock too coarse to tell them apart, a press reads once more rather than take a
                 # reading that may have started before it
                 if self.started_at is not None and self.started_at > asked:
-                    return self.reading, self.last
-            else:
-                if self.reading is not None and self._young(self.reading_at, self.ttl_s):
-                    return self.reading, self.last
-                if self.last is not None and self.last.get("error") and self._young(self.last_at, self.fail_gap_s):
-                    return self.reading, self.last
-            self.started_at = self.clock()
-            reader = None
-            try:
-                reader = self.make_reader()
-                reader.deadline = reader.clock() + self.deadline_s
-                reading = read_desk(reader)
-            except Exception as exc:  # noqa: BLE001 - a reader that could not even be made is a failed reading
-                reading = {"read_at": _now_iso(), "complete": False, "error": "crashed", "detail": type(exc).__name__,
-                           "checks": {}, "calls": 0, "seconds": 0.0}
-            finally:
-                if reader is not None:
-                    try:
-                        reader.close()
-                    except Exception:  # noqa: BLE001 - closing a client never fails a reading
-                        pass
-            self.last, self.last_at = summary(reading), self.clock()
-            if not reading.get("error"):
-                self.reading, self.reading_at = reading, self.last_at
-            return self.reading, self.last
+                    return self.reading, self.last, False
+            elif self._fresh() or self._failed_just_now():
+                return self.reading, self.last, False
+            self._read()
+            return self.reading, self.last, False
 
     def age_s(self) -> Optional[int]:
         return None if self.reading_at is None else max(0, int(self.clock() - self.reading_at))
+
+    # ---- the readings ----
+    def _read(self) -> None:
+        """One attempt, under the reading lock. A failed attempt is kept as the last attempt only; a reading without an error
+        replaces the one held."""
+        self.started_at = self.clock()
+        codes: list = []
+        reader = None
+        try:
+            reader = self.make_reader()
+            reading = self._refresh(reader, codes)
+        except Exception as exc:  # noqa: BLE001 - a reader that could not even be made is a failed reading
+            reading = _failed(None, "crashed", type(exc).__name__)
+        finally:
+            if reader is not None:
+                try:
+                    reader.close()
+                except Exception:  # noqa: BLE001 - closing a client never fails a reading
+                    pass
+        ended = self.clock()
+        with self._state:
+            self.last, self.last_at = summary(reading), ended
+            if not reading.get("error"):
+                self.reading, self.reading_at, self.seeded = reading, ended, False
+        self._note(codes, last=True)
+
+    def _full_reason(self, base: Optional[dict]) -> Optional[str]:
+        if base is None:
+            return "full_first"
+        if not usable(base):
+            return "full_base_unusable"
+        if self.now() - instant(base["full_read_at"]) > FULL_AFTER:
+            return "full_36h"
+        return None
+
+    def _refresh(self, reader: MondayReader, codes: list) -> dict:
+        """The next reading: a refresh over the reading held (or the stored one), or a full reading and why; kept in the
+        store when it holds something new. Returns a failed attempt rather than raise."""
+        start = reader.clock()
+        with self._state:
+            base = self.reading
+        if base is None:
+            base = self._load(codes)
+        why = self._full_reason(base)
+        got = None
+        if why is None:
+            reader.deadline = start + min(self.delta_deadline_s, self.deadline_s)
+            failed: Optional[Exception] = None
+            try:
+                got = read_delta(reader, base)
+            except DeltaMismatch as exc:
+                why, failed = "full_count_" + exc.key, exc
+            except MondayError as exc:
+                failed = exc
+                if exc.code not in NO_FALLBACK:
+                    why = "full_delta_error_" + exc.code
+            except Exception as exc:  # noqa: BLE001 - a shape the refresh did not foresee: said, then read whole
+                why, failed = "full_delta_error_internal", exc
+            if failed is not None:
+                code = failed.code if isinstance(failed, MondayError) else "internal"
+                detail = failed.detail if isinstance(failed, MondayError) else type(failed).__name__
+                if code == "deadline" and getattr(reader, "limited", 0):
+                    # monday rate-limited this refresh and its wait did not fit the refresh's time: still the limit's, so
+                    # never a full reading - some thirty requests into that very limit (hostile review 11.11)
+                    why, code = None, "rate_limited"
+                logger.warning("desk refresh not used (%s): %s", code, str(detail)[:200])
+                with self._state:
+                    self.trace["last_delta_error"] = {"at": _iso_s(self.now()), "code": code}
+                lost = _failed("delta", code, detail, reader.calls, round(reader.clock() - start, 1))
+                if why is None:  # NO_FALLBACK: a full reading would meet it the same way
+                    codes.append("delta_failed_" + code)
+                    return lost
+                now = self.now()
+                if self._fallback_at is not None and now - self._fallback_at < FALLBACK_GAP:
+                    # it fell back a moment ago: not whole again within the gap, the refresh's own error instead
+                    codes += ["delta_failed_" + code, "full_deferred"]
+                    return lost
+                self._fallback_at = now
+        if got is None:
+            codes.append(why)
+            reader.deadline = start + self.deadline_s
+            got = read_desk(reader)
+            if got.get("error"):
+                return got
+            with self._state:
+                self.trace["last_full"] = {"at": got["read_at"], "seconds": got.get("seconds"), "calls": got.get("calls")}
+        else:
+            codes.append("delta")
+            with self._state:
+                self.trace["last_delta"] = {"at": got["read_at"], "seconds": got.get("seconds"), "calls": got.get("calls"),
+                                            "days": got.get("window_days")}
+        self._keep(got, base, codes)
+        return got
+
+    # ---- the stored copy ----
+    def _load(self, codes: list) -> Optional[dict]:
+        """The stored reading when it can be laid under a refresh, else None and why (in `codes`). Reads the database only,
+        never monday."""
+        if self.store is None:
+            codes.append("store_not_configured")
+            return None
+        try:
+            loaded = self.store.load()
+        except Exception as exc:  # noqa: BLE001 - a database that cannot be read is said, and the desk reads monday
+            logger.warning("desk stored reading not read (%s)", _why(exc))
+            codes.append("store_load_failed_" + _why(exc))
+            return None
+        if loaded is None:
+            codes.append("store_empty")
+            return None
+        if loaded.pop("body_schema", None) != BODY_SCHEMA:
+            codes.append("store_other_schema")
+            return None
+        if not usable(loaded):
+            codes.append("store_unusable")
+            return None
+        codes.append("store_loaded")
+        with self._state:
+            self._stored_at = loaded["read_at"]
+            self.trace["stored_read_at"] = loaded["read_at"]
+        return loaded
+
+    def _seed(self) -> None:
+        """Part 7 of analiza-metrics' SharedReading: the stored reading for an instance that holds none, as old as it is and
+        never fresh. A seed that finds nothing changes nothing - the caller then waits for a reading - and is not tried
+        again for FAIL_GAP_S: a database that is down costs one wait, not one per open."""
+        with self._seed_lock:
+            if self.reading is not None or self._young(self._seed_tried_at, self.fail_gap_s):
+                return
+            self._seed_tried_at = self.clock()
+            codes: list = []
+            loaded = self._load(codes)
+            if loaded is not None:
+                age = max(0.0, (self.now() - instant(loaded["read_at"])).total_seconds())
+                with self._state:
+                    if self.reading is None:
+                        self.reading, self.reading_at, self.seeded = loaded, self.clock() - age, True
+                        codes.append("seeded")
+            self._note(codes)
+
+    def _keep(self, got: dict, base: Optional[dict], codes: list) -> None:
+        """The reading into the store, unless the store already holds what it holds (a quiet refresh writes nothing)."""
+        if self.store is None:
+            codes.append("store_not_configured")
+            return
+        with self._state:
+            stored_at = self._stored_at
+        if not (got.get("kind") == "full" or base is None or stored_at != base.get("read_at")
+                or body_of(got) != body_of(base)):
+            codes.append("store_unchanged")
+            with self._state:
+                self._stored_at = got["read_at"]  # the store holds the held reading's content, and so this one's
+            return
+        try:
+            wrote = self.store.save(got)
+        except UnsafeBody as exc:
+            # cannot happen while the reader refuses every NEVER_READ column: loud if it ever does
+            logger.error("desk reading NOT stored: its text names %s", exc)
+            codes.append("store_refused")
+            return
+        except Exception as exc:  # noqa: BLE001 - the desk works without its store; the trace says it did not keep it
+            logger.warning("desk reading not stored (%s)", _why(exc))
+            codes.append("store_save_failed_" + _why(exc))
+            return
+        if not wrote:
+            codes.append("store_newer_held")  # another instance kept a newer reading: it stays
+            return
+        codes.append("store_saved")
+        with self._state:
+            self._stored_at = got["read_at"]
+            self.trace["stored_read_at"] = got["read_at"]
+
+    # ---- the trace ----
+    def _note(self, codes: list, last: bool = False) -> None:
+        at = _iso_s(self.now())
+        codes = list(dict.fromkeys(codes))
+        with self._state:
+            self._recent.extend({"at": at, "code": c} for c in codes)
+            if last:
+                self.trace["last_codes"] = codes
+
+    def health(self) -> dict:
+        """For /health: how this instance read and kept its reading - the last attempt's codes and the recent ones, the last
+        full reading and the last refresh (when, how long, how many requests to monday), the last refresh that failed (its
+        code), and the times of the reading held and of the stored one it knows. Never a row, a name, an amount or a count
+        of rows."""
+        with self._state:
+            r = self.reading
+            return {"last_codes": list(self.trace["last_codes"]), "recent_codes": list(self._recent),
+                    "last_full": dict(self.trace["last_full"]) if self.trace["last_full"] else None,
+                    "last_delta": dict(self.trace["last_delta"]) if self.trace["last_delta"] else None,
+                    "last_delta_error": dict(self.trace["last_delta_error"]) if self.trace["last_delta_error"] else None,
+                    "held": None if r is None else {"read_at": r.get("read_at"), "full_read_at": r.get("full_read_at"),
+                                                    "kind": r.get("kind"), "seeded": self.seeded},
+                    "stored_read_at": self.trace["stored_read_at"],
+                    "full_after_hours": FULL_AFTER.total_seconds() / 3600}

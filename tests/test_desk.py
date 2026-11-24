@@ -13,6 +13,7 @@ import logging
 import re
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -136,10 +137,22 @@ def board_key(board_id: str):
     return next((k for k, b in rd.BOARDS.items() if b == board_id), None)
 
 
+OLD = "2000-01-01T00:00:00Z"  # an item's updated_at until a test touches it: outside every refresh's window
+
+
 class World:
     """monday's GraphQL for the desk's seven boards: the members, the columns check, the charge boards' ids paged, items
     by id (monday answers an id of any board, with only the columns its own board has). Every query is recorded, and a
-    mutation fails the test."""
+    mutation fails the test.
+
+    D2's refresh (extended 24.11, every older use unchanged): every item has an `updated_at` (OLD until `touch` sets it to
+    now), and the refresh's one request - each board's columns, and for the boards with a window their items_count and the
+    items updated within the last n days (`query_params` with `__last_updated__`), `window_page` at a time - with items by
+    id beside it (`l0`, `l1` ...: the deciding leads), and several short reads by id in one request (`j0`, `j1` ...).
+    `window_error` answers the windows' request with a GraphQL error, `window_item` reshapes each item of a window, and
+    `window_states` says which items a window answers (whether monday's answers archived ones is not verified). An item
+    `leave`s its charge board archived or deleted, as monday's items_page and items_count stop holding it; state "gone"
+    is an id monday no longer answers at all."""
 
     def __init__(self):
         self.items: dict = {}
@@ -155,6 +168,13 @@ class World:
         self.drop_cells: set = set()  # columns left out of by-id answers only (a column gone after the columns check)
         self.subscribers_of: dict = {}  # board -> the board id monday's members answer names instead
         self.extra_cells: dict = {}  # item id -> cells monday answers unasked
+        self.updated: dict = {}  # item id -> its updated_at (OLD when absent)
+        self.window_error = None
+        self.window_item = None
+        self.window_page = None
+        self.window_states = ("active",)
+        self.windows: list = []  # the days each windows' request asked for
+        self.windowed: list = []  # every board a window was answered for
         self._lock = threading.Lock()
 
     def add(self, board: str, item_id: int, name: str, state: str = "active", **cells) -> None:
@@ -163,6 +183,95 @@ class World:
                                     "cells": {cols.get(k, k): v for k, v in cells.items()}}
         if board in self.order:
             self.order[board].append(str(item_id))
+
+    # ---- D2: edits as monday makes them, and what the refresh asked ----
+    def touch(self, *ids, at=None) -> None:
+        at = at or datetime.now(timezone.utc).isoformat()
+        for i in ids:
+            self.updated[str(i)] = at
+
+    def set(self, item_id, touch: bool = True, **cells) -> None:
+        """Cells of an item by the desk's keys (or a column id), `name` its name; touched, as an edit in monday is."""
+        item = self.items[str(item_id)]
+        if "name" in cells:
+            item["name"] = cells.pop("name")
+        cols = rd.COLUMNS.get(board_key(item["board"]) or "", {})
+        item["cells"].update({cols.get(k, k): v for k, v in cells.items()})
+        if touch:
+            self.touch(item_id)
+
+    def leave(self, item_id, state: str = "archived") -> None:
+        """An item leaves its board's items_page and items_count (archived or deleted), its updated_at untouched."""
+        item = self.items[str(item_id)]
+        item["state"] = state
+        if item["board"] in self.order and str(item_id) in self.order[item["board"]]:
+            self.order[item["board"]].remove(str(item_id))
+
+    def by_id_reads(self) -> list:
+        """(board, ids) for every piece read by id, in the order sent: plain, packed (`j`) and beside the windows (`l`)."""
+        out = []
+        for q, v in self.queries:
+            pieces = [v["i" + k] for k in re.findall(r"j(\d+): items\(", q)] + \
+                     [v["li" + k] for k in re.findall(r"l(\d+): items\(", q)]
+            if not pieces and "items(ids:" in q:
+                pieces = [v["ids"]]
+            for ids in pieces:
+                item = self.items.get(str(ids[0])) if ids else None
+                out.append((item["board"] if item else None, [str(i) for i in ids]))
+        return out
+
+    def count(self, board: str) -> int:
+        if board in self.order:
+            return len(self.order[board]) + self.count_off.get(board, 0)
+        return sum(1 for x in self.items.values() if x["board"] == board and x["state"] == "active")
+
+    def window(self, board: str, days: int) -> list:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        out = [{"id": i, "updated_at": self.updated.get(i, OLD)} for i, x in self.items.items()
+               if x["board"] == board and x["state"] in self.window_states
+               and datetime.fromisoformat(self.updated.get(i, OLD).replace("Z", "+00:00")) >= since]
+        return [self.window_item(x) for x in out] if self.window_item else out
+
+    def page(self, items: list, at: int) -> tuple:
+        size = self.window_page or len(items) or 1
+        return items[at:at + size], (at + size if at + size < len(items) else None)
+
+    def answer_by_id(self, ids: list, cols: list) -> list:
+        out = []
+        for i in ids:
+            item = self.items.get(str(i))
+            if item is None or item["state"] == "gone":
+                continue  # monday leaves out an id it does not know
+            own = self.own_columns(item["board"])
+            cells = [self.cell(item, c) for c in cols if c in own and c not in self.drop_cells]
+            cells += [{"id": c, **v} for c, v in self.extra_cells.get(str(i), {}).items()]
+            out.append({"id": str(i), "name": item["name"], "state": item["state"], "created_at": "2026-11-01T00:00:00Z",
+                        "board": {"id": item["board"]}, "column_values": cells})
+        return out
+
+    def answer_windows(self, query: str, var: dict) -> httpx.Response:
+        days = int(re.search(r'compare_value: \["DAYS", (\d+)\]', query).group(1))
+        self.windows.append(days)
+        if self.window_error:
+            return httpx.Response(200, json={"errors": self.window_error})
+        with_window = set(re.findall(r"(b\d+): boards\(ids: \$b\d+\) \{ columns\(ids: \$c\d+\) \{ id \} items_count", query))
+        data = {}
+        for k in [k for k in var if re.fullmatch(r"b\d+", k)]:
+            board, cols = var[k][0], var["c" + k[1:]]
+            if board in self.hidden:
+                data[k] = []
+                continue
+            columns = [{"id": c} for c in cols if c in self.own_columns(board)]
+            if k not in with_window:
+                data[k] = [{"columns": columns}]
+                continue
+            self.windowed.append(board)
+            items, nxt = self.page(self.window(board, days), 0)
+            data[k] = [{"columns": columns, "items_count": self.count(board), "items_page": {
+                "cursor": None if nxt is None else "w|%s|%d|%d" % (board, days, nxt), "items": items}}]
+        for alias, n in re.findall(r"(l(\d+)): items\(", query):
+            data[alias] = self.answer_by_id(var["li" + n], var["lc"])
+        return httpx.Response(200, json={"data": data})
 
     def own_columns(self, board: str) -> set:
         key = board_key(board)
@@ -201,6 +310,16 @@ class World:
             return httpx.Response(200, json={"data": {"boards": [
                 {"id": self.subscribers_of.get(board, board),
                  "subscribers": [{"id": u} for u in sorted(self.members.get(board, ()))]}]}})
+        if "query_params" in query:  # D2: the refresh's one request
+            return self.answer_windows(query, var)
+        if "next_items_page" in query and str(var["c"]).startswith("w|"):  # D2: a window's next page
+            _w, board, days, at = var["c"].split("|")
+            items, nxt = self.page(self.window(board, int(days)), int(at))
+            return httpx.Response(200, json={"data": {"next_items_page": {
+                "cursor": None if nxt is None else "w|%s|%s|%d" % (board, days, nxt), "items": items}}})
+        packed = re.findall(r"(j(\d+)): items\(", query)
+        if packed:  # D2: several short reads by id in one request
+            return httpx.Response(200, json={"data": {a: self.answer_by_id(var["i" + n], var["c" + n]) for a, n in packed}})
         if "columns(ids:" in query:
             data = {}
             for k in [k for k in var if k.startswith("b")]:
@@ -223,17 +342,7 @@ class World:
                 "items_count": len(ids) + self.count_off.get(board, 0),
                 "items_page": {"cursor": cursor, "items": [{"id": i} for i in ids[:var["limit"]]]}}]}})
         if "items(ids:" in query:
-            out = []
-            for i in var["ids"]:
-                item = self.items.get(str(i))
-                if item is None:
-                    continue  # monday leaves out an id it does not know
-                own = self.own_columns(item["board"])
-                cells = [self.cell(item, c) for c in var["cols"] if c in own and c not in self.drop_cells]
-                cells += [{"id": c, **v} for c, v in self.extra_cells.get(str(i), {}).items()]
-                out.append({"id": str(i), "name": item["name"], "state": item["state"], "created_at": "2026-11-01T00:00:00Z",
-                            "board": {"id": item["board"]}, "column_values": cells})
-            return httpx.Response(200, json={"data": {"items": out}})
+            return httpx.Response(200, json={"data": {"items": self.answer_by_id(var["ids"], var["cols"])}})
         raise AssertionError("an unexpected query: " + query[:80])
 
     def transport(self) -> httpx.MockTransport:
@@ -416,7 +525,8 @@ def test_one_reading_serves_every_open_within_a_minute():
     assert again is first and len(w.queries) == 10
     clock.t += 2
     newer, last = held.get()
-    assert newer is not first and len(w.queries) == 20 and last["complete"] is True
+    # since D2 the reading after the minute is a refresh over the one held: one request, nothing having changed
+    assert newer is not first and len(w.queries) == 11 and last["complete"] is True and newer["kind"] == "delta"
 
 
 def test_a_failed_reading_keeps_the_one_before_and_is_tried_again_only_after_the_gap():

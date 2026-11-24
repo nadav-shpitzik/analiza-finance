@@ -115,6 +115,7 @@ app.state.transport = None  # tests put an httpx.MockTransport here
 app.state.clock = time.time
 app.state.store_factory = None  # tests put a fake here; None is Postgres when DATABASE_URL is set
 app.state.monday_transport = None  # tests put an httpx.MockTransport for monday here
+app.state.desk_store = None  # tests put the desk's stored reading here; None is Postgres when DATABASE_URL is set
 app.state.client = None
 app.state.client_ident = None
 app.state.build = None
@@ -168,9 +169,11 @@ def health(request: Request) -> dict:
     cfg = config.load()
     state = request.app.state
     last = _cache["result"]
-    store = store_health(cfg, state.clock())
+    now = state.clock()
+    store = store_health(cfg, now)
     books = store.pop("books_glance", None)
     recon = store.pop("recon_glance", None)
+    desk_stored = store.pop("desk_glance", None)
     return {
         "service": SERVICE,
         "ok": True,
@@ -189,7 +192,7 @@ def health(request: Request) -> dict:
         "store": store,
         "books": {"sync_key": sync_key_state(cfg), **(books or {})},
         "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
-        "desk": desk_health(state, cfg),
+        "desk": desk_health(state, cfg, desk_stored, now),
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
@@ -228,7 +231,16 @@ def _read_store(cfg: config.Config) -> dict:
                     recon = reading_glance(cur)
             except Exception as exc:  # noqa: BLE001 - the class only
                 recon = {"error": type(exc).__name__}
-    return {**state, "times": times, "books": books, "recon": recon}
+        desk = None
+        if state["tables"].get("desk_readings") == "present":
+            try:  # its own try too: the desk's stored reading (D2), its times only
+                from .desk.store import glance as desk_glance
+
+                with conn.transaction():
+                    desk = desk_glance(cur)
+            except Exception as exc:  # noqa: BLE001 - the class only
+                desk = {"error": type(exc).__name__}
+    return {**state, "times": times, "books": books, "recon": recon, "desk": desk}
 
 
 def _books_glance(cur, company: str) -> dict:
@@ -295,6 +307,7 @@ def store_health(cfg: config.Config, now: float) -> dict:
                 "read_at": _now_iso(read_at),
                 "books_glance": read.get("books"),
                 "recon_glance": read.get("recon"),
+                "desk_glance": read.get("desk"),
             }
     except Exception as exc:  # noqa: BLE001 - /health never raises
         out = {"configured": True, "ok": False, "error": type(exc).__name__}
