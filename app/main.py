@@ -106,9 +106,10 @@ async def security_headers(request: Request, call_next):
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request: Request, exc: RequestValidationError):
     """The desk's routes speak a closed vocabulary (analiza-metrics, the same handler for its /api): a body or a query that
-    does not fit them - a field the export link does not know, a user id that is not a number, a usage batch that carries
-    a user id - is 400 `invalid_filter`, never FastAPI's 422, which says back what was sent. Every other route keeps
-    FastAPI's own answer."""
+    does not fit them - a user id that is not a number in a file's link, a `fresh` that is not one - is 400
+    `invalid_filter`, never FastAPI's 422, which says back what was sent. The two bodies (the export link's, a usage
+    batch's) are read in their routes after the sessionToken, with the same answer (app/desk/routes.py `_body_of`). Every
+    other route keeps FastAPI's own answer."""
     if request.url.path.startswith("/api/desk") or request.url.path == "/api/usage":
         return JSONResponse({"error": "invalid_filter"}, status_code=400)
     return await request_validation_exception_handler(request, exc)

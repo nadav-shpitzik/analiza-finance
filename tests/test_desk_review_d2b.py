@@ -19,6 +19,10 @@ replacement at a time, run against tests/test_desk*.py).
    desk_readings. Decided by Nadav (24.11, "Sure go"): the desk masks every ID-like number as it reads - eight digits or
    more, judged whole by the books' cleaning - so memory, the stored copy, the page and the Excel file agree
    (app/desk/reading.py `mask_ids`, `masked`).
+7. POST /api/usage parsed and validated its body before the sessionToken was checked: 400 before 401, so neither the
+   token nor the usage limit bounded what an anonymous client sent. Now the secret, the token and the limit come first,
+   and the body after them, with the same closed codes; POST /api/desk/export-link reads its body after its gate too
+   (app/desk/routes.py `_body_of`).
 """
 from __future__ import annotations
 
@@ -548,3 +552,47 @@ def test_a_reading_kept_before_the_mask_is_never_laid_under_a_refresh_or_shown()
     assert shown["kind"] == "full" and cold.seeded is False
     assert cold.health()["last_codes"][:2] == ["store_other_schema", "full_first"]
     assert store.row["body_schema"] == rd.BODY_SCHEMA
+
+
+# --- 7. the token before the body ---------------------------------------------------------------------------------------
+
+def test_a_usage_body_is_not_read_before_the_token_is_checked(use):  # noqa: F811
+    """POST /api/usage validated (and so parsed) the whole body before the route checked the sessionToken: with no token at
+    all, a body of another shape was 400 invalid_filter, not 401 - so MAX_EVENTS and the usage limiter bounded nothing an
+    anonymous client sent (the deployment is public)."""
+    r = use.client.post("/api/usage", json={"desk": "finance", "session": "s" * 9, "events": [], "pad": "x" * 10_000})
+    assert r.status_code == 401, (r.status_code, r.json())
+
+
+def test_the_usage_route_answers_the_token_then_the_limit_then_the_body_with_the_same_codes(use, monkeypatch):  # noqa: F811
+    from app.desk import routes as dr
+
+    for body in ({"desk": "finance", "pad": 1}, b"{", b"not json", b""):
+        kw = {"content": body, "headers": {"Content-Type": "application/json"}} if isinstance(body, bytes) else {"json": body}
+        assert use.client.post("/api/usage", **kw).json() == {"error": "unauthorized"}
+        signed = dict(kw, headers={**kw.get("headers", {}), "Authorization": "Bearer " + session_token(7301)})
+        r = use.client.post("/api/usage", **signed)
+        assert (r.status_code, r.json()) == (400, {"error": "invalid_filter"})
+    assert use.writer.calls == 0 and use.health()["batches"] == 0        # such a body is no batch, as before
+    # a reader past the usage limit is told so before the body is read at all
+    monkeypatch.setattr(dr, "USAGE_BATCHES_PER_USER_HOUR", 1)
+    from app import main
+
+    main.app.state.usage = None
+    auth = {"Authorization": "Bearer " + session_token(7302)}
+    assert use.client.post("/api/usage", json=batch(ev("hide")), headers=auth).json() == {"stored": 1, "refused": 0}
+    r = use.client.post("/api/usage", content=b"{", headers={**auth, "Content-Type": "application/json"})
+    assert r.status_code == 429 and r.json()["error"] == "rate_limited"
+    # and a well formed batch is kept as before, its check and its write as they were
+    assert use.post(batch(ev("hide"), ev("teleport"))).json() == {"stored": 1, "refused": 1}
+
+
+def test_the_export_links_body_is_read_after_its_gate(desk):  # noqa: F811
+    auth = {"Authorization": "Bearer " + session_token(1)}
+    for body in ({"tab": "b2c", "id_number": "1"}, {"tab": 5}, ["b2c"]):
+        assert desk.client.post("/api/desk/export-link", json=body).json() == {"error": "unauthorized"}
+        r = desk.client.post("/api/desk/export-link", json=body, headers=auth)
+        assert (r.status_code, r.json()) == (400, {"error": "invalid_filter"})
+    r = desk.client.post("/api/desk/export-link", json={"tab": "b2c"}, headers=auth)
+    assert r.status_code == 200 and r.json()["url"].startswith("/api/desk/export.xlsx?")
+    assert desk.client.get(r.json()["url"]).status_code == 200

@@ -197,10 +197,14 @@ def test_a_guest_is_refused_and_without_the_secret_the_desk_says_so(desk, monkey
 
 
 def test_only_the_desks_routes_answer_a_body_that_does_not_fit_in_their_own_words(desk):  # noqa: F811
-    """app/main.py's handler speaks for /api/desk only: the service's other routes keep FastAPI's own answer."""
-    bad = {"content": b"{", "headers": {"Content-Type": "application/json"}}
+    """app/main.py's handler speaks for /api/desk only: the service's other routes keep FastAPI's own answer. Since D2's
+    review a desk route reads its body after the gate: a body that does not fit is the desk's word for a member, and a
+    401 for anyone else, whatever the body."""
+    bad = {"content": b"{", "headers": {"Content-Type": "application/json", **auth(1)}}
     assert desk.client.post("/api/desk/export-link", **bad).json() == {"error": "invalid_filter"}
+    assert desk.client.post("/api/desk/export-link", content=b"{").json() == {"error": "unauthorized"}
     assert desk.client.post("/api/actions/plan", **bad).status_code == 422
+    assert desk.client.get("/api/desk?fresh=x", headers=auth(1)).json() == {"error": "invalid_filter"}
 
 
 @pytest.mark.parametrize("method, path", ROUTES)

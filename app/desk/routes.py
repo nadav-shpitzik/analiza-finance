@@ -53,6 +53,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
+from starlette.concurrency import run_in_threadpool
 
 from .. import config
 from ..monday.client import MondayReader
@@ -378,6 +379,17 @@ def _instant(text: Any) -> Optional[datetime]:
         return None
 
 
+async def _body_of(request: Request, model: type) -> Any:
+    """The request's JSON body as `model`, or None when it is not one (not JSON, or a field of another shape or one the
+    model does not know): the caller answers 400 `invalid_filter`, the word app/main.py gives a body FastAPI refuses. Read
+    only after the sessionToken was verified, so a body is never parsed for a client the desk does not know (D2's review:
+    FastAPI validated it first, 400 before 401)."""
+    try:
+        return model.model_validate(await request.json())
+    except Exception:  # noqa: BLE001 - not JSON, not UTF-8, nested too deep, or not the model's shape: never a 500
+        return None
+
+
 def _unavailable(st: Any, reason: Optional[str] = None) -> JSONResponse:
     """No reading to answer from: 503 `finance_unavailable` with the last attempt's code, or `not_read` (analiza-metrics'
     word, which the page ported from it reads)."""
@@ -505,7 +517,7 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
 class ExportBody(BaseModel):
     """What a list shows: its tab, a state ('' all, 'tasks', or a state key), a period key, the search box, the reading the
     page shows (its taken_at: the file says when it is built from another) and a customer (an account id, '' for all).
-    Anything else in the body is 400 `invalid_filter` (app/main.py)."""
+    Anything else in the body is 400 `invalid_filter`, read after the gate (`_body_of`)."""
     model_config = ConfigDict(extra="forbid")
     tab: str = "b2c"
     state: str = ""
@@ -524,15 +536,20 @@ def export_sig(client_secret: str, fields: list) -> str:
 
 
 @router.post("/api/desk/export-link")
-def desk_export_link(request: Request, body: ExportBody) -> JSONResponse:
+async def desk_export_link(request: Request) -> JSONResponse:
     """A two-minute link to a list as an Excel file - the students', the companies' or the aging by customer - exactly as
     the page filters it. The link carries the reader and the filter, signed; the file route checks the reader's board
     again (Student Charge for the students, B2B Charge for the companies). It opens in a new tab, which cannot send the
-    sessionToken: monday may sandbox the view's iframe against downloads (analiza-metrics `finance_export_link`)."""
-    got = _gated(request, "desk-export")
+    sessionToken: monday may sandbox the view's iframe against downloads (analiza-metrics `finance_export_link`). The gate
+    first, in the threadpool (it may read a board's members), and only then the body (D2's review)."""
+    got = await run_in_threadpool(_gated, request, "desk-export")
     if isinstance(got, JSONResponse):
         return got
     cfg, _st, visitor = got
+    body = await _body_of(request, ExportBody)
+    if body is None:
+        audit(visitor.identity, "desk-export", "invalid_filter")
+        return err(400, "invalid_filter")
     if body.tab not in TABS:
         return err(400, "unknown_tab")
     if not _opens(visitor, body.tab):
@@ -639,7 +656,8 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
 class UsageBody(BaseModel):
     """A batch of usage events from the desk's page: the desk, the visit's random id, the events. Every part is checked by
     app/desk/usage.py `clean_batch`; a field outside these three (a user id above all: it is the session's) is refused like
-    every body of the desk's that does not fit, 400 `invalid_filter` (app/main.py; analiza-metrics `UsageBody`)."""
+    every body of the desk's that does not fit, 400 `invalid_filter` (analiza-metrics `UsageBody`) - read only after the
+    sessionToken and the usage limit (`_body_of`)."""
     model_config = ConfigDict(extra="forbid")
     desk: Any = None
     session: Any = None
@@ -647,16 +665,22 @@ class UsageBody(BaseModel):
 
 
 @router.post("/api/usage")
-def desk_usage(request: Request, body: UsageBody) -> JSONResponse:
+async def desk_usage(request: Request) -> JSONResponse:
     """A batch of what the reader did on the desk's page (Nadav 16.11: her usage, to improve the desk over time;
     analiza-metrics `usage`, the same contract). Any signed-in reader of Analiza's account, for their own user id only:
     the sessionToken and nothing else of the gate - no board's membership (the desk refusing someone is itself an event,
     `load_failed`), no guest refusal, and never the reader's desk budget. Each event is checked against the closed
     vocabulary, where a name, an amount, a search's text or an ID number cannot pass. Its own limit (USAGE_BATCHES_*).
 
-    `{stored, refused}`; 400 `bad_usage` for a batch of another shape; 503 `usage_unavailable` when nothing can be kept -
-    no DATABASE_URL, no table (`store_schema`), or a write that failed - said in /health's `desk.usage` by its word. The
-    page stops sending for the visit at its first failure, quietly. sync def on purpose: one short database write.
+    `{stored, refused}`; 400 `bad_usage` for a batch of another shape; 400 `invalid_filter` for a body that is not one (not
+    JSON, or a field the batch does not have); 503 `usage_unavailable` when nothing can be kept - no DATABASE_URL, no
+    table (`store_schema`), or a write that failed - said in /health's `desk.usage` by its word. The page stops sending for
+    the visit at its first failure, quietly.
+
+    In this order (D2's review: FastAPI parsed and validated the body before the route, so an anonymous client's body of
+    another shape was 400, not 401, and neither the token nor the limit bounded what it sent): the secret, the
+    sessionToken, this reader's usage limit, and only then the body. async for that: the token, the limit and the body
+    take no I/O but the request's own; the batch's check and its one short database write run in the threadpool.
 
     What changed with the move: the token is checked by this service's auth (Analiza's account pinned, nothing unpins
     it); a batch that finds no database is counted in /health as `no_store` (analiza-metrics did not count it); a failed
@@ -676,6 +700,15 @@ def desk_usage(request: Request, body: UsageBody) -> JSONResponse:
     if wait is not None:
         audit(identity, "usage", "rate_limited")
         return err(429, "rate_limited", headers={"Retry-After": str(wait)}, retry_after_seconds=wait)
+    body = await _body_of(request, UsageBody)
+    if body is None:
+        audit(identity, "usage", "invalid_filter")  # not counted in /health: as before, such a body is no batch
+        return err(400, "invalid_filter")
+    return await run_in_threadpool(_keep_usage, cfg, us, identity, body)
+
+
+def _keep_usage(cfg: config.Config, us: Any, identity: Any, body: UsageBody) -> JSONResponse:
+    """A batch whose reader is known and within the limit: checked against the vocabulary, then written."""
     try:
         rows, refused = clean_batch(body.model_dump(), identity.user_id)
     except Refused as r:
