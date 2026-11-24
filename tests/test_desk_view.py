@@ -905,6 +905,11 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
     assert {"פרטי חיוב", "ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"} <= fd.legend_terms("b2b")
     said = {i["term"]: i["text"] for p in fd._legend_out("b2b") for i in p["items"]}
     assert "MON-43" in said["מפתח חשבשבת"] and "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
+    # what the page does (the adversarial review of 62fd993): written from the browser as the person, the before and the
+    # after in monday's activity log, and an Update on the company only with the permission to write one - never promised
+    bill = said["פרטי חיוב"]
+    assert "נכתבת מהדפדפן בשמך" in bill and "יומן הפעילות של לוח החברות שומר מה היה ומה נכתב" in bill
+    assert "רק כשלאפליקציה יש הרשאה לכתוב עדכונים במאנדיי" in bill and "ועל החברה נכתב עדכון בשמך" not in bill
     # the ID number is never in the Excel file now (app/desk/export.py), and the legend no longer says it is
     students = {i["term"]: i["text"] for p in fd._legend_out("b2c") for i in p["items"]}
     assert "אקסל" not in students["ת.ז"] and "בשמך" in students["ת.ז"]

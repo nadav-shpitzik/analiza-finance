@@ -361,11 +361,14 @@ LEGEND = {
                    "בודק שהערך נשמר, ומבקש קריאה חדשה של הלוחות."),
         ("נכתב, מתעדכן", "ליד השם של שורה: היא נכתבה מכאן לפני רגע, והמסך מחכה לקריאה חדשה של הלוחות כדי לשבץ אותה "
                          "מחדש. עד אז היא מוצגת עם הערכים שנכתבו, עד שלוש דקות."),
-        # ADR-0188: the edit is the person's own, like every action; in analiza-metrics the server wrote it ("נכתבת בידי
-        # השרת של המסך ולא בשמך, כי ללוח החברות אין גישה בלי מושב CRM"), which this service never does
+        # ADR-0188: the edit is the person's own, from the browser, like every action; in analiza-metrics the server wrote
+        # it ("נכתבת בידי השרת של המסך ולא בשמך, כי ללוח החברות אין גישה בלי מושב CRM"), which this service never does.
+        # What was there before is kept by monday's activity log of the board (MON-41); the old Update on the company is
+        # written only when the app holds the permission to write updates (updates:write), which it does not ask for
         ("פרטי חיוב", "בכרטסת של חברה: ח.פ, מפתח חשבשבת, חשבונית על שם ותנאי תשלום, ארבע עמודות של החברה בלוח החברות. "
-                      "עריכה שלהן נכתבת בשמך, בהרשאות שלך במאנדיי, כמו שאר הפעולות; על החברה נכתב עדכון בשמך: מה היה "
-                      "ומה נכתב."),
+                      "עריכה שלהן נכתבת מהדפדפן בשמך, בהרשאות שלך במאנדיי, כמו שאר הפעולות, ויומן הפעילות של לוח "
+                      "החברות שומר מה היה ומה נכתב. עדכון על החברה, עם מה שהיה ומה שנכתב, נכתב בשמך רק כשלאפליקציה "
+                      "יש הרשאה לכתוב עדכונים במאנדיי."),
     ],
 }
 
