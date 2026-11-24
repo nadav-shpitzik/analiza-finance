@@ -820,7 +820,8 @@ def test_billed_writes_its_invoice_only_when_typed_and_the_demand_day_only_when_
     assert by[fd.B2["invoice"]]["skip_empty"] is True and by[fd.B2["invoice"]]["required"] is False
     assert by[fd.B2["due"]] == {"column": fd.B2["due"], "title": "מועד דרישת תשלום", "kind": "date", "today": True,
                                 "if_empty": True}
-    assert "MON-92" in fd.DESK_ACTIONS["billed"]["after"]
+    # what it says to the person, without the task's number (MON-92, QA 24.11: kept in the comment)
+    assert fd.DESK_ACTIONS["billed"]["after"] == "מועד דרישת תשלום נכתב רק כשהוא ריק במאנדיי, והוא היום."
 
 
 @pytest.mark.parametrize("row, offers", [
@@ -914,7 +915,9 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
         assert {"פעולות", "נכתב, מתעדכן"} <= fd.legend_terms(tab), tab
     assert {"פרטי חיוב", "ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"} <= fd.legend_terms("b2b")
     said = {i["term"]: i["text"] for p in fd._legend_out("b2b") for i in p["items"]}
-    assert "MON-43" in said["מפתח חשבשבת"] and "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
+    # MON-43's rule, said without its number (QA 24.11)
+    assert "מקבלת ח.פ בלי מפתח" in said["מפתח חשבשבת"] and "MON-" not in said["מפתח חשבשבת"]
+    assert "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
     # what the page does (the adversarial review of 62fd993): written from the browser as the person, the before and the
     # after in monday's activity log, and an Update on the company only with the permission to write one - never promised
     bill = said["פרטי חיוב"]
@@ -976,3 +979,61 @@ def test_a_rows_reasons_are_its_chips_every_one_in_order_and_each_chip_has_one_p
     assert fd.row_reasons("b2c", row_of(v, 2)) == ["חסרה אסמכתת חשבונית", "שליחת קבלה: טרם"]
     # a flag that names the row's state ("החזר לביצוע") is no reason, as it is no chip on the page
     assert row_of(v, 3)["state"] == "refund_to_execute" and fd.row_reasons("b2c", row_of(v, 3)) == []
+
+
+def test_the_refunded_sentence_says_its_two_cases_apart_and_names_every_row_it_sends_to_the_exceptions():
+    """QA 24.11: "החזר בוצע" said '"הוחזר חלקי" בלי סכום החזר או עם 0, וסכום החזר גדול מסכום ששולם, נמצאים ב"חריג"' - the
+    "ו" read as one row with both. Two cases now ("וגם"), and the sentence holds at its edges: every combination of the two
+    statuses with a refund, a payment and a receipt is in "החזר בוצע" unless it is a case the sentence names."""
+    rows, case = [], {}
+    for st in (fd.P_REFUNDED, fd.P_PART):
+        for refund in ("", "0", "100", "9000"):
+            for paid in ("4000", ""):
+                for receipt in ("1", "2", "0", "77"):
+                    rows.append(sc(len(rows) + 1, st=st, refund=refund, paid=paid, receipt=receipt, lead=["L1"]))
+                    case[str(len(rows))] = (st, refund, paid, receipt)
+    v = view(rows, leads=[lead("L1")])
+    for r in v["b2c"]["rows"]:
+        st, refund, paid, receipt = case[r["id"]]
+        named = (st == fd.P_PART and refund in ("", "0")) or (refund == "9000") or not paid or receipt == "77"
+        assert r["state"] == ("exception" if named else "refunded"), case[r["id"]]
+    about = fd.B2C_STATES["refunded"]["about"]
+    assert "וגם תקבולים" in about and "נמצאים" not in about
+    for words in ("בלי סכום החזר או עם 0", "גדול מסכום ששולם", "סכום ששולם בהם לא הוקלד", "שהמסך לא מכיר"):
+        assert words in about, words
+
+
+def test_no_word_the_desk_shows_carries_an_internal_task_number():
+    """QA 24.11: "(MON-86)" in the confirmation of "סימון "תשלום הוחזר"", "(MON-43)" in the billing form. A task number is
+    ours, not the person's: it stays in the code's comments. Everything the server sends the page, and both files."""
+    import json
+    import re
+    from app.desk import export as fx
+    v = view([sc(1, credit_approved="100"), sc(2, invoice="", receipt="0")], [b2(1), b2(2, billing="0", payment="2")])
+    said = json.dumps(fd.json_safe(v), ensure_ascii=False)
+    assert not re.search(r"MON-\d", said), re.findall(r"[^\"]{0,40}MON-\d+", said)
+    for book in (fx.b2c_workbook(v["b2c"]["rows"], {}), fx.b2b_workbook(v["b2b"]["rows"], {})):
+        import io
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(book))
+        assert not [c.value for ws in wb for row in ws.iter_rows() for c in row if "MON-" in str(c.value or "")]
+
+
+def test_the_legend_says_what_all_holds_and_its_other_words_plainly():
+    """QA 24.11, the legend's wording: "הכל" (a tile on both tabs, and a file's list) had no entry; "פרטי חשבון" said
+    "...שאינה מקלידה באישור ההחזר", which reads as "which is not typing"; "תווית שהמסך לא מכיר" said a label came "after the
+    screen was written" - "נכתב" is the word of the desk's own writes."""
+    for tab in ("b2c", "b2b"):
+        assert "הכל" in fd.legend_terms(tab)
+        flags = {k: x for k, _t, x in fd.LEGEND_FLAGS[tab]}
+        assert "אחרי שהמסך נבנה" in flags["status_unknown"] and "נכתב" not in flags["status_unknown"]
+    words = dict(fd.LEGEND["b2c"])
+    assert '"ללא תקבול"' in words["הכל"] and "סכום המשבצות" in words["הכל"]
+    assert '"בוטל"' in dict(fd.LEGEND["b2b"])["הכל"] and "בכרטסת שלה" in dict(fd.LEGEND["b2b"])["הכל"]
+    bank = words["פרטי חשבון"]
+    assert "שאינה" not in bank and "ממולאות כשההחזר מאושר" in bank and '"החזר לביצוע"' in bank
+    # each tab's "הכל" holds every row of its tab: the sum of its tiles
+    v = view([sc(1), sc(2, st="0", receipt="0"), sc(3, st="4")], [b2(1), b2(2, billing="2")])
+    whole = v["b2c"]["periods"][0]
+    assert whole["count"] == sum(x["count"] for x in whole["states"].values()) == 3
+    assert len(fd.filter_b2b(v["b2b"], "", "", "")) == sum(x["count"] for x in v["b2b"]["numbers"].values()) == 2
