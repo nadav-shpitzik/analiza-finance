@@ -57,7 +57,8 @@ global.document = { visibilityState: "visible", activeElement: null, body: { app
 Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: input.clipboard === "none" ? {} :
   { clipboard: { writeText(t) { if (input.clipboard === "refuses") { return Promise.reject(new Error("denied")); }
     copied.push(t); return Promise.resolve(); } } } });
-global.window = { scrollY: 0, scrollTo() {}, open() {}, location: { href: "https://desk.test/desk/" },
+let scrolled = null;                                /* where a step scrolled the page last, if it did */
+global.window = { scrollY: 0, scrollTo(x, y) { this.scrollY = y; scrolled = y; }, open() {}, location: { href: "https://desk.test/desk/" },
   addEventListener(t, f) { (listeners["window:" + t] = listeners["window:" + t] || []).push(f); },
   crypto: require("crypto").webcrypto };
 const root = { innerHTML: "", addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
@@ -138,6 +139,8 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
   const steps = [];
   for (const step of input.steps || []) {
     let refused = null;
+    scrolled = null;
+    if (step.scrollY !== undefined) { window.scrollY = step.scrollY; }      /* how far down she is before the step */
     if (step.mutate) { Object.keys(step.mutate).forEach((b) => Object.keys(step.mutate[b]).forEach((id) => Object.assign(boards[b][id], step.mutate[b][id]))); }
     if (step.show) { F._show(step.show); }
     if (step.click) { click(step.click[0], step.click[1]); }
@@ -165,7 +168,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     /* the element a step clicked, as the click left it (a button that says it is busy) */
     const pressed = step.click && clicked ? { text: clicked.textContent, disabled: clicked.disabled } : null;
     steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error, pressed: pressed,
-      refused: refused, can: F._can(), sent: sent.length,
+      refused: refused, can: F._can(), sent: sent.length, scrolled: scrolled,
       plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
       /* 1.1: the batch on the screen, row by row */
       batch: b ? { phase: b.phase, error: b.error || "", items: b.items.map((it) => ({ key: it.key, verdict: it.verdict || null,
@@ -545,6 +548,30 @@ def test_an_open_company_heads_its_tab_with_its_name_and_the_way_back():
     assert ledger.index("פרטי חיוב") < ledger.index('class="fin-states"')
     assert '<h2 class="fin-co-name">חברה א</h2>' in one_tile
     assert "fin-co" not in every and "fin-co" not in customers
+
+
+def test_the_way_back_from_a_company_returns_to_the_tile_the_view_and_the_place_she_came_from():
+    """QA 8 (24.11): "כל החברות" went back to "הכל" and "רשימה", not where she came from ("לטיפול" and "לפי לקוח"). A company
+    opened from "לפי לקוח", or from a list by its "אין תנאי תשלום", opens at its top (its name, QA 7); the way back returns
+    to the tile, the view and the height of the page she left - a tile chosen inside the company changes none of them."""
+    customers = {"tab": "b2b", "b2": {"state": "tasks", "view": "customers", "customer": "", "open": {}}}
+    got = drive(answer(), [{"show": customers}, {"scrollY": 420, "click": [{"customer": "7703"}]},
+                           {"click": [{"b2state": "to_bill"}]}, {"click": [{"customer": ""}]},
+                           {"click": [{"b2view": "list"}]}], monday=world(), board=B2_BOARD)
+    _shown, opened, inside, back, listed = got["steps"]
+    assert opened["scrolled"] == 0 and '<h2 class="fin-co-name">חברה ג</h2>' in opened["html"]
+    assert '<h2 class="fin-co-name">חברה ג</h2>' in inside["html"]
+    assert back["scrolled"] == 420 and "fin-co" not in back["html"]
+    assert "<h2>לפי לקוח</h2>" in back["html"] and 'aria-pressed="true" data-b2view="customers"' in back["html"]
+    # and the tile she had chosen before "לפי לקוח" is still hers on the list
+    assert "<h2>לטיפול</h2>" in listed["html"] and 'aria-pressed="true" data-b2state="tasks"' in listed["html"]
+    # from a list's tile, by a company's "אין תנאי תשלום"
+    got = drive(answer(), [{"show": {"tab": "b2b", "b2": {"state": "to_bill", "view": "list", "customer": "", "open": {}}}},
+                           {"scrollY": 150, "click": [{"terms": "7703"}]}, {"click": [{"customer": ""}]}],
+                monday=world(), board=B2_BOARD)
+    _shown, opened, back = got["steps"]
+    assert opened["scrolled"] == 0 and back["scrolled"] == 150
+    assert "<h2>לחיוב החודש</h2>" in back["html"] and 'aria-pressed="true" data-b2state="to_bill"' in back["html"]
 
 
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():

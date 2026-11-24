@@ -79,6 +79,9 @@
  *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
  * QA 7 With a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב" and its
  *      tiles - all its own. Its name heads the tab now, with the way back to every company ("כל החברות") beside it.
+ * QA 8 "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company opened from a
+ *      list or from "לפי לקוח" keeps where she was - the tile, the view, the page's height (state.b2.back) - and the way
+ *      back returns there; a company opens at its top, where its name is.
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
@@ -195,7 +198,7 @@
     /* the students list: a state ("tasks", "" for all, or a state key), a period key, the payments opened */
     sc: { state: "tasks", period: "", open: {} },
     /* the companies list: a state, a customer (account id), the list or the customers, the charges opened */
-    b2: { state: "tasks", customer: "", view: "list", open: {} } };
+    b2: { state: "tasks", customer: "", view: "list", open: {}, back: null } };
 
   /* ---------- helpers ---------- */
   function num(x) { var n = Number(x); return isNaN(n) ? 0 : n; }
@@ -2866,13 +2869,11 @@
     if (el.dataset.terms) {
       /* "אין תנאי תשלום": the company's ledger, its billing details at the top, and for one who may edit them, their form
          on the terms (D2: read live first) */
-      state.b2.customer = el.dataset.terms; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
+      openCompany(el.dataset.terms);
       use("customer", { from: "terms" });
       render();
       if (canBill()) { startBill(el.dataset.terms, "terms"); }
-      var top = document.getElementById("content");
-      if (top) { top.scrollTop = 0; }
-      window.scrollTo(0, 0);
+      scrollPageTo(0);
       return;
     }
     if (el.dataset.open) {
@@ -2906,14 +2907,17 @@
     }
     if (el.dataset.b2view) {
       state.b2.view = el.dataset.b2view;
-      if (el.dataset.b2view === "customers") { state.b2.customer = ""; }   /* "לפי לקוח" is every customer */
+      /* "לפי לקוח" is every customer: a company left this way leaves no way back to keep */
+      if (el.dataset.b2view === "customers") { state.b2.customer = ""; state.b2.back = null; }
       use("view", { view: el.dataset.b2view === "customers" ? "customers" : "list" });
       redraw(); return;
     }
     if (el.dataset.customer !== undefined) {
-      state.b2.customer = el.dataset.customer; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
+      /* a company opens at its top, where its name is (QA 7); "כל החברות" goes back to where she was (QA 8) */
+      var y = 0;
+      if (el.dataset.customer) { openCompany(el.dataset.customer); } else { y = leaveCompany(); }
       use("customer", { from: el.dataset.customer ? "aging" : "all" });
-      redraw(); return;
+      render(); scrollPageTo(y); return;
     }
     if (el.dataset.fintab) { state.tab = el.dataset.fintab; use("tab"); }
     else if (el.dataset.notes) { state.notes = !state.notes; use("notes", { open: !!state.notes }); render(); return; }
@@ -2926,6 +2930,25 @@
     var scroller = document.getElementById("content");
     if (scroller) { scroller.scrollTop = 0; }
     window.scrollTo(0, 0);
+  }
+  /* QA 8 (24.11): "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company
+     opened from a list or from "לפי לקוח" keeps where she was - the tile, the view and how far down the page - and the
+     way back returns there; a tile chosen inside the company does not change it */
+  function openCompany(aid) {
+    var f = state.b2;
+    if (!f.customer) { f.back = { state: f.state, view: f.view, y: window.scrollY || 0 }; }
+    f.customer = aid; f.state = ""; f.view = "list"; f.open = {};
+  }
+  function leaveCompany() {
+    var f = state.b2, back = f.back || { state: "", view: "list", y: 0 };
+    f.customer = ""; f.state = back.state; f.view = back.view; f.open = {}; f.back = null;
+    return back.y;
+  }
+  /* the page at a height: the window, or on a wide screen the app's #content (analiza-metrics' frame) */
+  function scrollPageTo(y) {
+    var scroller = document.getElementById("content");
+    if (scroller) { scroller.scrollTop = y; }
+    window.scrollTo(0, y);
   }
   var typing = null;
   function onInput(ev) {
