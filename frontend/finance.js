@@ -57,31 +57,32 @@
  *      is drawn with the general columns, on both tabs; with every row inside, the open list's own stay (1.4). And a row
  *      found by a field its list does not show says which, and what it holds there ("נמצא לפי: הוחזרו 976.19 ₪",
  *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
+ * QA 4 At full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut to "פר":
+ *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
+ *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
+ *      with rows as long as real ones (a students' list's narrowest width went from about 1210 to about 1070 pixels, and
+ *      to about 1090 with QA 6's chevron).
  * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
  *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
  *      as a decision: it came with analiza-metrics' first import, 10.11).
+ * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
+ *      carries a chevron at its start (after the box where it has one), lit while the row is pointed at and turned while
+ *      its details are open, beside the pointer and the hover it had: a narrow column, and every list still fits (QA 4).
+ * QA 7 With a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב" and its
+ *      tiles - all its own. Its name heads the tab now, with the way back to every company ("כל החברות") beside it.
+ * QA 8 "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company opened from a
+ *      list or from "לפי לקוח" keeps where she was - the tile, the view, the page's height (state.b2.back) - and the way
+ *      back returns there; a company opens at its top, where its name is.
+ * QA 9 The table scrolled inside a frame of 78% of the view (about six rows inside monday) in a page that scrolls too. A
+ *      table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view (the
+ *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
+ *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
  * QA 10 The page's words: a refresh on its way is "מתעדכן" on the button pressed as beside the reading's time (it was
  *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" - in the list's cell finance.css draws "(לפי" and
  *       ")" around the legend's term, whose markup tests/test_desk_parity_js.py holds, and the details and the row's
  *       situation write it (CREATED_BY); an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
  *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
  *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
- * QA 4 At full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut to "פר":
- *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
- *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
- *      with rows as long as real ones (a list's narrowest width went from about 1210 to about 1070 pixels).
- * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
- *      carries a chevron at its start (after the box where it has one), lit while the row is pointed at and turned while
- *      its details are open, beside the pointer and the hover it had: a narrow column, and every list still fits (QA 4).
- * QA 9 The table scrolled inside a frame of 78% of the view (about six rows inside monday) in a page that scrolls too. A
- *      table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view (the
- *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
- *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
- * QA 7 With a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב" and its
- *      tiles - all its own. Its name heads the tab now, with the way back to every company ("כל החברות") beside it.
- * QA 8 "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company opened from a
- *      list or from "לפי לקוח" keeps where she was - the tile, the view, the page's height (state.b2.back) - and the way
- *      back returns there; a company opens at its top, where its name is.
  * QA 11 The totals: the total row of "לפי לקוח" has the count of "לטיפול" (the companies' counts shown, added: a count, no
  *       money). The heading of "הכל" has its sum where the server made one: on the students' tab the period's "התקבלו"
  *       (the view's), on the companies' tab - the view has none - the server's total of that very list, once it lands.
