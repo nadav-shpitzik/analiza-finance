@@ -85,6 +85,8 @@
  * QA 11 The totals: the total row of "לפי לקוח" has the count of "לטיפול" (the companies' counts shown, added: a count, no
  *       money). The heading of "הכל" has its sum where the server made one: on the students' tab the period's "התקבלו"
  *       (the view's), on the companies' tab - the view has none - the server's total of that very list, once it lands.
+ * QA 12 No change here: the QA could not read the console of the view's iframe, so tests/test_desk_browser.py holds that
+ *       the page logs no console error and throws nothing while it loads, opens details, confirms an action, refreshes.
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the

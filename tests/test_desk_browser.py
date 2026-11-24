@@ -542,3 +542,39 @@ def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_i
     assert narrow["sideways"] and narrow["overflowY"] == "auto" and narrow["frame"] >= 0.9 * narrow["view"], narrow
     # at its narrowest the totals' label wraps (QA 4) between "סה"כ" and its count, never inside "21 תקבולים"
     assert got["steps"]["683x748 total"] == {"count": "21 תקבולים", "lines": 1, "below": True}, got["steps"]["683x748 total"]
+
+
+def test_the_page_logs_no_console_error_and_throws_nothing_while_it_loads_opens_details_confirms_and_refreshes(serve):
+    """QA 12 (24.11): the QA could not read the console of the view's iframe. The page, in a browser, logs no console error
+    and raises no uncaught exception while it loads, opens a row's details (the ID number and the bank account read as the
+    person), shows an action's confirmation in the details and the row's own one, and refreshes."""
+    base, _log = serve()
+    store = {"5093448677": {"3103": dict(BANK, __name="תלמיד/ה 3", color_mm1kxpvt={"text": "שולם", "index": 1, "label": "שולם"})},
+             "5089697337": {k: {"text_mkzvem4": v} for k, v in LEADS.items()}}
+    labels = {"5093448677": {"color_mm1kxpvt": {"1": "שולם", "4": "תשלום הוחזר", "5": "הוחזר חלקי"}}}
+    got = qa_visit(r"""
+  out.steps.loaded = await page.$$eval("tr[data-row]", (t) => t.length);
+  await page.click('[data-bstate="refund_to_execute"]');
+  await page.click('tr[data-row="3103"] td.k-to_refund');
+  await page.waitForFunction(() => /מספר חשבון/.test((document.querySelector(".fin-dx-box") || {}).innerText || ""), null,
+    { timeout: 15000 });
+  await page.click('[data-act="sc:3103:refund_done"]');
+  await page.waitForSelector(".fin-acts .fin-act-plan", { timeout: 15000 });
+  out.steps.details = await page.$eval(".fin-acts .fin-act-plan", (el) => el.innerText);
+  await page.click('[data-act-close="1"]');
+  await page.click('[data-row-act="sc:3103:refund_done"]');
+  await page.waitForSelector(".fin-batch-plan", { timeout: 15000 });
+  out.steps.row = await page.$eval(".fin-batch-plan", (el) => el.innerText);
+  await page.click('[data-batch-close="1"]');
+  await page.click("[data-refresh]");
+  await page.waitForFunction(() => !document.querySelector(".fin-refreshing") && !document.querySelector("[data-refresh][disabled]"),
+    null, { timeout: 15000 });
+  out.steps.refreshed = await page.$eval(".fin-asof", (el) => el.innerText);
+  out.steps.mutations = await page.evaluate(() => window.__monday.filter((m) => m.query.trim().indexOf("mutation") === 0).length);
+""", base, fake_sdk(store, labels))
+    steps = got["steps"]
+    assert got["errors"] == [], got["errors"]
+    # every step was reached: the list, the details' plan, the row's own confirmation, a newer reading - and nothing written
+    assert steps["loaded"] > 0 and steps["mutations"] == 0
+    assert 'סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"' in steps["details"]
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in steps["row"] and steps["refreshed"].startswith("נכון ל-")
