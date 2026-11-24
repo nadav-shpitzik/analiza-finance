@@ -320,8 +320,11 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
 
 
 def download_headers(name: str, ascii_name: str) -> dict[str, str]:
-    """RFC 6266: a plain ASCII name for old clients, and the Hebrew one in filename* for everyone else."""
-    return {"Content-Disposition": "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quote(name)),
+    """RFC 6266: a plain ASCII name for old clients, and the Hebrew one in filename* for everyone else - UTF-8, no
+    language, every byte outside RFC 8187's attr-char percent-encoded (`safe=""`: quote() leaves "/" as it is by default).
+    QA 24.11 saw a name end "24.11.2026.xlsx" without its Hebrew letters: that date is the Hebrew name's alone (the ASCII
+    one says 2026-11-24), so the downloader had read filename* and dropped the letters itself."""
+    return {"Content-Disposition": "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quote(name, safe="")),
             "Cache-Control": "no-store"}
 
 

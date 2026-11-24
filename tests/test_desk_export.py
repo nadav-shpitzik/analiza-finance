@@ -12,7 +12,9 @@ import hmac
 import io
 import json
 import logging
+import re
 import zipfile
+from datetime import date
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import openpyxl
@@ -564,3 +566,26 @@ def test_the_companies_file_says_its_paid_totals_leave_out_a_partly_paid_charge_
                 if r[0].value == "שימו לב"]
     assert notes(b2(1, payment="0", amount="10000", paid="5000")) == []
     assert notes(b2(1, payment="0", amount="1"), b2(2, payment="0", amount="2"))[0].startswith('2 חיובים ב"שולם חלקית"')
+
+
+# the Content-Disposition of RFC 6266 with RFC 8187's ext-value: the ASCII fallback first, then the UTF-8 name, every byte
+# outside attr-char percent-encoded
+DISPOSITION = re.compile(r'attachment; filename="([A-Za-z0-9._-]+)"; filename\*=UTF-8\'\'([A-Za-z0-9!#$&+.^_`|~%-]+)')
+
+
+def test_the_file_name_goes_as_ascii_for_old_clients_and_as_hebrew_in_utf8_for_the_rest(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: a file reached the downloader named "..._24.11.2026.xlsx", without its Hebrew letters. That date is the
+    Hebrew name's alone (the ASCII one says 2026-11-24): the downloader read filename* and dropped the letters itself. The
+    header is pinned here as RFC 6266 has it, through the file's own route too, and a character outside RFC 8187's attr-char
+    is encoded - a "/" went out as it was."""
+    day_ = date(2026, 11, 24)
+    for name, ascii_name in (fx.b2c_file_names("לטיפול", "tasks", "כל התקופה", "", day_),
+                             fx.b2b_file_names("חריג, לבדיקה", "exception", "מרכז רפואי העמק/כללית", "A2", day_),
+                             fx.customers_file_names(day_), ("א/ב ג;ד\"ה'ו(ז)*%.xlsx", "x.xlsx")):
+        m = DISPOSITION.fullmatch(fx.download_headers(name, ascii_name)["Content-Disposition"])
+        assert m and m.group(1) == ascii_name and unquote(m.group(2), encoding="utf-8", errors="strict") == name, name
+    served(monkeypatch, export_snapshot())
+    f = desk.client.get(export_link(desk, state="tasks").json()["url"])
+    m = DISPOSITION.fullmatch(f.headers["content-disposition"])
+    assert m and m.group(1).startswith("finance-students-tasks-all-")
+    assert unquote(m.group(2), encoding="utf-8", errors="strict").startswith("תקבולים-סטודנטים_לטיפול_כל-התקופה_")
