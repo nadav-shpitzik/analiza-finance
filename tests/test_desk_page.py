@@ -484,6 +484,31 @@ def test_when_monday_does_not_give_the_id_number_the_details_say_why_and_offer_t
     assert "000000018" in fact(detail_of(again["html"], "3101"), "ת.ז") and len(got["sent"]) == 2
 
 
+def test_an_item_monday_answers_from_another_board_is_a_stranger_and_never_shown():
+    """The adversarial review of 62fd993 asked that a live read refuse an item monday answered from another board, as the
+    server's reader drops a stranger. readCells asks every item's `board { id }` and keeps only the board it asked; this
+    holds it for the three reads: a lead's ID number, a refund's bank account and a company's ח.פ."""
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3102":
+            r["lead_ids"] = ["6101", "6103"]                       # a stranger first, then a lead of the Leads board
+    monday = world()
+    monday["boards"][LEADS_BOARD]["6101"]["__board"] = "9999001"
+    monday["boards"][SC_BOARD]["3103"]["__board"] = "9999002"
+    monday["boards"][ACCOUNTS_BOARD]["7703"]["__board"] = "9999003"
+    one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True, "3102": True, "3103": True}}}
+    got = drive(answer(v), [{"show": one}, {"show": LEDGER}], monday=monday, board=B2_BOARD)
+    html, ledger = got["steps"][0]["html"], got["steps"][1]["html"]
+    # the only lead is a stranger: not found; a stranger beside a lead of the board: the lead's number, never the stranger's
+    assert fact(detail_of(html, "3101"), "ת.ז").startswith('<span class="fin-badtext">הליד לא נמצא בלוח הלידים</span>')
+    assert "000000034" in fact(detail_of(html, "3102"), "ת.ז") and "000000018" not in html
+    assert bank_box(html).startswith('<span class="fin-badtext">התקבול לא נמצא בלוח Student Charge</span>')
+    assert "1234567" not in html
+    assert fact(ledger, "ח.פ").startswith('<span class="fin-badtext">החברה לא נמצאה בלוח החברות</span>')
+    assert "500000027" not in ledger
+    assert all("board { id }" in s["query"] for s in got["sent"])
+
+
 def test_a_newer_reading_reads_the_number_again_and_the_last_one_stays_on_the_screen_meanwhile():
     one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}
     got = drive(answer(), [{"show": one}, {"show": {}}, {"show": {}}], monday=world())
