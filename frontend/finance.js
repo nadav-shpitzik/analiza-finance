@@ -1809,8 +1809,19 @@
       "<button class=\"fin-btn\" type=\"button\" data-retry=\"1\">לנסות שוב</button></div></div>";
   }
   /* D2: an answer with no view - the server has not read the boards yet (its first open, or an instance that has not
-     read) - says so, with the refresh that reads them; a failed last attempt is said under it */
+     read) - says so, with the refresh that reads them; a failed last attempt is said under it. An answer whose boards
+     WERE read but whose view could not be built (`view_error`, app/desk/routes.py _view_of: a crash in the build) is
+     another thing: a refresh reads the boards again and crashes the same way, so it is said as the server's fault, with
+     no refresh offered as its fix (the adversarial review of 62fd993) */
+  var VIEW_ERROR = "הנתונים נקראו ממאנדיי, אבל השולחן לא נבנה מהם. זו תקלה בשרת, ונדב צריך לבדוק אותה.";
+  var VIEW_ERROR_KEPT = "הנתונים החדשים נקראו ממאנדיי, אבל השולחן לא נבנה מהם, ולכן מוצגים הנתונים הקודמים. זו תקלה בשרת, " +
+    "ונדב צריך לבדוק אותה.";
   function noReading() {
+    if (BODY && BODY.view_error) {
+      root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\">" +
+        "<p class=\"fin-msg\">" + esc(VIEW_ERROR) + "</p></div></div>";
+      return;
+    }
     var failed = BODY && BODY.last_attempt && BODY.last_attempt.ok === false;
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">הנתונים עוד לא נקראו</p>" +
       (failed ? "<p class=\"fin-msg\">הקריאה האחרונה נכשלה.</p>" : "") +
@@ -1881,6 +1892,7 @@
       else if (BODY) { BODY.refreshing = false; }
       render();
       if (fresh && VIEW && body.last_attempt && body.last_attempt.ok === false) { flash("הרענון נכשל, ומוצגים הנתונים הקודמים."); }
+      else if (fresh && VIEW && !body.view && body.view_error) { flash(VIEW_ERROR_KEPT); }
       /* the desk on the screen for the first time this visit: how long it took, and from which board */
       if (!USE.opened && VIEW) {
         USE.opened = true;

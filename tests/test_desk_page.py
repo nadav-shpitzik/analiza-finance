@@ -661,6 +661,25 @@ def test_an_answer_without_a_view_says_the_data_was_not_read_yet_and_offers_the_
     assert got["calls"][:2] == ["GET /api/desk", "GET /api/desk?fresh=1"] and "fin-tabs" in got["steps"][0]["html"]
 
 
+def test_a_reading_whose_view_could_not_be_built_is_said_as_the_servers_fault_with_no_refresh_offered():
+    """The adversarial review of 62fd993: the boards were read, the view crashed in its build (`view_error`), and the page
+    said "הנתונים עוד לא נקראו" with a refresh that reads the boards again and crashes the same way."""
+    crashed = answer(None, view_error="crashed", taken_at="2026-11-24T08:00:00+00:00",
+                     last_attempt={"taken_at": "2026-11-24T08:00:00+00:00", "ok": True, "error": None})
+    first = drive(crashed, [], monday=world())["first"]
+    assert '<p class="fin-msg">הנתונים נקראו ממאנדיי, אבל השולחן לא נבנה מהם. זו תקלה בשרת, ונדב צריך לבדוק אותה.</p>' in first
+    assert "הנתונים עוד לא נקראו" not in first and "data-refresh" not in first and "<button" not in first
+    assert "fin-tabs" not in first
+    # a view on the screen: a refresh answered with a view that could not be built keeps it, and says why
+    got = drive(steps=[{"click": [{"refresh": "1"}], "raw": True}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [{"body": crashed}]})
+    assert "fin-tabs" in got["steps"][0]["html"] and "השולחן לא נבנה" not in got["steps"][0]["html"]
+    assert got["toasts"] == ["הנתונים החדשים נקראו ממאנדיי, אבל השולחן לא נבנה מהם, ולכן מוצגים הנתונים הקודמים. זו תקלה "
+                             "בשרת, ונדב צריך לבדוק אותה."]
+    # and an answer with no reading at all is still "not read yet", with its refresh
+    assert "הנתונים עוד לא נקראו" in drive(answer(None), [], monday=world())["first"]
+
+
 def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
     """An instance that has not read yet may answer a return or a refresh: the reading on the screen stays."""
     none = {"body": answer(None)}
