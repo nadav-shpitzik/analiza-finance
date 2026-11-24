@@ -27,6 +27,13 @@ business number. analiza-metrics read and kept the business number (`AC["vat_id"
 reader refuses it, and the new desk shows it as it shows the ID number, read in the browser as the person (D2). Their
 columns are still checked to exist, so a renamed one ends the reading instead of reading as empty.
 
+WHAT IS MASKED (D2's review of a32395f; Nadav 24.11): an ID number typed where it does not belong - into a lead's name, a
+payment's credit reference, the name on an account's invoice - is no column the reader can refuse. So every name and
+every free-text cell a reading reads (TEXT_CELLS) passes `mask_ids` as it is read, in a full reading and in a refresh
+alike: a number of ID_DIGITS digits or more, judged whole by the books' cleaning (app/books/clean.py), becomes ID_MARK,
+and a shorter one (an invoice, the Hashavshevet key, a cohort code) stays. So the reading in memory, its stored copy, the
+page and the Excel file all hold the same masked text, and none an ID number (CLAUDE.md rule 4).
+
 THE SNAPSHOT has the shape of analiza-metrics' `read()`, so D2 ports `build_view` onto it: the two charge boards with their
 items_count and rows, the linked rows, the lead names and owners, and what was asked. Beside it, `checks` (counts only)
 and `complete`.
@@ -59,10 +66,13 @@ import math
 import re
 import threading
 import time
+import unicodedata
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
+# the books' rule for what a number is (CLAUDE.md rule 4): where it begins and ends, and its shape - reused as is
+from ..books.clean import _numbers, _process, normalize
 from ..monday.client import NEVER_READ, MondayError, MondayReader
 from ..recon.reading import Board, check_board
 
@@ -112,6 +122,12 @@ COLUMNS = {"student_charge": SC, "b2b_charge": B2, "cohorts": CO, "deals": DL, "
 # NEVER_READ)
 CHECKED_COLUMNS = {key: list(cols.values()) for key, cols in COLUMNS.items()}
 ROW_COLUMNS = {key: [c for c in cols if c not in NEVER_READ] for key, cols in CHECKED_COLUMNS.items()}
+# the cells a person types free text into, masked like an item's name (`masked`): the text columns and the lead's Owner;
+# never a number, date, status, relation, dropdown or timeline cell, whose text monday writes
+TEXT_CELLS = {key: tuple(c for c in cols if c.startswith(("text_", "multiple_person_"))) for key, cols in ROW_COLUMNS.items()}
+# an ID-like number in that text is replaced by ID_MARK (`mask_ids`)
+ID_DIGITS = 8
+ID_MARK = "#"
 
 # The reading's own limits: monday answers the whole of it in some seconds (R0: 6.1 s for five boards whole, 23.11).
 READ_DEADLINE_S = 50
@@ -138,8 +154,10 @@ LINKED_KEYS = ("enrollments", "leads", "cohorts", "deals", "accounts")
 # what a reading holds of monday: laid under the next refresh, and kept in Postgres (app/desk/store.py keeps these only)
 BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked")
 # the body's shape: a version and the columns each board's rows hold, so a reading kept under another shape (an older
-# deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA)
-BODY_SCHEMA = "1:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
+# deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA).
+# 2 since its text is masked (`masked`, D2's review): a reading kept before is never laid under a refresh, so no row it
+# holds unmasked outlives the first full reading after the deploy
+BODY_SCHEMA = "2:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
 # a full reading at least this often: a change no refresh can see (a deleted enrollment, a renamed lead that decides
 # nothing) lives at most this long
 FULL_AFTER = timedelta(hours=36)
@@ -210,6 +228,50 @@ def keep_only(rows: list, ids: list) -> list:
     return [r for r in rows if str(r["id"]) in want]
 
 
+# ---------------------------------------------------------------- no ID number in what a reading holds (D2's review, #6)
+def mask_ids(text: Any) -> Any:
+    """A text with every ID-like number replaced by ID_MARK; any other value as it is. A number is what the books' cleaning
+    judges one (app/books/clean.py, reused as is): its digits joined by spaces, dashes and the like, read after NFKC (a
+    digit of any script, invisible characters dropped), and kept when its shape says what it is - a date, a month, a span
+    of years, a document number, a list or a range of them, an amount. The desk masks it when it has ID_DIGITS digits or
+    more and that shape does not keep it: an ID number with or without its leading zero, a phone, an account. A shorter
+    number is never masked (the books mask from six digits; here the references a payment carries - an invoice, a credit
+    reference, the Hashavshevet key, a cohort code - are four to six). The cost, the books' own: two short references in
+    one cell read as one number (1234, 5678 or 123456, 50348) are masked from eight digits, unless each is a document
+    number (five digits, not 0-led: 50347, 50348 stays). A text with nothing to mask comes back unchanged; one with
+    something to mask comes back normalised as the books read it, the mask in its place."""
+    if not isinstance(text, str) or sum(map(str.isdigit, unicodedata.normalize("NFKC", text))) < ID_DIGITS:
+        return text
+    norm = normalize(text)
+    cleaned = _process(norm, None)[0]  # norm with every number the books would mask as "#", the rest as it is
+    out, at, last, hit = [], 0, 0, False
+    for start, end in _numbers(norm):
+        at += start - last
+        books_mask = cleaned[at:at + 1] == "#"  # where this number starts in the books' text: "#", or its first digit
+        at += 1 if books_mask else end - start
+        if books_mask and sum(1 for ch in norm[start:end] if "0" <= ch <= "9") >= ID_DIGITS:
+            out += [norm[last:start], ID_MARK]
+            hit = True
+        else:
+            out.append(norm[last:end])
+        last = end
+    return "".join(out) + norm[last:] if hit else text
+
+
+def masked(key: str, rows: list) -> list:
+    """The rows of board `key`, just read, with `mask_ids` applied to each item's name and its TEXT_CELLS, in place: so
+    the reading in memory, its stored copy (desk_readings), the page and the Excel file hold the same masked text, in a
+    full reading and in a refresh alike (Nadav 24.11). Only here, never in the reader's `_text`: the reconciliation (R0,
+    A1) matches short invoice numbers through the same reader."""
+    cells = ("name",) + TEXT_CELLS[key]
+    for row in rows:
+        if isinstance(row, dict):
+            for col in cells:
+                if isinstance(row.get(col), str):
+                    row[col] = mask_ids(row[col])
+    return rows
+
+
 # ---------------------------------------------------------------- the counts
 def whole_board(key: str, count: Optional[int], asked: list, rows: list) -> tuple:
     """(the rows of this board among the ids its pages gave, once each; R0's check of the board)."""
@@ -266,17 +328,17 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         (n_sc, sc_asked, sc_read), (n_b2, b2_asked, b2_read) = reader.read_boards(
             [(STUDENT_CHARGE, ROW_COLUMNS["student_charge"]), (B2B_CHARGE, ROW_COLUMNS["b2b_charge"])])
         checks: dict = {}
-        sc_rows, checks["student_charge"] = whole_board("student_charge", n_sc, sc_asked, sc_read)
-        b2_rows, checks["b2b_charge"] = whole_board("b2b_charge", n_b2, b2_asked, b2_read)
+        sc_rows, checks["student_charge"] = whole_board("student_charge", n_sc, sc_asked, masked("student_charge", sc_read))
+        b2_rows, checks["b2b_charge"] = whole_board("b2b_charge", n_b2, b2_asked, masked("b2b_charge", b2_read))
 
         enr_ids, ld_ids = enrollment_ids(sc_rows), lead_ids(sc_rows)
         deal_ids = sorted(_uniq(d for r in b2_rows for d in r.get(B2["deal"]) or []))
         enr_read, ld_read, deal_read = reader.read_items([(enr_ids, ROW_COLUMNS["enrollments"]),
                                                           (ld_ids, ROW_COLUMNS["leads"]),
                                                           (deal_ids, ROW_COLUMNS["deals"])])
-        enrollments, checks["enrollments"] = by_id("enrollments", enr_ids, enr_read)
-        leads, checks["leads"] = by_id("leads", ld_ids, ld_read)
-        deals, checks["deals"] = by_id("deals", deal_ids, deal_read)
+        enrollments, checks["enrollments"] = by_id("enrollments", enr_ids, masked("enrollments", enr_read))
+        leads, checks["leads"] = by_id("leads", ld_ids, masked("leads", ld_read))
+        deals, checks["deals"] = by_id("deals", deal_ids, masked("deals", deal_read))
 
         deciding = leads_deciding(sc_rows, enrollments)
         kept_leads = keep_only(leads, deciding)
@@ -284,8 +346,8 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         acct_ids = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
                                 + [a for d in deals for a in d.get(DL["payer"]) or []]))
         coh_read, acct_read = reader.read_items([(coh_ids, ROW_COLUMNS["cohorts"]), (acct_ids, ROW_COLUMNS["accounts"])])
-        cohorts, checks["cohorts"] = by_id("cohorts", coh_ids, coh_read)
-        accounts, checks["accounts"] = by_id("accounts", acct_ids, acct_read)
+        cohorts, checks["cohorts"] = by_id("cohorts", coh_ids, masked("cohorts", coh_read))
+        accounts, checks["accounts"] = by_id("accounts", acct_ids, masked("accounts", acct_read))
     except MondayError as exc:
         out.update(error=exc.code, detail=exc.detail[:200])
     except Exception as exc:  # noqa: BLE001 - said by class: a reading that crashed is a reading that failed
@@ -426,7 +488,7 @@ def _read_new(reader: MondayReader, lists: dict, ids_read: dict, names: dict, re
     if not keys:
         return
     for k, rows in zip(keys, reader.read_items([(new[k], ROW_COLUMNS[k]) for k in keys], pack=True)):
-        mine = own_rows(k, rows, new[k], strangers)
+        mine = own_rows(k, masked(k, rows), new[k], strangers)
         lists[k] = merge_rows(lists[k], mine, new[k], charge=False)
         ids_read[k] = ids_read[k] + new[k]
         if k == "leads":
@@ -502,7 +564,7 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     # unreadable is read, never skipped
     after = {k: _uniq(x["id"] for x in items if instant(x["updated_at"]) is None or instant(x["updated_at"]) > cut)
              for k, items in windows.items()}
-    leads_got = own_rows("leads", got["rows"], held_deciding, strangers)
+    leads_got = own_rows("leads", masked("leads", got["rows"]), held_deciding, strangers)
 
     # read by id what changed: a changed charge still on its board, a charge that came to its board unseen, and the changed
     # linked items the held reading asked for (the deciding leads were read above, whatever their time). A charge that left
@@ -517,7 +579,7 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
         else:
             ids_read[k] = [i for i in after[k] if i in asked_set[k]]
     read = reader.read_items([(ids_read[k], ROW_COLUMNS[k]) for k in DELTA_KEYS], pack=True)
-    got_rows = {k: own_rows(k, rows, ids_read[k], strangers) for k, rows in zip(DELTA_KEYS, read)}
+    got_rows = {k: own_rows(k, masked(k, rows), ids_read[k], strangers) for k, rows in zip(DELTA_KEYS, read)}
     ids_read["leads"], got_rows["leads"] = list(held_deciding), leads_got
     names.update(names_read(leads_got, held_deciding))
     reps.update(reps_read(leads_got, held_deciding))

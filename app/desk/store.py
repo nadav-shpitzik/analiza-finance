@@ -11,7 +11,9 @@ WHAT IS KEPT: a reading without an error - its times and kind, whether it was co
 and its body (`BODY_KEYS`): the charge rows and the rows they link to as monday shows them to the boards' members (names
 and amounts), the linked leads' names and Owners, and what was asked. NEVER a column of NEVER_READ (app/monday/client.py:
 an ID number, a refund's bank account, a company's business number, or a mirror of one): the reader cannot read one, and
-`refuse_unsafe` checks the very text written, as app/recon/store.py does for the reconciliation's reading.
+`refuse_unsafe` checks the very text written, as app/recon/store.py does for the reconciliation's reading. Nor an ID number
+typed into a name or a free-text cell: the reading masks every such number as it reads (app/desk/reading.py `masked`,
+D2's review), so what is kept here is what the page shows.
 
 TWO INSTANCES, ONE ROW: a reading older than the row's never replaces it (`save` answers False). Errors are a
 DeskStoreError with the SQLSTATE or the class, never the text (psycopg's can carry the URL). The deployment never creates

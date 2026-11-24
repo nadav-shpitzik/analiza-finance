@@ -15,9 +15,14 @@ replacement at a time, run against tests/test_desk*.py).
 5. A request behind a reading in progress waited on its lock with no bound of its own, and the save after a reading is not
    bounded by the reading's deadline. Now it waits at most the deadline and WAIT_MARGIN_S, then is answered with what is
    held (or stored) marked refreshing, or with no reading (app/desk/reading.py `HeldReading.answer`).
+6. An ID number typed into a name or a free-text cell (a lead named with hers, a credit reference) was kept as typed in
+   desk_readings. Decided by Nadav (24.11, "Sure go"): the desk masks every ID-like number as it reads - eight digits or
+   more, judged whole by the books' cleaning - so memory, the stored copy, the page and the Excel file agree
+   (app/desk/reading.py `mask_ids`, `masked`).
 """
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -34,7 +39,7 @@ from app.desk import usage_store
 from app.monday import client as monday
 from tests.conftest import TEST_DATABASE_URL, drop_all, needs_pg
 from app.monday.client import MondayReader
-from tests.test_desk import OTHER_BOARD, SC, TOKEN, desk, reader_of, rel, session_token, status, world  # noqa: F401
+from tests.test_desk import B2, OTHER_BOARD, SC, TOKEN, desk, reader_of, rel, session_token, status, world  # noqa: F401
 from tests.test_desk_mirror import MemoryStore, desk_of, holder
 from tests.test_desk_usage import batch, ev, use  # noqa: F401 - `use` is the fixture
 
@@ -395,3 +400,151 @@ def test_the_desks_own_request_behind_a_stuck_reading_is_answered_with_the_held_
         assert r.json()["refreshing"] is True and r.json()["taken_at"] == first["taken_at"]
     finally:
         main.app.state.desk_store = None
+
+
+# --- 6. an ID number typed into a name or a free-text cell --------------------------------------------------------------
+
+def test_an_id_number_typed_into_a_name_or_a_text_cell_is_not_kept_in_desk_readings():
+    """Policy, decided (Nadav 24.11): NEVER_READ keeps the ID columns out, but desk_readings kept every name and text cell
+    verbatim - a lead named with her ID number, a payment's credit reference, an account's invoice name. The books' text is
+    cleaned of digit runs for exactly this reason (app/books/clean.py; CLAUDE.md rule 4 'An ID number is never stored
+    server side'); the desk's reading masks them now, as it reads."""
+    w = world()
+    w.items["301"]["name"] = "דנה כהן 039482716"
+    w.set(101, credit_ref="ת.ז 039482716", touch=False)
+    store = MemoryStore()
+    holder(w, store).get()
+    assert "039482716" not in store.row["body"]
+    body = json.loads(store.row["body"])
+    assert body["lead_names"]["301"] == "דנה כהן " + rd.ID_MARK
+    assert next(r for r in body["student_charge"]["rows"] if r["id"] == "101")[rd.SC["credit_ref"]] == "ת.ז " + rd.ID_MARK
+
+
+def _ids_everywhere(w) -> None:
+    """An ID number in every item's name and every free-text cell the desk reads, each written another way."""
+    ways = ["039482716", "39482716", "039-482-716", "039 482 716", "050-1234567"]
+    for n, (item_id, item) in enumerate(sorted(w.items.items())):
+        key = next(k for k, b in rd.BOARDS.items() if b == item["board"])
+        way = ways[n % len(ways)]
+        item["name"] = item["name"] + " " + way
+        for col in rd.TEXT_CELLS[key]:
+            item["cells"][col] = "ref " + way
+
+
+def _no_id_in(text: str) -> None:
+    for way in ("039482716", "39482716", "039-482-716", "039 482 716", "050-1234567", "1234567"):
+        assert way not in text, way
+
+
+def test_the_same_rule_masks_a_full_reading_and_every_read_of_a_refresh():
+    """A full reading, then a refresh that reads through every path it has - a changed charge, a charge that came unseen,
+    the deciding leads read beside the windows, a newly linked enrollment, lead, cohort, deal and account read by id -
+    holds no ID number anywhere, and the same desk as a full reading of the same monday."""
+    w = world()
+    _ids_everywhere(w)
+    store = MemoryStore()
+    h = holder(w, store)
+    full, _ = h.get()
+    _no_id_in(json.dumps(full, ensure_ascii=False) + store.row["body"])
+    assert full["lead_names"]["301"].endswith(" " + rd.ID_MARK) and full["kind"] == "full"
+    w.set(102, paid="1200", credit_ref="ת.ז 012345678")                 # a changed charge, its new text read by id
+    w.add(SC, 104, "תלמיד-דלת 023456789", status=status("שולם", 1), paid="700", enrollment=rel(204), lead=rel(304),
+          credit_ref="0234-56789")
+    w.add(rd.ENROLLMENTS_BOARD, 204, "הרשמה-ד 034567891", cohort=rel())
+    w.add(rd.LEADS_BOARD, 304, "ליד-דלת 045678912", cohort=rel(404), rep="נציגה 056789123")
+    w.add(rd.COHORTS_BOARD, 404, "מחזור-ארבע 067891234", code="C4", external="ext 078912345")
+    w.add(B2, 503, "חיוב-חברה-3 089123456", deal=rel(603), account=rel(703), amount="500", invoice="91234567")
+    w.add(rd.DEALS_BOARD, 603, "עסקה-3 091234568", payer=rel(704))
+    w.add(rd.ACCOUNTS_BOARD, 703, "חברה-שלישית", invoice_name="על שם 512345678", hash_key="77003")
+    w.add(rd.ACCOUNTS_BOARD, 704, "חברה-רביעית 523456789")
+    w.touch(104, 204, 304, 404, 503, 603, 703, 704)
+    w.set(303, name="ליד-גימל 087654321", touch=False)                   # a deciding lead, read beside the windows
+    kept, _ = h.get()
+    assert kept["kind"] == "delta"
+    text = json.dumps(kept, ensure_ascii=False) + store.row["body"]
+    _no_id_in(text)
+    for number in ("012345678", "023456789", "0234-56789", "034567891", "045678912", "056789123", "067891234", "078912345",
+                   "089123456", "91234567", "091234568", "512345678", "523456789", "087654321"):
+        assert number not in text, number
+    assert "77003" in text and '"C4"' in text                          # the short references stay
+    full_now = rd.read_desk(reader_of(w))
+    assert desk_of(kept) == desk_of(full_now) and kept["lead_names"] == full_now["lead_names"]
+    assert {k: kept[k] for k in rd.BODY_KEYS if k not in rd.CHARGE_KEYS} == {
+        k: full_now[k] for k in rd.BODY_KEYS if k not in rd.CHARGE_KEYS}
+
+
+def test_a_short_reference_a_date_and_every_cell_monday_writes_are_never_masked():
+    """An invoice of four to six digits, a list of document numbers, a credit reference of seven, a date or a month typed
+    as text, the Hashavshevet key and a cohort code stay as typed; so does every number, date, status, relation, dropdown
+    and timeline cell, whatever its digits - only names and free text are masked."""
+    w = world()
+    w.set(101, invoice="50347", credit_ref="1234567", paid="123456789", paid_date="2026-11-24", touch=False)
+    w.set(102, invoice="123456", credit_ref="16.08.2026", touch=False)
+    w.set(103, invoice="50347, 50348", credit_ref="אישור 4580", touch=False)
+    w.set(501, month="10/2026", invoice="50999", amount="123456789", course={"text": "קורס 123456789"}, touch=False)
+    w.set(701, hash_key="770012", touch=False)
+    w.set(401, code="DA-2610-01", dates={"text": "2026-01-01 - 2026-03-01"}, status=status("123456789", 3), touch=False)
+    r = rd.read_desk(reader_of(w))
+    sc_rows = {x["id"]: x for x in r["student_charge"]["rows"]}
+    assert [sc_rows[i][rd.SC["invoice"]] for i in ("101", "102", "103")] == ["50347", "123456", "50347, 50348"]
+    assert [sc_rows[i][rd.SC["credit_ref"]] for i in ("101", "102", "103")] == ["1234567", "16.08.2026", "אישור 4580"]
+    assert sc_rows["101"][rd.SC["paid"]] == "123456789" and sc_rows["101"][rd.SC["paid_date"]] == "2026-11-24"
+    b2 = r["b2b_charge"]["rows"][0]
+    assert [b2[rd.B2[k]] for k in ("month", "invoice", "amount", "course")] == ["10/2026", "50999", "123456789",
+                                                                               "קורס 123456789"]
+    assert next(a for a in r["accounts"] if a["id"] == "701")[rd.AC["hash_key"]] == "770012"
+    cohort = next(c for c in r["cohorts"] if c["id"] == "401")
+    assert [cohort[rd.CO[k]] for k in ("code", "dates", "status")] == ["DA-2610-01", "2026-01-01 - 2026-03-01", "123456789"]
+    assert set(rd.TEXT_CELLS["student_charge"]) == {rd.SC["credit_ref"], rd.SC["invoice"]}
+    assert set(rd.TEXT_CELLS["leads"]) == {rd.LD["rep"]} and rd.TEXT_CELLS["enrollments"] == () == rd.TEXT_CELLS["deals"]
+
+
+def test_the_page_and_the_excel_file_show_the_mark_never_the_number(desk):  # noqa: F811
+    """End to end: monday's text with an ID number, the desk's answer, the page drawn from it in node, and the Excel
+    file of the same list - each with the mark where the number was."""
+    import io
+    import shutil
+
+    import openpyxl
+
+    desk.w.items["101"]["name"] = "תלמידה-אלף 039482716"
+    desk.w.items["301"]["name"] = "ליד-אלף 039-482-716"
+    desk.w.set(101, credit_ref="ת.ז 039482716", invoice="חשבונית 039 482 716", touch=False)
+    desk.w.set(301, rep="נציגה-אחת 039482716", touch=False)
+    auth = {"Authorization": "Bearer " + session_token(1)}
+    answer = desk.client.get("/api/desk", headers=auth)
+    assert answer.status_code == 200 and "039482716" not in answer.text and "039-482-716" not in answer.text
+    row = next(x for x in answer.json()["view"]["b2c"]["rows"] if x["id"] == "101")
+    assert row["name"] == "תלמידה-אלף " + rd.ID_MARK and row["lead_names"] == ["ליד-אלף " + rd.ID_MARK]
+    assert row["credit_ref"] == "ת.ז " + rd.ID_MARK and row["invoice"] == "חשבונית " + rd.ID_MARK
+    assert row["rep"] == "נציגה-אחת " + rd.ID_MARK
+    url = desk.client.post("/api/desk/export-link", headers=auth,
+                           json={"tab": "b2c", "taken": answer.json()["taken_at"]}).json()["url"]
+    wb = openpyxl.load_workbook(io.BytesIO(desk.client.get(url).content))
+    cells = [str(c.value) for ws in wb.worksheets for line in ws.iter_rows() for c in line if c.value is not None]
+    assert "תלמידה-אלף " + rd.ID_MARK in cells and not any("039482716" in c or "039-482-716" in c for c in cells)
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed: the page is not drawn")
+    from tests.test_desk_parity_js import LOAD, node
+
+    html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+                 {"body": answer.json(), "cases": [{"tab": "b2c", "sc": {"state": "", "open": {"101": True}}}]})
+    # the row's name, and in its details the invoice and the lead's Owner ("נציג מכירות")
+    assert ">תלמידה-אלף %s</a>" % rd.ID_MARK in html and ">חשבונית %s</bdi>" % rd.ID_MARK in html
+    assert "<dt>נציג מכירות</dt><dd>נציגה-אחת %s</dd>" % rd.ID_MARK in html
+    assert "039482716" not in html and "039-482-716" not in html and "039 482 716" not in html
+
+
+def test_a_reading_kept_before_the_mask_is_never_laid_under_a_refresh_or_shown():
+    """BODY_SCHEMA's version moved with the mask: a stored reading of the shape before it is neither a refresh's base nor
+    a cold instance's seed - the first reading after the deploy is whole, and replaces it."""
+    w = world()
+    store = MemoryStore()
+    rd.HeldReading(lambda: reader_of(w), store=store).get()
+    store.row["body_schema"] = "1:" + rd.BODY_SCHEMA.split(":", 1)[1]
+    assert rd.BODY_SCHEMA.startswith("2:")
+    cold = rd.HeldReading(lambda: reader_of(w), store=store)
+    shown, _last, _refreshing = cold.answer(stale_ok=True)
+    assert shown["kind"] == "full" and cold.seeded is False
+    assert cold.health()["last_codes"][:2] == ["store_other_schema", "full_first"]
+    assert store.row["body_schema"] == rd.BODY_SCHEMA
