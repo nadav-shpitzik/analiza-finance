@@ -271,6 +271,10 @@ def reader_of(w: World) -> MondayReader:
 
 SECRET_WORDS = ("תלמידה-אלף", "תלמיד-בית", "ליד-אלף", "נציגה-אחת", "מחזור-אחד", "חיוב-חברה-1", "עסקה-1", "חברה-משלמת",
                 "77001", "4000", "3950", "5001")
+# D2: the same words by the tab whose rows carry them (the students': names, the lead's Owner, the cohort, amounts and an
+# invoice; the companies': the charge, the deal, the customer and its Hashavshevet key)
+B2C_WORDS = ("תלמידה-אלף", "תלמיד-בית", "ליד-אלף", "נציגה-אחת", "מחזור-אחד", "4000", "3950", "5001")
+B2B_WORDS = ("חיוב-חברה-1", "עסקה-1", "חברה-משלמת", "77001")
 
 
 # ---- the reading ------------------------------------------------------------------------------------------------------
@@ -587,10 +591,17 @@ def test_a_viewer_reads_and_is_told_so(desk):
     assert body["reading"]["complete"] is True
 
 
-def test_the_answer_carries_counts_never_a_name_or_an_amount(desk):
-    text = desk.get(session_token(1)).text
-    for word in SECRET_WORDS:
-        assert word not in text
+def test_the_answer_carries_names_and_money_only_of_the_readers_own_tabs(desk):
+    """D1's answer carried counts only. Since D2 it carries the desk (`view`): names and money, and only of the tabs the
+    reader's boards open. /health still carries none of them."""
+    both = desk.get(session_token(1)).text
+    assert all(word in both for word in SECRET_WORDS)
+    inna = desk.get(session_token(2)).text  # Student Charge only
+    assert all(word in inna for word in B2C_WORDS) and not any(word in inna for word in B2B_WORDS)
+    companies = desk.get(session_token(3)).text  # B2B Charge only
+    assert all(word in companies for word in B2B_WORDS) and not any(word in companies for word in B2C_WORDS)
+    health = desk.client.get("/health").text
+    assert not any(word in health for word in SECRET_WORDS)
 
 
 def test_the_reading_is_shared_and_the_members_kept_across_opens(desk):
@@ -773,7 +784,9 @@ def test_a_member_of_one_board_hears_only_of_their_own_tab(desk):
     desk.w.count_off[B2] = 1  # B2B Charge reads short; the students' tab is whole
     inna = desk.get(session_token(2)).json()  # Student Charge only
     assert inna["reading"]["complete"] is True and set(inna["reading"]["boards"]) == set(rd.TAB_BOARDS["b2c"])
-    assert inna["last_attempt"] == {"read_at": inna["last_attempt"]["read_at"], "error": None, "complete": True}
+    at = inna["last_attempt"]["read_at"]
+    # D2 added `taken_at` and `ok`, the old desk's names for the same facts
+    assert inna["last_attempt"] == {"read_at": at, "error": None, "complete": True, "taken_at": at, "ok": True}
     both = desk.get(session_token(1)).json()
     assert both["reading"]["complete"] is False and both["last_attempt"]["complete"] is False
     assert "detail" in both["last_attempt"]
@@ -782,7 +795,8 @@ def test_a_member_of_one_board_hears_only_of_their_own_tab(desk):
 def test_a_failed_reading_tells_its_detail_only_to_a_reader_of_both_tabs(desk):
     desk.w.columns_missing[rd.ACCOUNTS_BOARD] = {rd.AC["terms"]}
     inna = desk.get(session_token(2)).json()
-    assert inna["last_attempt"] == {"read_at": inna["last_attempt"]["read_at"], "error": "unknown_column", "complete": False}
+    at = inna["last_attempt"]["read_at"]
+    assert inna["last_attempt"] == {"read_at": at, "error": "unknown_column", "complete": False, "taken_at": at, "ok": False}
     assert rd.ACCOUNTS_BOARD in desk.get(session_token(1)).json()["last_attempt"]["detail"]
 
 

@@ -12,7 +12,8 @@ Neither endpoint returns a value from the books: names of companies, and for web
 and the receiving host. Neither returns the key, a session string or the database URL.
 
 Since D1 of backlog 0301 (24.11) it also serves Chava's finance desk as it moves here (app/desk/): the page /desk/ of the
-monday Board View "כספים", and /api/desk behind the monday sessionToken and the charge boards' membership.
+monday Board View "כספים", and /api/desk behind the monday sessionToken and the charge boards' membership; since D2 the
+desk itself there, its refresh, its totals and its Excel files (app/desk/routes.py).
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import config
@@ -96,6 +99,17 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    """The desk's routes speak a closed vocabulary (analiza-metrics, the same handler for its /api): a body or a query that
+    does not fit them - a field the export link does not know, a user id that is not a number - is 400 `invalid_filter`,
+    never FastAPI's 422, which says back what was sent. Every other route keeps FastAPI's own answer."""
+    if request.url.path.startswith("/api/desk"):
+        return JSONResponse({"error": "invalid_filter"}, status_code=400)
+    return await request_validation_exception_handler(request, exc)
+
 
 app.state.transport = None  # tests put an httpx.MockTransport here
 app.state.clock = time.time

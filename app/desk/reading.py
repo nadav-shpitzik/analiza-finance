@@ -191,7 +191,10 @@ def by_id(key: str, asked: list, rows: list) -> tuple:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """A reading's time, to the microsecond: since D2 it names the reading (the page's `taken_at`, by which the totals and
+    the files are asked), and two readings started within one second must not share a name (analiza-metrics' `taken_at`
+    had the same precision)."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic) -> dict:
@@ -270,7 +273,12 @@ class HeldReading:
     a request that finds one running waits for it (bounded by its deadline) and is answered with it. A reading that
     failed is kept as the last attempt, not as the reading: the one before stays on screen with its age, and the next
     try comes FAIL_GAP_S later, not on every open. A reading that read every board but came short replaces the one
-    before: it is the truth of now, shown as not complete."""
+    before: it is the truth of now, shown as not complete.
+
+    `get(force=True)` is the refresh press (D2, POST /api/desk/refresh): neither the age of the held reading nor the gap
+    after a failure holds it back, and it is satisfied only by a reading that STARTED after it - one that was already
+    running when it came may not hold what was just changed in monday, so it waits for that one and reads again
+    (analiza-metrics SharedReading, part 5). How often it may come is the route's to bound."""
 
     def __init__(self, make_reader: Callable[[], MondayReader], clock: Callable[[], float] = time.monotonic,
                  ttl_s: float = HELD_TTL_S, deadline_s: float = READ_DEADLINE_S, fail_gap_s: float = FAIL_GAP_S):
@@ -280,18 +288,27 @@ class HeldReading:
         self.reading_at: Optional[float] = None
         self.last: Optional[dict] = None
         self.last_at: Optional[float] = None
+        self.started_at: Optional[float] = None  # when the last attempt started: what a forced get() is measured by
         self._lock = threading.Lock()
 
     def _young(self, at: Optional[float], limit: float) -> bool:
         return at is not None and 0 <= self.clock() - at < limit
 
-    def get(self) -> tuple:
+    def get(self, force: bool = False) -> tuple:
         """(the reading to show or None, the last attempt's summary or None)."""
+        asked = self.clock()
         with self._lock:
-            if self.reading is not None and self._young(self.reading_at, self.ttl_s):
-                return self.reading, self.last
-            if self.last is not None and self.last.get("error") and self._young(self.last_at, self.fail_gap_s):
-                return self.reading, self.last
+            if force:
+                # strictly after: on a clock too coarse to tell them apart, a press reads once more rather than take a
+                # reading that may have started before it
+                if self.started_at is not None and self.started_at > asked:
+                    return self.reading, self.last
+            else:
+                if self.reading is not None and self._young(self.reading_at, self.ttl_s):
+                    return self.reading, self.last
+                if self.last is not None and self.last.get("error") and self._young(self.last_at, self.fail_gap_s):
+                    return self.reading, self.last
+            self.started_at = self.clock()
             reader = None
             try:
                 reader = self.make_reader()
