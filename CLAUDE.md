@@ -33,9 +33,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
    never seen says so in `/check` (what shape it found), never `except: pass`.
 6. **A reconciliation rule exists only with its test** (the rules file, §0). A name is only ever a
    candidate; a match is made by a cited number or a link.
-7. **Every write to monday: dry run, approval, write, read-back** (spec §7). The server writes only the
-   four billing columns on Accounts; the charge boards are written by the person in the browser, or by
-   a session through the monday connector after Nadav's go in chat.
+7. **Every write to monday: dry run, approval, write, read-back** (spec §7). **The server writes nothing to monday**
+   (ADR-0188, since D2): the desk's writes - the charge boards' allowlisted columns and a customer's four billing
+   details - are the person's own, in the browser through `monday.api` (`mondayWrite`, behind `WRITABLE`, held identical
+   to the server's `desk_writes`); a session writes through the monday connector after Nadav's go in chat.
 8. **A Postgres schema change goes to the development database first, from the Shell**, then a
    Republish whose SQL is read (the norm in the docs repo's CLAUDE.md). **The deployment never changes its own
    schema** - no migration at startup, no `CREATE ... IF NOT EXISTS` at first use - so production's schema comes
@@ -87,7 +88,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   changed is listed at the top of `finance.js`); `frontend/desk.js` mounts them (the SDK, the sessionToken, `monday` whenever
   monday supplied a context, `board` only for the two charge boards), and `/desk/?check=1` draws D1's self-check
   (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
-  through finance.js's one door (`mondayCall`; its one mutation in `mondayWrite`, behind `WRITABLE`). What the server never
+  through finance.js's one door (`mondayCall`; its writes in `mondayWrite`, behind `WRITABLE`: a column change, and a billing edit's Update only when the app has `updates:write`). What the server never
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
   page's memory and sent nowhere. Tests: `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
 - **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/usage_store.py`; `migrations/005`
