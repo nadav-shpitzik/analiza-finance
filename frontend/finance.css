@@ -347,9 +347,12 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-btn.fin-rowact { height: 28px; padding: 0 10px; font-size: 13px; }
 #screen-finance .fin-batch { margin: 0 16px 12px; }
 #screen-finance .fin-batch .fin-act-msg { margin-top: 0; }
-#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+/* QA 1 (24.11): the bar has one height whether a row is picked or not (its buttons the row's own size), and holds its
+   place wherever the list offers a box - quiet while nothing is picked - so a pick never moves the rows */
+#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 42px; padding: 6px 12px;
   border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-sel); font-size: 14px; }
-#screen-finance .fin-batchbar .fin-btn { gap: 6px; }
+#screen-finance .fin-batchbar .fin-btn { gap: 6px; height: 28px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-batchbar.idle { border-color: var(--fin-line); background: transparent; color: var(--fin-muted); font-size: 13px; }
 #screen-finance .fin-batch-plan ul, #screen-finance .fin-batch-done ul { max-height: 220px; overflow: auto; }
 #screen-finance .fin-batch-done p { margin: 6px 0 2px; font-size: 14px; }
 #screen-finance .fin-batch-done ul { margin: 0; padding-inline-start: 18px; font-size: 14px; }

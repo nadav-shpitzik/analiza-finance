@@ -18,7 +18,7 @@ from decimal import Decimal
 
 import pytest
 
-from tests.desk_page_view import answer, view
+from tests.desk_page_view import answer, sc_row, view
 
 NODE = shutil.which("node")
 
@@ -110,7 +110,13 @@ FAKE_SDK = r"""
 window.__monday = [];
 window.__executed = [];
 window.mondaySdk = function () {
-  var store = %(store)s;
+  var store = %(store)s, labels = %(labels)s;
+  /* a cell as monday answers it: a text, or a status ({text, index, label}) */
+  function cell(x, c) {
+    var v = (x || {})[c], out = { id: c, text: v && typeof v === "object" ? v.text || "" : v || "", value: null };
+    if (v && typeof v === "object" && v.index !== undefined) { out.index = v.index; out.label = v.label; }
+    return out;
+  }
   return {
     get: function (what) {
       if (what === "context") {
@@ -126,15 +132,25 @@ window.mondaySdk = function () {
       window.__monday.push({ query: query, variables: v, apiVersion: (opts || {}).apiVersion });
       var board = String((v.b || [])[0]), cells = store[board] || {};
       var items = (v.i || []).filter(function (id) { return Object.prototype.hasOwnProperty.call(cells, id); }).map(function (id) {
-        return { id: id, board: { id: board }, column_values: (v.c || []).map(function (c) { return { id: c, text: (cells[id] || {})[c] || "" }; }) };
+        return { id: id, name: (cells[id] || {}).__name || "", board: { id: board },
+          column_values: (v.c || []).map(function (c) { return cell(cells[id], c); }) };
       });
-      return Promise.resolve({ data: { items: items, boards: [{ id: board, columns: (v.c || []).map(function (c) { return { id: c }; }) }] } });
+      return Promise.resolve({ data: { items: items, boards: [{ id: board, columns: (v.c || []).map(function (c) {
+        return { id: c, type: "x", settings_str: JSON.stringify({ labels: (labels[board] || {})[c] || {} }) };
+      }) }] } });
     },
     execute: function (what, args) { window.__executed.push({ what: what, args: args }); return Promise.resolve({}); },
     listen: function () {}
   };
 };
 """
+
+
+def fake_sdk(store: dict, labels: dict | None = None) -> str:
+    """The fake SDK, holding `store` ({board: {item: {column: text or {text, index, label}, "__name": name}}}) and the
+    status columns' `labels` ({board: {column: {index: label}}})."""
+    return FAKE_SDK % {"store": json.dumps(store, ensure_ascii=False), "labels": json.dumps(labels or {}, ensure_ascii=False)}
+
 
 VISIT = r"""
 const { chromium } = require("playwright");
@@ -223,7 +239,7 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
     base, log = served
     store = {"5089697337": {k: {"text_mkzvem4": v} for k, v in LEADS.items()},
              "5093448677": {"3103": BANK}, "5089697343": {k: {"text_mm3y3gm7": v} for k, v in VAT.items()}}
-    sdk = FAKE_SDK % {"store": json.dumps(store, ensure_ascii=False)}
+    sdk = fake_sdk(store)
     shot = os.environ.get("DESK_SCREENSHOT", "")
     env = dict(os.environ, NODE_PATH=PW_ROOT)
     run = subprocess.run([NODE, "-e", VISIT, base, sdk, shot], capture_output=True, text=True, timeout=120, env=env)
@@ -267,3 +283,121 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
     sent = json.dumps(log, ensure_ascii=False)
     for secret in list(LEADS.values()) + list(BANK.values()) + list(VAT.values()):
         assert not secret or secret not in sent, secret
+
+
+# --- the QA of 24.11: the page in monday as Chava sees it, each finding by its number in the QA report -------------------
+
+@pytest.fixture
+def serve():
+    """Start the stub on a free port with a given view (and the reading a refresh answers); stop it after the test."""
+    import uvicorn
+
+    started = []
+
+    def start(v=None, refreshed=None):
+        log: list = []
+        port = _free_port()
+        server = uvicorn.Server(uvicorn.Config(stub_app(log, v, refreshed), host="127.0.0.1", port=port, log_level="warning"))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = time.time() + 15
+        while not server.started and time.time() < deadline:
+            time.sleep(0.05)
+        assert server.started
+        started.append((server, thread))
+        return "http://127.0.0.1:%d" % port, log
+
+    yield start
+    for server, thread in started:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+# `sizes`: the viewports to open the page at, one after the other ([width, height], monday's iframe); `script` runs for
+# each, with `size` the one open. Every console error and uncaught exception of the page is kept in `errors`.
+QA_PRELUDE = r"""
+const { chromium } = require("playwright");
+const [base, sdk, sizes] = process.argv.slice(1);
+(async () => {
+  const browser = await chromium.launch();
+  const out = { errors: [], steps: {} };
+  for (const size of JSON.parse(sizes)) {
+  const page = await browser.newPage({ viewport: { width: size[0], height: size[1] }, deviceScaleFactor: 1 });
+  page.on("pageerror", (e) => out.errors.push("pageerror: " + e));
+  page.on("console", (m) => { if (m.type() === "error") { out.errors.push("console: " + m.text()); } });
+  await page.route("**/desk/vendor/monday-sdk.js*", (r) => r.fulfill({ contentType: "application/javascript", body: sdk }));
+  const text = (sel) => page.$eval(sel, (el) => el.innerText);
+  const at = size.join("x");
+  await page.goto(base + "/desk/");
+  await page.waitForSelector("#screen-finance:not([hidden]) .fin-tabs", { timeout: 15000 });
+"""
+QA_CODA = r"""
+  await page.close();
+  }
+  await browser.close();
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.log(JSON.stringify({ crashed: String(e && e.stack || e) })); process.exit(1); });
+"""
+
+
+def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),)) -> dict:
+    run = subprocess.run([NODE, "-e", QA_PRELUDE + script + QA_CODA, base, sdk, json.dumps([list(s) for s in sizes])],
+                         capture_output=True, text=True, timeout=180, env=dict(os.environ, NODE_PATH=PW_ROOT))
+    assert run.returncode == 0, (run.stdout[-3000:], run.stderr[-3000:])
+    got = json.loads(run.stdout.strip().splitlines()[-1])
+    assert "crashed" not in got, got
+    return got
+
+
+def with_counts(v: dict) -> dict:
+    """The hand-made view's tile counts, from its rows (the students' tab)."""
+    for p in v["b2c"]["periods"]:
+        for key, st in p["states"].items():
+            st["count"] = len([r for r in v["b2c"]["rows"] if r["state"] == key])
+        p["count"] = len(v["b2c"]["rows"])
+    return v
+
+
+def two_receipts() -> dict:
+    """The hand-made view with a second payment waiting for its receipt (3106), beside 3102."""
+    v = view()
+    v["b2c"]["rows"].append(sc_row("3106", "תלמיד/ה 6", "receipt_pending", invoice="30006", receipt="טרם", receipt_idx="0",
+                                   money_in="5000", paid_typed="5000", net="5000", actions=["receipt_sent"]))
+    return with_counts(v)
+
+
+def test_ticking_a_rows_box_never_moves_the_rows_and_the_next_click_ticks_the_next_row(serve):
+    """QA 1 (24.11): in "שולם, שליחת קבלה: טרם", ticking the first row's box inserted a bar above the table and pushed the
+    rows ~58px down; the click aimed at the second row's box then landed on the first row's and unticked it. Each click
+    here is aimed where the box was BEFORE the first click, as hers was; every row stays where it was."""
+    base, _log = serve(two_receipts())
+    got = qa_visit(r"""
+  await page.click('[data-bstate="receipt_pending"]');
+  await page.waitForSelector('tr[data-row="3106"]');
+  const where = () => page.evaluate(() => ({ y: window.scrollY, bar: (document.querySelector(".fin-batchbar") || {}).innerText || "",
+    rows: [...document.querySelectorAll("tr[data-row]")].map((r) => [r.dataset.row, Math.round(r.getBoundingClientRect().top)]),
+    picked: [...document.querySelectorAll("[data-pick]:checked")].map((b) => b.dataset.pick) }));
+  const center = (sel) => page.$eval(sel, (el) => { const b = el.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+  const first = await center('[data-pick="sc:3102"]'), second = await center('[data-pick="sc:3106"]');
+  out.steps.before = await where();
+  await page.mouse.click(first[0], first[1]);
+  out.steps.one = await where();
+  await page.mouse.click(second[0], second[1]);
+  out.steps.two = await where();
+  await page.mouse.click(first[0], first[1]);
+  await page.mouse.click(second[0], second[1]);
+  out.steps.none = await where();
+""", base, fake_sdk({}))
+    assert got["errors"] == []
+    steps = got["steps"]
+    before = steps["before"]
+    assert [r[0] for r in before["rows"]] == ["3102", "3106"] and before["picked"] == []
+    # every click left every row where it was, and ticked or unticked exactly the box it was aimed at
+    for name, picked in (("one", ["sc:3102"]), ("two", ["sc:3102", "sc:3106"]), ("none", [])):
+        step = steps[name]
+        assert step["rows"] == before["rows"] and step["y"] == before["y"], (name, step["rows"], before["rows"])
+        assert step["picked"] == picked, (name, step)
+    # and the bar, in its place all along, says what is picked - and before any pick, what the box is for
+    assert before["bar"] == "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד."
+    assert [steps[n]["bar"].split(" ", 2)[:2] for n in ("one", "two", "none")] == [
+        ["נבחרה", "שורה"], ["נבחרו", "2"], ["לא", "נבחרו"]]

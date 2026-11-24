@@ -713,11 +713,32 @@ def test_the_bar_offers_each_action_its_picked_rows_offer_and_a_batch_takes_only
     assert 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(1)</span>' in bar
     assert 'data-batch="refund_done">סימון "תשלום הוחזר" <span class="fin-subtle">(1)</span>' in bar
     assert [i["key"] for i in got["steps"][3]["batch"]["items"]] == ["sc:3103"]
-    # a pick in a list that is not on the screen is not in its bar, nor in its batch
+    # a pick in a list that is not on the screen is not in its bar, nor in its batch: that list's bar says none is picked
     got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]},
                        {"show": {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}}],
                 monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
-    assert "נבחרה שורה אחת" in got["steps"][1]["html"] and "fin-batchbar" not in got["steps"][2]["html"]
+    assert "נבחרה שורה אחת" in got["steps"][1]["html"]
+    assert "נבחרה שורה אחת" not in got["steps"][2]["html"] and "fin-batchbar idle" in got["steps"][2]["html"]
+
+
+def test_the_bar_holds_its_place_wherever_the_list_offers_a_box_and_says_what_the_box_is_for():
+    """QA 1 (24.11): ticking the first row's box inserted the bar above the table, the rows moved down ~58px, and the click
+    aimed at the second row's box unticked the first. The bar is there before any pick, quiet, wherever a row of the list
+    carries a box - and only there: a list with no box, or a person who may not write, has none."""
+    hint = "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד."
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3102"}]},
+                       {"show": {"tab": "b2c", "sc": {"state": "done", "period": "", "open": {}}}}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    idle, one, none, no_box = [s["html"] for s in got["steps"]]
+    bar = '<div class="fin-batch fin-batchbar idle" role="group" aria-label="השורות שנבחרו"><span>%s</span></div>' % hint
+    assert bar in idle and bar in none and hint not in one
+    assert 'class="fin-batch fin-batchbar" role="group"' in one and "נבחרה שורה אחת" in one
+    # the bar sits where it did, between the list's head and its table, in both
+    for html in (idle, one):
+        assert html.index("fin-listhead") < html.index("fin-batchbar") < html.index('<table class="fin-t">')
+    assert "fin-batchbar" not in no_box and "data-pick" not in no_box
+    got = drive(answer(receipts_view()), [{"show": TASKS}], monday={"absent": True})
+    assert "fin-batchbar" not in got["steps"][0]["html"]
 
 
 def test_a_new_pick_after_a_batch_drops_its_report_and_shows_the_bar_and_a_confirmation_cancelled_writes_nothing():

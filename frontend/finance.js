@@ -45,6 +45,10 @@
  * server's fault, with no refresh offered as its fix; an item's link (href) goes through esc() like every other value.
  * From the adversarial review of a32395f: the visit's id for the usage events is sixteen letters, never a digit
  * (useSession; the server refuses any other).
+ * From the QA of 24.11 (the desk inside monday, at the width Chava works at), each by its number in the QA report:
+ * QA 1 Ticking a row's box moved the table about 58 pixels down - the bar of picked rows came in above it - so the click
+ *      aimed at the next row's box unticked the first. The bar now holds its place wherever the list offers a box, at one
+ *      height (its buttons the row's own size), quiet while nothing is picked and saying what the box is for.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1555,6 +1559,8 @@
   /* at most this many rows in one batch: its rows are read in one request, and monday's items(ids:) answers 25 at most */
   var BATCH_MAX = 25;
   var PICKED = {};     /* the rows picked for a batch, by "sc:123"; only the rows of the list on the screen count */
+  /* the bar with nothing picked (QA 1): where the picks will show, and what the box at a row's start does */
+  var PICK_HINT = "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד.";
   var BATCH = null;    /* the batch on the screen: { action, a, items: [{ key, row, name, verdict, why, live, plan, result }],
                           phase: "reading" | "confirm" | "nothing" | "writing" | "done" | "failed", at, total, error } */
   function busyBatch() { return !!BATCH && (BATCH.phase === "reading" || BATCH.phase === "writing"); }
@@ -1741,9 +1747,15 @@
         (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
           "</ul>" : "") + "</div>";
     }
-    /* no batch: the rows picked in this list, and one button per action they offer */
+    /* no batch: the rows picked in this list, and one button per action they offer. QA 1 (24.11): wherever the list
+       offers a box, the bar holds its place - a quiet line when nothing is picked, which also says what the box is for -
+       so a pick never moves the rows under the next click (the second row's box was unticking the first) */
+    if (!rows.some(pickable)) { return ""; }
     var picked = pickedIn(rows);
-    if (!picked.length) { return ""; }
+    if (!picked.length) {
+      return "<div class=\"fin-batch fin-batchbar idle\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" + esc(PICK_HINT) +
+        "</span></div>";
+    }
     var by = {};
     picked.forEach(function (r) { var a = rowAction(r); (by[a.key] = by[a.key] || { a: a, n: 0 }).n += 1; });
     return "<div class=\"fin-batch fin-batchbar\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" +
