@@ -762,6 +762,25 @@ def test_every_value_an_answer_or_monday_gives_is_escaped_into_the_page():
     assert len(got["sent"]) >= 3                                                 # the ID, the bank account, the ח.פ
 
 
+def test_an_id_that_is_not_digits_is_escaped_in_a_retry_key_and_in_an_items_link():
+    """The adversarial review of 62fd993: liveFailed's retry key goes into an attribute (escaped already, and pinned now);
+    the same review's question asked of every id in an attribute found one more - the item's link in `href`, now escaped.
+    The ids are monday's digits today, so this is defensive."""
+    bad = '3101"><img src=x onerror="alert(1)">'
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3101":
+            r["id"] = bad
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {bad: True}}}}],
+                monday=world(answers=[{"noBoard": True}]))
+    html = got["steps"][0]["html"]
+    assert "<img" not in html and 'onerror="' not in html
+    safe = "3101&quot;&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
+    assert ('<span class="fin-badtext">אין לך גישה ללוח הלידים במאנדיי</span> <button type="button" class="fin-linkbtn" '
+            'data-id-retry="%s">לנסות שוב</button>' % safe) in html
+    assert html.count('href="https://analiza-college-group.monday.com/boards/5093448677/pulses/%s"' % safe) == 3
+
+
 # --- the glue (desk.js) --------------------------------------------------------------------------------------------------
 
 GLUE_HARNESS = r"""

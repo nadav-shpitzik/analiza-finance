@@ -142,13 +142,13 @@
      button too */
   var OPEN_ICON = "<svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
   function openLink(r) {
-    return "<a class=\"fin-open\" data-open=\"" + esc(r.id) + "\" href=\"" + itemUrl(r.board, r.id) + "\" target=\"_blank\" rel=\"noopener\"" +
+    return "<a class=\"fin-open\" data-open=\"" + esc(r.id) + "\" href=\"" + esc(itemUrl(r.board, r.id)) + "\" target=\"_blank\" rel=\"noopener\"" +
       " aria-label=\"פתיחה במאנדיי\" title=\"פתיחה במאנדיי\">" + OPEN_ICON + "</a>";
   }
   /* the row's name opens its monday card over the view (openItemCard, in onClick), and outside monday its page in a new
      tab; a click anywhere else on the row still opens or closes its details */
   function nameLink(r, inner) {
-    return "<a class=\"fin-name\" data-open=\"" + esc(r.id) + "\" href=\"" + itemUrl(r.board, r.id) + "\" target=\"_blank\" rel=\"noopener\">" +
+    return "<a class=\"fin-name\" data-open=\"" + esc(r.id) + "\" href=\"" + esc(itemUrl(r.board, r.id)) + "\" target=\"_blank\" rel=\"noopener\">" +
       inner + "</a>";
   }
   function label(s) {
@@ -553,7 +553,7 @@
   function subtle(t) { return "<span class=\"fin-subtle\">" + esc(t) + "</span>"; }
   function dx(chip, situation, body, r) {
     return "<div class=\"fin-dx\"><div class=\"fin-dx-head\"><div class=\"fin-dx-sit\">" + chip + "<span>" + situation + "</span></div>" +
-      "<a class=\"fin-btn fin-dx-open\" data-open=\"" + esc(r.id) + "\" href=\"" + itemUrl(r.board, r.id) + "\" target=\"_blank\" rel=\"noopener\">פתיחה במאנדיי</a></div>" +
+      "<a class=\"fin-btn fin-dx-open\" data-open=\"" + esc(r.id) + "\" href=\"" + esc(itemUrl(r.board, r.id)) + "\" target=\"_blank\" rel=\"noopener\">פתיחה במאנדיי</a></div>" +
       body + "</div>";
   }
   var NONE = "<span class=\"fin-subtle\">טרם נרשמה</span>";
