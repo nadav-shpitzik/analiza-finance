@@ -25,6 +25,12 @@ The rules it keeps:
    caller (the reconciliation's profile, the desk's reading, a later one) can read one by mistake. A column's existence
    is still checked (`require_columns` asks for its id, never its value). The desk shows the ID number read in the
    browser, as the person (ADR-0173).
+
+Since D2 (24.11) it also asks what changed (`changed_items`, the desk's refresh): analiza-metrics' one request of round 3,
+slice 2 (`FinanceReader._delta` and `delta_query` at da671b2, live there since 11.11) - every board's columns, and for the
+boards with a window their items_count and the ids and update times of their items updated lately, with some items by
+id beside them - under the same eight rules; and `read_items(..., pack=True)` sends the short tails of several jobs as one
+aliased request (analiza-metrics `items_query`), so a refresh that changed two payments and a deal costs one request.
 """
 
 from __future__ import annotations
@@ -57,7 +63,10 @@ ITEMS_BY_ID_CHUNK = 100
 # items in 5 chunks took 7.0 s one after another and 1.35 s side by side)
 CHUNK_WORKERS = 6
 CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_column", "deadline", "too_many_pages",
-         "never_read")
+         "never_read",
+         # D2's refresh (app/desk/reading.py): an answer of another shape than the one its request asked for, and a charge
+         # board whose items_count disagrees with the rows a refresh holds (`DeltaMismatch`)
+         "delta_shape", "count_mismatch")
 DETAIL_MAX = 200
 
 # What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the Directory's, the vouchers board's, and Accounts' business
@@ -96,6 +105,48 @@ ITEMS_BY_ID = ("query ($ids: [ID!], $cols: [String!], $limit: Int!) {"
                % CV_FRAGMENT)
 # Who is on a board: the desk's gate (D1). analiza-metrics reads the same field for the same gate (`board_subscribers`).
 SUBSCRIBERS = "query ($b: [ID!]) { boards(ids: $b) { id subscribers { id } } }"
+
+# D2's refresh: the items of a board updated within the last n days (analiza-metrics `DELTA_RULE`, verified live there on
+# B2B Charge 11.11 with `within_the_last ["DAYS", 1]`, and read by every refresh since). The filter is day-grained: the
+# caller makes the exact cut by each item's `updated_at`.
+DELTA_RULE = ('{rules: [{column_id: "__last_updated__", compare_value: ["DAYS", %d], operator: within_the_last, '
+              'compare_attribute: "UPDATED_AT"}]}')
+NEXT_WINDOW = ("query ($c: String!, $limit: Int!) { next_items_page(cursor: $c, limit: $limit) "
+               "{ cursor items { id updated_at } } }")
+
+
+def window_query(windowed: int, checked: int, chunks: int, days: int) -> str:
+    """One request (analiza-metrics `delta_query`): each board's columns check (b0, b1 ...); for the first `windowed`, its
+    `items_count` and the first page of the items updated within the last `days` days - their ids and `updated_at` only;
+    and items by id in `chunks` aliases (l0, l1 ...) under the one column list `$lc`, with the board each one answered
+    from (rule 7)."""
+    rule = DELTA_RULE % int(days)
+    n = windowed + checked
+    params = ["$b%d: [ID!], $c%d: [String!]" % (i, i) for i in range(n)] + (["$limit: Int!"] if windowed else [])
+    body = ["b%d: boards(ids: $b%d) { columns(ids: $c%d) { id } items_count items_page(limit: $limit, query_params: %s) "
+            "{ cursor items { id updated_at } } }" % (i, i, i, rule) for i in range(windowed)]
+    body += ["b%d: boards(ids: $b%d) { columns(ids: $c%d) { id } }" % (i, i, i) for i in range(windowed, n)]
+    if chunks:
+        params.append("$lc: [String!]")
+        params += ["$li%d: [ID!], $ln%d: Int!" % (k, k) for k in range(chunks)]
+        body += ["l%d: items(ids: $li%d, limit: $ln%d) { id name state created_at board { id } column_values(ids: $lc) %s }"
+                 % (k, k, k, CV_FRAGMENT) for k in range(chunks)]
+    return "query (%s) { %s }" % (", ".join(params), " ".join(body))
+
+
+def items_query(n: int) -> str:
+    """Several short by-id reads in one request (analiza-metrics `items_query`), one alias each (j0, j1 ...) with its own
+    ids, columns and limit, and the board each item answered from. A request of one piece keeps the ITEMS_BY_ID shape."""
+    params = ", ".join("$i%d: [ID!], $c%d: [String!], $n%d: Int!" % (k, k, k) for k in range(n))
+    body = " ".join("j%d: items(ids: $i%d, limit: $n%d) { id name state created_at board { id } column_values(ids: $c%d) %s }"
+                    % (k, k, k, k, CV_FRAGMENT) for k in range(n))
+    return "query (%s) { %s }" % (params, body)
+
+
+def _refuse_never_read(cols: Iterable[str]) -> None:
+    asked = NEVER_READ.intersection(str(c) for c in cols)
+    if asked:
+        raise MondayError("never_read", f"columns that are never read were asked: {sorted(asked)}")
 
 
 class MondayError(Exception):
@@ -169,6 +220,9 @@ class MondayReader:
         self.api_url, self.sleep, self.clock = api_url, sleep, clock
         self.deadline: Optional[float] = None
         self.calls = 0  # requests sent, a retry included: what a reading costs against monday's budget
+        # rate limits monday answered (429, or a complexity budget): a refresh that ran out of time after one is the limit's
+        # (app/desk/reading.py HeldReading: never a full reading into it)
+        self.limited = 0
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -232,6 +286,9 @@ class MondayReader:
             if status in (401, 403):
                 raise MondayError("auth", f"http {status}")
             if status == 429 or status >= 500:
+                if status == 429:
+                    with self._lock:
+                        self.limited += 1
                 if attempt <= MAX_RETRIES:
                     logger.warning("monday http %s, retrying", status)
                     self._backoff(attempt, retry_after)
@@ -248,6 +305,9 @@ class MondayReader:
             errors = body.get("errors")
             if errors:
                 code, detail, reset_in = classify_graphql_errors(errors)
+                if code == "rate_limited":
+                    with self._lock:
+                        self.limited += 1
                 if code == "rate_limited" and attempt <= MAX_RETRIES:
                     self._backoff(attempt, reset_in)
                     continue
@@ -323,33 +383,129 @@ class MondayReader:
             raise MondayError("graphql", f"board {board_id} answered no subscribers")
         return ids
 
-    def read_items(self, jobs: list) -> list:
+    def read_items(self, jobs: list, pack: bool = False) -> list:
         """Items by id for several (ids, columns) jobs at once: every chunk of every job in one pool, the rows per job in
         order. A deleted item is dropped; an archived one is kept, its `state` saying so. A job that asks for a column
-        in NEVER_READ is refused before anything is sent (rule 8)."""
+        in NEVER_READ is refused before anything is sent (rule 8). `pack` (D2's refresh, analiza-metrics `_fetch`) sends
+        the short pieces of several jobs as one aliased request of at most ITEMS_BY_ID_CHUNK ids; without it each chunk is
+        a request of its own, the shape every full reading sends."""
         for _ids, cols in jobs:
             if not list(cols):
                 # never an empty list: what monday answers to `column_values(ids: [])` is not verified, and may be everything
                 raise MondayError("graphql", "a read by id names its columns")
-            asked = NEVER_READ.intersection(str(c) for c in cols)
-            if asked:
-                raise MondayError("never_read", f"columns that are never read were asked: {sorted(asked)}")
-        pieces = [(j, ids[i:i + ITEMS_BY_ID_CHUNK], cols) for j, (ids, cols) in enumerate(jobs)
+            _refuse_never_read(cols)
+        pieces = [(j, list(ids[i:i + ITEMS_BY_ID_CHUNK]), list(cols)) for j, (ids, cols) in enumerate(jobs)
                   for i in range(0, len(ids), ITEMS_BY_ID_CHUNK)]
+        requests: list = []
+        for piece in pieces:
+            last = requests[-1] if requests else None
+            if pack and last is not None and sum(len(p[1]) for p in last) + len(piece[1]) <= ITEMS_BY_ID_CHUNK:
+                last.append(piece)
+            else:
+                requests.append([piece])
 
-        def one(piece: tuple) -> list:
-            _j, ids, cols = piece
-            return self.post(ITEMS_BY_ID, {"ids": ids, "cols": list(cols), "limit": len(ids)}).get("items") or []
+        def one(req: list) -> list:
+            if len(req) == 1:
+                _j, ids, cols = req[0]
+                return [self.post(ITEMS_BY_ID, {"ids": ids, "cols": cols, "limit": len(ids)}).get("items") or []]
+            variables: dict = {}
+            for k, (_j, ids, cols) in enumerate(req):
+                variables["i%d" % k], variables["c%d" % k], variables["n%d" % k] = ids, cols, len(ids)
+            data = self.post(items_query(len(req)), variables)
+            return [data.get("j%d" % k) or [] for k in range(len(req))]
 
-        if len(pieces) < 2:
-            answers = [one(p) for p in pieces]
+        if len(requests) < 2:
+            answers = [one(r) for r in requests]
         else:
             with ThreadPoolExecutor(max_workers=CHUNK_WORKERS, thread_name_prefix="monday-chunk") as pool:
-                answers = list(pool.map(one, pieces))
+                answers = list(pool.map(one, requests))
         out: list = [[] for _ in jobs]
-        for (j, _ids, cols), items in zip(pieces, answers):
-            out[j] += [flatten(x, cols) for x in items if isinstance(x, dict) and x.get("state") != "deleted"]
+        for req, got in zip(requests, answers):
+            for (j, _ids, cols), items in zip(req, got):
+                # what is not a list holds no item (as before D2): the caller's counts say what came back short
+                out[j] += [flatten(x, cols) for x in (items if isinstance(items, list) else [])
+                           if isinstance(x, dict) and x.get("state") != "deleted"]
         return out
+
+    def changed_items(self, windowed: list, checked: list, days: int, by_id: tuple = ((), ())) -> dict:
+        """What changed lately, in one request (D2's refresh; analiza-metrics `FinanceReader._delta`): every board's
+        columns checked; for each of `windowed` [(board, columns)], its items_count and the ids and update times of its
+        items updated within the last `days` days, each window paged to its end; and `by_id` (ids, columns) read by id
+        beside them (the deciding leads: Leads has no window). A board not visible is `not_visible`, a column it lacks
+        `unknown_column`, an answer of another shape `delta_shape`; a column of NEVER_READ asked by id is refused before
+        anything is sent (rule 8), and a row keeps the board it answered from (rule 7): the caller tells a stranger.
+        -> {"counts": [items_count per windowed board, as monday gave it], "windows": [[{"id", "updated_at"}] per
+        windowed board], "rows": the rows read by id, flattened, a deleted one dropped}."""
+        ids, cols = [str(x) for x in by_id[0]], [str(c) for c in by_id[1]]
+        if ids:
+            if not cols:
+                raise MondayError("graphql", "a read by id names its columns")
+            _refuse_never_read(cols)
+        windowed = [(str(b), [str(c) for c in cs]) for b, cs in windowed]
+        boards = windowed + [(str(b), [str(c) for c in cs]) for b, cs in checked]
+        chunks = [ids[i:i + ITEMS_BY_ID_CHUNK] for i in range(0, len(ids), ITEMS_BY_ID_CHUNK)]
+        variables: dict = {"limit": PAGE_LIMIT} if windowed else {}
+        for i, (board, cs) in enumerate(boards):
+            variables["b%d" % i], variables["c%d" % i] = [board], cs
+        if chunks:
+            variables["lc"] = cols
+            for k, piece in enumerate(chunks):
+                variables["li%d" % k], variables["ln%d" % k] = piece, len(piece)
+        data = self.post(window_query(len(windowed), len(boards) - len(windowed), len(chunks), days), variables)
+        counts, windows, cursors = [], [], []
+        for i, (board, cs) in enumerate(boards):
+            got = data.get("b%d" % i)
+            if not isinstance(got, list) or not got or not isinstance(got[0], dict):
+                raise MondayError("not_visible", f"board {board}")
+            present = {str(c.get("id")) for c in got[0].get("columns") or [] if isinstance(c, dict)}
+            missing = sorted(set(cs) - present)
+            if missing:
+                raise MondayError("unknown_column", f"board {board} lacks {missing}")
+            if i >= len(windowed):
+                continue  # its columns only
+            page = got[0].get("items_page")
+            if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                raise MondayError("delta_shape", f"board {board}: no items_page")
+            counts.append(got[0].get("items_count"))
+            windows.append(list(page["items"]))
+            cursors.append(page.get("cursor"))
+        rows: list = []
+        for k in range(len(chunks)):
+            items = data.get("l%d" % k)
+            if not isinstance(items, list):
+                raise MondayError("delta_shape", "the items read by id came back without a list")
+            rows += [flatten(x, cols) for x in items if isinstance(x, dict) and x.get("state") != "deleted"]
+        rest = [i for i, cursor in enumerate(cursors) if cursor]
+        if len(rest) == 1:
+            windows[rest[0]] += self._window_rest(windowed[rest[0]][0], cursors[rest[0]])
+        elif rest:
+            with ThreadPoolExecutor(max_workers=min(len(rest), CHUNK_WORKERS), thread_name_prefix="monday-window") as pool:
+                for i, more in zip(rest, pool.map(lambda i: self._window_rest(windowed[i][0], cursors[i]), rest)):
+                    windows[i] += more
+        out_windows = []
+        for (board, _cs), items in zip(windowed, windows):
+            for x in items:
+                # an item whose time is null is the caller's to read, never to skip; a window that does not carry the
+                # key at all is not the shape this request asked for
+                if not isinstance(x, dict) or x.get("id") is None or "updated_at" not in x:
+                    raise MondayError("delta_shape", f"board {board}: an item without its id or updated_at")
+            out_windows.append([{"id": str(x["id"]), "updated_at": x.get("updated_at")} for x in items])
+        return {"counts": counts, "windows": out_windows, "rows": rows}
+
+    def _window_rest(self, board: str, cursor: str) -> list:
+        """A window's next pages, to its end."""
+        items: list = []
+        pages = 1
+        while cursor:
+            pages += 1
+            if pages > MAX_PAGES:
+                raise MondayError("too_many_pages", f"board {board}: a window whose cursor never ends")
+            page = self.post(NEXT_WINDOW, {"c": cursor, "limit": PAGE_LIMIT}).get("next_items_page")
+            if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                raise MondayError("delta_shape", f"board {board}: next_items_page without items")
+            items += page["items"]
+            cursor = page.get("cursor")
+        return items
 
     def read_boards(self, boards: list) -> list:
         """[(board_id, columns)] whole: the ids of every board side by side, then every row by id in one pool.
