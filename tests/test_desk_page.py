@@ -505,6 +505,30 @@ def test_a_receipt_sent_on_a_payment_that_brought_no_money_in_is_a_red_chip_and_
     assert order[order.index("refund_date_on_status") + 1] == "receipt_no_money"
 
 
+def test_a_row_that_opens_its_details_says_so_with_a_chevron_at_its_start():
+    """QA 6 (24.11): nothing said a row opens on a click (there is no "פרטים" button). Every row of a list that opens its
+    details carries a chevron at its start - after the box where the row has one, first where the list has none - under
+    an empty header, decorative for a screen reader (the row says aria-expanded); the companies by customer, whose rows
+    open a company's ledger, have none."""
+    got = drive(answer(receipts_view()), [
+        {"show": TASKS}, {"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {"3102": True}}}},
+        {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+        {"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}}],
+        monday=receipts_world(), context=WRITES)
+    tasks, opened, b2_all, customers = [s["html"] for s in got["steps"]]
+    more = ('<td class="k-more"><span class="fin-more" title="פרטים"><svg viewBox="0 0 16 16" width="14" height="14" '
+            'aria-hidden="true" focusable="false">')
+    for html, first in ((tasks, ["k-pick", "k-more", "k-date"]), (b2_all, ["k-more", "k-demand"])):
+        assert re.findall(r'<th class="(k-[a-z_]+)', html)[:len(first)] == first
+        assert '<th class="k-more"></th>' in html
+        rows = re.findall(r'<tr class="fin-rowbtn[^"]*" data-row="[^"]+"', html)
+        assert len(rows) >= 3 and html.count(more) == len(rows)
+    assert '<tr class="fin-rowbtn open" data-row="3102" tabindex="0" aria-expanded="true">' in opened
+    assert "fin-more" not in customers and 'data-customer="7701"' in customers
+    css = (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert "tr.fin-rowbtn.open .fin-more svg { transform: rotate(180deg); }" in css
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of

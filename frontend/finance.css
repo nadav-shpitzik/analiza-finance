@@ -209,6 +209,15 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance a.fin-open:hover, #screen-finance a.fin-open:focus-visible { color: var(--fin-link); background: var(--fin-panel);
   box-shadow: inset 0 0 0 1px var(--fin-line); }
 #screen-finance tr.fin-rowbtn { cursor: pointer; }
+/* QA 6 (24.11): a row that opens its details says so at its start: a chevron, in the link's colour while the row is
+   pointed at, turned while its details are open. A narrow column: after the box it takes the box's side of the gap, and
+   first in a row it keeps the panel's own margin */
+#screen-finance table.fin-t .k-more { width: 22px; padding-inline-start: 4px; padding-inline-end: 0; color: var(--fin-muted); }
+#screen-finance .fin-more { display: inline-flex; vertical-align: middle; }
+#screen-finance .fin-more svg { transition: transform .15s ease; }
+#screen-finance tr.fin-rowbtn.open .fin-more svg { transform: rotate(180deg); }
+#screen-finance tr.fin-rowbtn:hover .fin-more, #screen-finance tr.fin-rowbtn:focus-visible .fin-more { color: var(--fin-link); }
+@media (prefers-reduced-motion: reduce) { #screen-finance .fin-more svg { transition: none; } }
 #screen-finance tr.fin-rowbtn:hover td { background: var(--fin-soft); }
 #screen-finance tr.fin-rowbtn:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: -2px; }
 #screen-finance tr.fin-rowbtn.open td { background: var(--fin-soft); border-bottom-color: transparent; }

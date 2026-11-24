@@ -70,6 +70,9 @@
  *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
  *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
  *      with rows as long as real ones (a list's narrowest width went from about 1210 to about 1070 pixels).
+ * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
+ *      carries a chevron at its start (after the box where it has one), lit while the row is pointed at and turned while
+ *      its details are open, beside the pointer and the hover it had: a narrow column, and every list still fits (QA 4).
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
@@ -204,6 +207,9 @@
   /* a row's way to monday: a quiet icon under a header of its own, and the row's name (nameLink); the details carry the
      button too */
   var OPEN_ICON = "<svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
+  var MORE = "<span class=\"fin-more\" title=\"פרטים\"><svg viewBox=\"0 0 16 16\" width=\"14\" height=\"14\" aria-hidden=\"true\" " +
+    "focusable=\"false\"><path d=\"M4 6l4 4 4-4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" " +
+    "stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>";
   function openLink(r) {
     return "<a class=\"fin-open\" data-open=\"" + esc(r.id) + "\" href=\"" + esc(itemUrl(r.board, r.id)) + "\" target=\"_blank\" rel=\"noopener\"" +
       " aria-label=\"פתיחה במאנדיי\" title=\"פתיחה במאנדיי\">" + OPEN_ICON + "</a>";
@@ -317,6 +323,9 @@
     balance: { h: "יתרה לגבייה (כולל מע\"מ)", n: 1, t: "balance", c: function (r) { return r.balance != null ? money2(r.balance) : "-"; } },
     late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : NOT_SET; } },
     notes: { h: "מה לבדוק", c: function (r) { return rowChips(r); } },
+    /* QA 6 (24.11): a row that opens its details by a click says so - a chevron at its start, turned while they are open
+       (finance.css), beside the pointer and the hover it had; a narrow column, so no list grows past its frame (QA 4) */
+    more: { h: "", c: function () { return MORE; } },
     open: { h: "פתיחה במאנדיי", c: function (r) { return openLink(r); } },
     /* 1.1 (D2): the box that picks a row for a batch, under a box that picks every row it can, and the row's own button -
        only on the rows that offer one of the two actions, where the person may write (pickable) */
@@ -416,12 +425,13 @@
       var f = COLS[k] && COLS[k].t, cell = "";
       if (f && t.sums[f] != null) { cell = money2(t.sums[f]); }
       else if (f && t.sums.partial_unknown) { cell = "<span class=\"fin-subtle\">חסר ב-" + plural(t.sums.partial_unknown, "חיוב אחד", "חיובים") + "</span>"; }
-      if (!cell && first && k !== "pick") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
+      if (!cell && first && k !== "pick" && k !== "more") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
       return "<td" + cls(k) + ">" + cell + "</td>";
     }).join("") + "</tr></tfoot>";
   }
   function table(rows, cols, detail, opened, totals) {
     cols = cols.filter(function (k) { return !COLS[k].opt || rows.some(COLS[k].opt); });
+    if (detail) { var at = cols[0] === "pick" ? 1 : 0; cols = cols.slice(0, at).concat(["more"], cols.slice(at)); }
     /* a searched list's columns, while its rows are drawn: what a row shows, for the mark of what found it (QA 3) */
     DRAWN = null;
     if (searching()) { DRAWN = {}; cols.forEach(function (k) { DRAWN[k] = true; }); }

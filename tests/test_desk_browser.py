@@ -468,3 +468,35 @@ def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):
             # the table no wider than its frame, nothing to scroll sideways, "פתיחה במאנדיי" wholly inside it
             assert x["table"] <= x["frame"] and x["sideways"] <= 0 and min(x["open"]) >= 0, (size, x)
         assert got["steps"][size + " created"] == ['"(לפי "', "יום היצירה", '")"', "block"]
+
+
+def test_a_row_says_it_opens_its_details_by_its_pointer_its_hover_and_a_chevron_that_turns(serve):
+    """QA 6 (24.11): there is no "פרטים" button and nothing said a click on a row opens its details. A row shows the
+    pointer, lights its chevron when pointed at, and turns it while its details are open; the totals' label stays out of
+    the chevron's narrow column."""
+    base, _log = serve(two_receipts())
+    got = qa_visit(r"""
+  await page.click('[data-bstate="receipt_pending"]');
+  await page.waitForSelector('tr[data-row="3102"] .fin-more');
+  const look = () => page.$eval('tr[data-row="3102"]', (tr) => {
+    const m = tr.querySelector(".fin-more"), b = m.getBoundingClientRect();
+    return { cursor: getComputedStyle(tr).cursor, size: [Math.round(b.width), Math.round(b.height)], color: getComputedStyle(m).color,
+      turn: getComputedStyle(m.querySelector("svg")).transform };
+  });
+  await page.mouse.move(5, 5);
+  out.steps.still = await look();
+  await page.hover('tr[data-row="3102"] td.k-received');
+  out.steps.pointed = await look();
+  await page.click('tr[data-row="3102"] td.k-received');
+  await page.waitForSelector('tr[data-row="3102"][aria-expanded="true"]');
+  await page.waitForTimeout(400);
+  out.steps.open = await look();
+  await page.waitForSelector("tfoot .fin-total");
+  out.steps.total = await page.$$eval("tfoot td", (t) => t.map((x) => [x.className, x.innerText.trim()]).filter((x) => x[1]));
+""", base, fake_sdk({}))
+    assert got["errors"] == []
+    still, pointed, opened = got["steps"]["still"], got["steps"]["pointed"], got["steps"]["open"]
+    assert still["cursor"] == "pointer" and still["size"][0] >= 12 and still["turn"] == "none"
+    assert pointed["color"] != still["color"]                                   # the chevron lights while the row is pointed at
+    assert opened["turn"].startswith("matrix(-1, ") and opened["turn"].endswith("0, 0)")    # turned half a circle
+    assert got["steps"]["total"][0][0] == "k-date" and got["steps"]["total"][0][1].startswith('סה"כ')
