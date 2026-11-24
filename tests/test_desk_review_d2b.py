@@ -10,6 +10,8 @@ replacement at a time, run against tests/test_desk*.py).
 3. Half of an emoji in a name (a lone surrogate) stopped every save of the stored reading and made /api/desk a 500. Now
    the reader's `_text` replaces it, as it removes a NUL (app/monday/client.py), and the store's guard says an encoding
    error as its own failure (app/desk/store.py).
+4. A list or an object as an event's kind raised TypeError out of clean_batch: a 500, the batch's good events lost. Now
+   it is refused and counted like any kind outside the list (app/desk/usage.py).
 """
 from __future__ import annotations
 
@@ -274,3 +276,22 @@ def test_a_text_the_store_cannot_encode_is_its_own_failure_never_a_crash(pg):
         store.save(bad)
     assert err.value.detail == "UnicodeEncodeError"
     assert store.load()["read_at"] == kept["read_at"]                   # the stored reading stays as it was
+
+
+# --- 4. a kind that is not a string -------------------------------------------------------------------------------------
+
+def test_a_kind_that_is_not_a_word_is_counted_refused_not_a_500(use):  # noqa: F811
+    """`kind not in KINDS` on a dict: a list or an object as `k` raised TypeError (unhashable) out of clean_batch, which
+    the route does not catch - a 500, the batch's good events lost, nothing counted in /health."""
+    use.client = type(use.client)(use.client.app, raise_server_exceptions=False)
+    for bad in ([], {"a": 1}):
+        r = use.client.post("/api/usage", json=batch(ev("hide"), {"k": bad}),
+                            headers={"Authorization": "Bearer " + session_token(7301)})
+        assert r.status_code == 200 and r.json() == {"stored": 1, "refused": 1}, (r.status_code, r.text[:80])
+    assert use.health()["refused"] == 2 and use.health()["failed"] == 0
+
+
+@pytest.mark.parametrize("bad", [[], {"a": 1}, ["hide"], 7, None, True, 1.5])
+def test_an_event_whose_kind_or_tab_is_not_a_string_is_refused_alone(bad):
+    rows, refused = usage.clean_batch(batch(ev("hide"), {"k": bad}, dict(ev("hide"), tab=bad), ev("state")), 7)
+    assert refused == 2 and [r["kind"] for r in rows] == ["hide", "state"]

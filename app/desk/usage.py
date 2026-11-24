@@ -6,7 +6,8 @@ alphabets, so a row written here reads like a row written there, and the history
 one vocabulary. New here: this paragraph, and the note on `bill`, the one kind the ported page no longer sends. Since the
 review of D2 (a32395f), three alphabets are narrower than analiza-metrics', each to what its page sends: the visit's id is
 letters only, a word carries no number (WORD_RUN, WORD_DIGITS), and a period is a period key the page can name - so a
-digit run long enough to be an ID number has no place left in a row.
+digit run long enough to be an ID number has no place left in a row. And a kind that is not a string is refused and
+counted like any kind outside the list, never a 500.
 
 WHY. Nadav, 16.11: "בוא נוודא שיש לנו גם נתוני שימוש שלה שם כדי שנוכל לשפר את זה עם הזמן" - the finance desk is built
 for one bookkeeper (Chava), and what she opens, searches, misses and leaves for monday is what tells the next round what
@@ -116,7 +117,11 @@ def clean_event(e: Any) -> dict | None:
     if not isinstance(e, dict) or set(e) - {"k", "t", "tab", "st", "d"}:
         return None
     kind, t, tab, st, d = e.get("k"), e.get("t", 0), e.get("tab", ""), e.get("st", ""), e.get("d", {})
-    if kind not in KINDS or type(t) is not int or t < 0 or tab not in TABS:
+    # a kind or a tab that is not a string is refused before it is looked up: a list or an object as `k` raised TypeError
+    # (unhashable) out of here, a 500 that lost the batch's good events and counted nothing (D2's review)
+    if not isinstance(kind, str) or kind not in KINDS or type(t) is not int or t < 0:
+        return None
+    if not isinstance(tab, str) or tab not in TABS:
         return None
     if not word_ok(st) or not isinstance(d, dict):
         return None
