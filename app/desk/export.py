@@ -7,7 +7,8 @@ file carries none (below).
 WHAT IT IS. The students list exactly as the page filters it (`view.filter_b2c`: a state, a period, the
 search box), as an .xlsx a bookkeeper opens in Excel: a right-to-left sheet, the header frozen with a filter
 on it, dates as dates, amounts as numbers, references as text, and under the rows a total that follows the
-filter (SUBTOTAL 109). A second sheet says what the file is: when monday was read, which filter, how many rows.
+filter (SUBTOTAL 109). A second sheet says what the file is: when monday was read, which filter, how many rows, and
+each total again as a number, the file's as made (QA 24.11: a preview, on a phone, may show the formula empty).
 The companies list (`view.filter_b2b`) and the aging by customer (`view.b2b_customers`) the same way.
 
 The conventions, and why not CSV, are in the knowledge repo:
@@ -24,6 +25,12 @@ NAMES (round 3, 11.11, the one-name norm): a column that holds a monday column i
 name, exactly; only what the desk computes keeps its own word ("שיבוץ", "מועד פירעון", "מועד אחרון להחזר", the aging
 bands), the same word as on the page and in its legend. A refund row carries its two dates side by side:
 "מועד אחרון להחזר" (the legal day) and "מועד העברה מתוכנן" (the transfer round).
+
+WHAT IS WRONG WITH A ROW (QA 24.11): the column "מה לבדוק", on every row that has something and not only in "חריג",
+says it in the page's chips (view.row_reasons: their words, their order, all of them where the page shows five).
+"סכום החזר" is monday's own, as typed (a 6,000 refund on a 5,000 payment is 6,000: that is why its row is in "חריג");
+the refund the desk counts, capped and with a full refund's amount where none was typed, is beside it under the
+page's own word for it, "הוחזרו", and the totals count that one, as the page does.
 """
 from __future__ import annotations
 
@@ -39,8 +46,9 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, PLANNED_LABEL,
-                   REFUND_DUE_DAYS, aging_columns, aging_file_header, aging_value, day, is_refund_row)
+from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, NO_TERMS, P_PART,
+                   P_REFUNDED, PAY, PLANNED_LABEL, REFUND_DUE_DAYS, REFUNDED_WORD, UNNAMED_LABEL, aging_columns,
+                   aging_file_header, aging_value, day, is_refund_row, row_reasons)
 
 MONEY_FMT = "#,##0.00"
 DATE_FMT = "dd/mm/yyyy"
@@ -66,7 +74,32 @@ def _counted_paid(r: dict) -> Decimal | None:
     return r["money_in"] if r["status_idx"] in MONEY_IN and r["paid_typed"] is not None else None
 
 
-# (header, value of a row, kind, width) - in the order of her ledger card in Hashavshevet: date, reference, who, amount
+def _label(field: str) -> Callable[[dict], str]:
+    """A status cell as the page writes it: its label, or "תווית בלי שם" where monday holds a value whose label has no name
+    (the row's `unnamed`). QA 24.11, 2829373007: the page said so in "ערוץ תשלום", and the file's cell was empty."""
+    return lambda r: UNNAMED_LABEL if field in (r.get("unnamed") or ()) else r[field]
+
+
+def _terms(r: dict) -> str:
+    """The company's "תנאי תשלום", or "אין תנאי תשלום" where its cell is empty, as the page writes beside it (QA 24.11: the
+    ledger file of a company without terms had the column empty on every row). A charge with no company has none."""
+    return r["account_terms"] or (NO_TERMS if r["account_no_terms"] else "")
+
+
+def _reasons(tab: str) -> Callable[[dict], str]:
+    """The row's "מה לבדוק": every chip the page would show on it, in its order, one after the other."""
+    return lambda r: " · ".join(row_reasons(tab, r))
+
+
+def _what_to_check(word: str, states: dict) -> tuple[str, str]:
+    """The second sheet's line on "מה לבדוק" (`word`: a payment, a charge; `states`: its tab's)."""
+    return ("מה לבדוק", "מה המסך מצא ב%s, באותן מילים ובאותו סדר כמו בעמודה \"מה לבדוק\" במסך, ובכל שורה שיש בה משהו, "
+                        "לא רק ב\"%s\". במסך מוצגים עד חמישה, וכאן כולם." % (word, states["exception"]["label"]))
+
+
+# (header, value of a row, kind, width) - in the order of her ledger card in Hashavshevet: date, reference, who, amount.
+# A kind: "money" is an amount with a total under the rows; "amount" an amount without one (monday's own value, where
+# the total is of what the desk counts, in a column of its own); "date", "int", "text".
 B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # monday's "תאריך תקבול", as on the page: where it was not typed, the day the row was created, and the next column
     # says so in the page's word for it ("יום היצירה", QA 11.11, 2.5: "תאריך" held two things under one name)
@@ -78,18 +111,22 @@ B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # Student Charge's "נציג מכירות", next to the name as on her board (17.11): the lead's current Owner
     ("נציג מכירות", lambda r: r.get("rep", ""), "text", 16),
     ("סכום ששולם", _counted_paid, "money", 14),
-    ("ערוץ תשלום", lambda r: r["channel"], "text", 13),
-    ("סוג חיוב", lambda r: r["type"], "text", 13),
+    ("ערוץ תשלום", _label("channel"), "text", 13),
+    ("סוג חיוב", _label("type"), "text", 13),
     ("מחזור", lambda r: r["cohort_code"], "text", 9),
     ("שם המחזור", lambda r: r["cohort_title"], "text", 30),
     # the cohort's "Registration Flow", by the name the same field carries on the Deals board (17.11, view.FLOW_LABEL)
     (FLOW_LABEL, lambda r: r["flow"], "text", 18),
     ("שיבוץ", lambda r: B2C_STATES[r["state"]]["label"], "text", 28),
-    ("סטטוס תשלום", lambda r: r["status"], "text", 13),
-    ("שליחת קבלה", lambda r: r["receipt"], "text", 11),
-    ("סכום החזר", lambda r: _money_or_blank(r["refunded"]), "money", 13),
+    ("מה לבדוק", _reasons("b2c"), "text", 40),
+    ("סטטוס תשלום", _label("status"), "text", 13),
+    ("שליחת קבלה", _label("receipt"), "text", 11),
+    # monday's "סכום החזר" as typed, 0 too (QA 24.11: the file wrote the counted refund under monday's name); what the
+    # desk counts of it is the next column, under the page's word for it, and the total is that one's
+    ("סכום החזר", lambda r: r["refund_typed"], "amount", 13),
+    (REFUNDED_WORD, lambda r: _money_or_blank(r["refunded"]), "money", 13),
     ("תאריך החזר", lambda r: day(r["refund_date"]), "date", 12),
-    ("אופן החזר", lambda r: r["refund_method"], "text", 12),
+    ("אופן החזר", _label("refund_method"), "text", 12),
     ("אסמכתת זיכוי", lambda r: r["credit_ref"], "text", 14),
     ("סכום לזיכוי", lambda r: _money_or_blank(r["credit_approved"]), "money", 13),
     ("תאריך בקשת ביטול", _refund_day("asked_date"), "date", 12),
@@ -110,11 +147,12 @@ B2B_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # a cancelled charge's amount, or one never typed, is not money: blank, so no total counts it (review 10.11)
     ("סכום לחיוב (ללא מע\"מ)", lambda r: r["amount"] if r["amount_known"] and r["state"] != "cancelled" else None, "money", 15),
     ("שיבוץ", lambda r: B2B_STATES[r["state"]]["label"], "text", 22),
-    ("מצב חיוב", lambda r: r["billing"], "text", 18),
-    ("סטטוס תשלום", lambda r: r["payment"], "text", 13),
+    ("מה לבדוק", _reasons("b2b"), "text", 40),
+    ("מצב חיוב", _label("billing"), "text", 18),
+    ("סטטוס תשלום", _label("payment"), "text", 13),
     ("מועד פירעון", lambda r: day(r["due"]), "date", 12),
     # the account's own "תנאי תשלום", as monday holds it ("אחר" too); the due date counts only the four it knows
-    ("תנאי תשלום", lambda r: r["account_terms"], "text", 11),
+    ("תנאי תשלום", _terms, "text", 11),
     ("ימים בפיגור", lambda r: r["days_late"], "int", 10),
     ("אסמכתת חשבונית", lambda r: r["invoice"], "text", 15),
     ("סכום ששולם (כולל מע\"מ)", lambda r: r["paid_so_far"], "money", 16),
@@ -131,7 +169,7 @@ def customer_columns(customers: list[dict]) -> list[tuple[str, Callable[[dict], 
 
     def value(key: str, kind: str) -> Callable[[dict], Any]:
         if key == "terms":   # as the page marks it: a company whose "תנאי תשלום" is empty
-            return lambda c: c["terms"] or ("אין תנאי תשלום" if c.get("terms_missing") else "")
+            return lambda c: c["terms"] or (NO_TERMS if c.get("terms_missing") else "")
         if kind == "money":  # no money is a blank cell, as the page's "-", so no total counts a zero
             return lambda c: aging_value(c, key) or None
         return lambda c: aging_value(c, key)   # a name, and a count the page shows as 0 too
@@ -159,9 +197,7 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
     """rows: the filtered student payments (view.filter_b2c). about: the filter and the reading, for sheet 2, whose head
     says that the file carries no ID number."""
     return _workbook("תקבולים", B2C_COLUMNS, rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
-                     [("סה\"כ סכום ששולם", sum((r["money_in"] for r in rows), ZERO)),
-                      ("סה\"כ סכום החזר", sum((r["refunded"] for r in rows), ZERO)),
-                      ("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
+                     [("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
                       ("תאריך תקבול", "כפי שהוקלד בלוח; כשלא הוקלד, היום שבו נוצרה השורה במאנדיי, ואז במקור "
                                       "התאריך כתוב \"יום היצירה\""),
                       ("שיבוץ", "הרשימה שהמסך שם בה את התקבול, כמו במסך ובמקרא שלו"),
@@ -169,25 +205,49 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
                                       "שמכר"),
                       ("סכום ששולם", "בתקבולים שנכנס בהם כסף בלבד; בסטטוס תשלום \"לא שולם\", \"יש בעיה\" או "
                                      "\"מלגת אנליזה\" התא ריק ולא נספר"),
-                      ("סכום החזר", "כפי שהוקלד; ב\"תשלום הוחזר\" בלי סכום החזר, כל סכום ששולם. לעולם לא יותר "
-                                    "מסכום ששולם"),
+                      ("סכום החזר", "כפי שהוא במאנדיי: גם 0, וגם כשהוא גדול מסכום ששולם או בסטטוס תשלום שלא אומר "
+                                    "שהוחזר. אין לו סה\"כ: את ההחזר שהמסך סופר סוכמת העמודה \"%s\"" % REFUNDED_WORD),
+                      (REFUNDED_WORD, "ההחזר כפי שהמסך סופר אותו ב\"%s\": רק בסטטוס תשלום \"%s\" או \"%s\"; ב\"%s\" "
+                                      "בלי סכום החזר או עם 0, כל סכום ששולם; ולעולם לא יותר מסכום ששולם. ממנה סה\"כ "
+                                      "ההחזרים, כמו במסך"
+                       % (REFUNDED_WORD, PAY[P_REFUNDED], PAY[P_PART], PAY[P_REFUNDED])),
+                      _what_to_check("תקבול", B2C_STATES),
                       (LAST_DAY_LABEL, "תאריך בקשת ביטול בהרשמה ועוד %d יום, בשורות של החזר בלבד, ליד %s"
                        % (REFUND_DUE_DAYS, PLANNED_LABEL))], head_lines=[("ת.ז", ID_NUMBERS_NOT_IN_FILE)])
 
 
 def b2b_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
-    """rows: the filtered company charges (view.filter_b2b)."""
+    """rows: the filtered company charges (view.filter_b2b). Partly paid charges whose paid amount is not typed have no
+    balance, and the page gives "סכום ששולם (כולל מע\"מ)" and "יתרה לגבייה" no total while one is in its list ("חסר ב-N",
+    view.list_totals): the file's totals of the two are without them, and its second sheet says so beside them."""
+    unknown = sum(1 for r in rows if r["state"] == "partial" and r["balance"] is None)
+    which = ("חיוב אחד", "בלעדיו") if unknown == 1 else ("%d חיובים" % unknown, "בלעדיהם")
     return _workbook("חיובים", B2B_COLUMNS, rows, about, "חיובי לקוחות עסקיים מתוך שולחן הכספים",
-                     [("סה\"כ סכום לחיוב (ללא מע\"מ)", sum((r["amount"] for r in rows if r["state"] != "cancelled"), ZERO)),
-                      ("הסכומים", "סכום לחיוב (ללא מע\"מ), כמו בלוח B2B Charge; סכום ששולם (כולל מע\"מ) ויתרה "
+                     ([("שימו לב", "%s ב\"%s\" בלי סכום ששולם (כולל מע\"מ), ולכן בלי יתרה לגבייה: בקובץ, הסה\"כ של סכום "
+                                   "ששולם (כולל מע\"מ) ושל יתרה לגבייה (כולל מע\"מ) הוא %s, ובמסך אין לשתי העמודות סה\"כ"
+                        % (which[0], B2B_STATES["partial"]["label"], which[1]))] if unknown else []) +
+                     [("הסכומים", "סכום לחיוב (ללא מע\"מ), כמו בלוח B2B Charge; סכום ששולם (כולל מע\"מ) ויתרה "
                                   "לגבייה כולל מע\"מ (היתרה מניחה מע\"מ 18%)"),
-                      ("מועד פירעון", DUE_RULE)])
+                      ("מועד פירעון", DUE_RULE), _what_to_check("חיוב", B2B_STATES)])
+
+
+# The second sheet's totals (QA 24.11): the row under the list is a SUBTOTAL formula, which follows Excel's filter and which
+# Excel computes on opening the file; a preview (a phone, Quick Look) may show it empty. So each total is also written as a
+# number, summed from the very cells the formula sums, under a line that says they are the file's as made.
+FILE_TOTALS = ("סכומי הקובץ כפי שהופק", "סה\"כ כל עמודת סכום בכל שורות הקובץ, בלי סינון. שורת הסיכום שמתחת לשורות "
+                                        "בגיליון \"%s\" היא נוסחה שמתעדכנת לפי הסינון באקסל, ותצוגה מקדימה (בטלפון, "
+                                        "למשל) עשויה להציג אותה ריקה")
+
+
+def total_label(head: str) -> str:
+    """A column's total in the second sheet: 'סה"כ' and its header, which may say it already."""
+    return head if head.startswith("סה\"כ") else "סה\"כ " + head
 
 
 def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any], what: str, totals: list,
               head_lines: list | None = None) -> bytes:
     """`head_lines`: lines said right under what the file is, before when it was read (the students' file: no ID
-    number)."""
+    number). `totals`: the lines after the file's own totals (FILE_TOTALS), which this sums from its cells."""
     wb = Workbook()
     ws = wb.active
     ws.title = title
@@ -198,6 +258,7 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
         cell.font, cell.fill = bold, HEADER_FILL
         cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(c)].width = width
+    sums = {c: ZERO for c, (_head, _fn, kind, _width) in enumerate(columns, start=1) if kind == "money"}
     for i, r in enumerate(rows, start=2):
         for c, (_head, fn, kind, _width) in enumerate(columns, start=1):
             v = fn(r)
@@ -206,7 +267,9 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
                 _text(cell, v)
                 continue
             cell.value = v
-            cell.number_format = {"money": MONEY_FMT, "date": DATE_FMT, "int": "0"}[kind]
+            cell.number_format = {"money": MONEY_FMT, "amount": MONEY_FMT, "date": DATE_FMT, "int": "0"}[kind]
+            if c in sums and v is not None:
+                sums[c] += v
     last = len(rows) + 1
     last_col = get_column_letter(len(columns))
     ws.freeze_panes = "A2"
@@ -237,6 +300,8 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
         ("סינון", about.get("period_label") or "כל התקופה"),
         ("חיפוש", ILLEGAL_CHARACTERS_RE.sub("", about.get("q") or "") or "-"),
         ("שורות", len(rows)),
+        (FILE_TOTALS[0], FILE_TOTALS[1] % title),
+        *[(total_label(columns[c - 1][0]), v) for c, v in sums.items()],
     ] + totals
     for i, (k, v) in enumerate(lines, start=1):
         info.cell(row=i, column=1, value=k).font = bold
@@ -247,7 +312,7 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
                 cell.number_format = MONEY_FMT
         else:
             _text(cell, v)
-    info.column_dimensions["A"].width = 16
+    info.column_dimensions["A"].width = 34   # a total's name, as long as its column's header
     info.column_dimensions["B"].width = 60
     out = io.BytesIO()
     wb.save(out)
@@ -255,8 +320,11 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
 
 
 def download_headers(name: str, ascii_name: str) -> dict[str, str]:
-    """RFC 6266: a plain ASCII name for old clients, and the Hebrew one in filename* for everyone else."""
-    return {"Content-Disposition": "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quote(name)),
+    """RFC 6266: a plain ASCII name for old clients, and the Hebrew one in filename* for everyone else - UTF-8, no
+    language, every byte outside RFC 8187's attr-char percent-encoded (`safe=""`: quote() leaves "/" as it is by default).
+    QA 24.11 saw a name end "24.11.2026.xlsx" without its Hebrew letters: that date is the Hebrew name's alone (the ASCII
+    one says 2026-11-24), so the downloader had read filename* and dropped the letters itself."""
+    return {"Content-Disposition": "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quote(name, safe="")),
             "Cache-Control": "no-store"}
 
 

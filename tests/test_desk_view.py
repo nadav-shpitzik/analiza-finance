@@ -157,7 +157,7 @@ def test_every_payment_has_one_state_and_the_first_that_fits_wins():
             sc(8),                                                             # done
             sc(9, receipt="2"),                                                # a receipt not needed: done
             sc(10, st="4", refund_date="2026-10-01"),                          # refunded before the credit-note column
-            sc(11, st="0"), sc(12, st="3"),                                    # no money
+            sc(11, st="0", receipt="0"), sc(12, st="3", receipt="2"),          # no money, and no receipt went out
             sc(13, st="5", refund_date="2026-10-01")]                          # partly refunded, the amount not typed
     v = view(rows)
     got = {x["id"]: x["state"] for x in v["b2c"]["rows"]}
@@ -617,7 +617,7 @@ def test_an_approved_refund_whose_status_carries_no_money_is_an_exception_and_sa
             sc(2, st="2", paid="5000", refund="6000"),
             sc(3, st="0", credit_approved="100"), sc(4, st="", credit_approved="100"), sc(5, st="3", credit_approved="100"),
             sc(6, st="9", credit_approved="100"),                     # asked, and a credit typed: no approval writes this
-            sc(7, st="2"), sc(8, st="0", paid="300")]                  # no refund typed: no money, no task, as before
+            sc(7, st="2", receipt="0"), sc(8, st="0", paid="300", receipt="0")]   # no refund, no receipt: no money, no task
     v = view(rows, enrollments=[enrollment("E1", asked="2026-10-22")])
     assert [row_of(v, i)["state"] for i in range(1, 9)] == ["exception"] * 6 + ["no_money", "no_money"]
     one = row_of(v, 1)
@@ -820,7 +820,8 @@ def test_billed_writes_its_invoice_only_when_typed_and_the_demand_day_only_when_
     assert by[fd.B2["invoice"]]["skip_empty"] is True and by[fd.B2["invoice"]]["required"] is False
     assert by[fd.B2["due"]] == {"column": fd.B2["due"], "title": "מועד דרישת תשלום", "kind": "date", "today": True,
                                 "if_empty": True}
-    assert "MON-92" in fd.DESK_ACTIONS["billed"]["after"]
+    # what it says to the person, without the task's number (MON-92, QA 24.11: kept in the comment)
+    assert fd.DESK_ACTIONS["billed"]["after"] == "מועד דרישת תשלום נכתב רק כשהוא ריק במאנדיי, והוא היום."
 
 
 @pytest.mark.parametrize("row, offers", [
@@ -914,7 +915,9 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
         assert {"פעולות", "נכתב, מתעדכן"} <= fd.legend_terms(tab), tab
     assert {"פרטי חיוב", "ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"} <= fd.legend_terms("b2b")
     said = {i["term"]: i["text"] for p in fd._legend_out("b2b") for i in p["items"]}
-    assert "MON-43" in said["מפתח חשבשבת"] and "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
+    # MON-43's rule, said without its number (QA 24.11)
+    assert "מקבלת ח.פ בלי מפתח" in said["מפתח חשבשבת"] and "MON-" not in said["מפתח חשבשבת"]
+    assert "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
     # what the page does (the adversarial review of 62fd993): written from the browser as the person, the before and the
     # after in monday's activity log, and an Update on the company only with the permission to write one - never promised
     bill = said["פרטי חיוב"]
@@ -959,3 +962,114 @@ def test_the_desks_reading_builds_a_whole_view():
     assert v["b2b"]["by_customer"]["701"]["billing"] == {"vat_id": None, "hash_key": "77001",
                                                          "invoice_name": "חשבונית-על-שם", "terms": "שוטף+30"}
     assert not any(value in str(v) for value in ("012345678", "512345678", "998877665"))
+
+
+# --- QA of D2 (24.11) --------------------------------------------------------------------------------------------------
+
+def test_a_rows_reasons_are_its_chips_every_one_in_order_and_each_chip_has_one_place_in_it():
+    """The Excel files' "מה לבדוק" (view.row_reasons): the page's chips of the row, all of them, in FLAG_ORDER, which holds
+    every chip of the legend once - a new chip with no place in it would be left out of the files."""
+    assert len(fd.FLAG_ORDER) == len(set(fd.FLAG_ORDER))
+    assert set(fd.FLAG_ORDER) == {k for tab in fd.LEGEND_FLAGS.values() for k, _t, _x in tab}
+    v = view([sc(1, st="", credit_approved="100", refund="5"), sc(2, receipt="0", invoice="", lead=["L1"]),
+              sc(3, credit_approved="100", lead=["L1"], enr=["E3"])],
+             leads=[lead("L1")], enrollments=[enrollment("E3", asked="2026-11-05")])
+    assert fd.row_reasons("b2c", row_of(v, 1)) == ["סכום לזיכוי בסטטוס ריק", "סכום החזר בסטטוס ריק",
+                                                   "שליחת קבלה: יצאה, בסטטוס ריק", fd.LAST_DAY_LABEL + " לא ידוע",
+                                                   "בלי הרשמה ובלי ליד מקור"]
+    assert fd.row_reasons("b2c", row_of(v, 2)) == ["חסרה אסמכתת חשבונית", "שליחת קבלה: טרם"]
+    # a flag that names the row's state ("החזר לביצוע") is no reason, as it is no chip on the page
+    assert row_of(v, 3)["state"] == "refund_to_execute" and fd.row_reasons("b2c", row_of(v, 3)) == []
+
+
+def test_the_refunded_sentence_says_its_two_cases_apart_and_names_every_row_it_sends_to_the_exceptions():
+    """QA 24.11: "החזר בוצע" said '"הוחזר חלקי" בלי סכום החזר או עם 0, וסכום החזר גדול מסכום ששולם, נמצאים ב"חריג"' - the
+    "ו" read as one row with both. Two cases now ("וגם"), and the sentence holds at its edges: every combination of the two
+    statuses with a refund, a payment and a receipt is in "החזר בוצע" unless it is a case the sentence names."""
+    rows, case = [], {}
+    for st in (fd.P_REFUNDED, fd.P_PART):
+        for refund in ("", "0", "100", "9000"):
+            for paid in ("4000", ""):
+                for receipt in ("1", "2", "0", "77"):
+                    rows.append(sc(len(rows) + 1, st=st, refund=refund, paid=paid, receipt=receipt, lead=["L1"]))
+                    case[str(len(rows))] = (st, refund, paid, receipt)
+    v = view(rows, leads=[lead("L1")])
+    for r in v["b2c"]["rows"]:
+        st, refund, paid, receipt = case[r["id"]]
+        named = (st == fd.P_PART and refund in ("", "0")) or (refund == "9000") or not paid or receipt == "77"
+        assert r["state"] == ("exception" if named else "refunded"), case[r["id"]]
+    about = fd.B2C_STATES["refunded"]["about"]
+    assert "וגם תקבולים" in about and "נמצאים" not in about
+    for words in ("בלי סכום החזר או עם 0", "גדול מסכום ששולם", "סכום ששולם בהם לא הוקלד", "שהמסך לא מכיר"):
+        assert words in about, words
+
+
+def test_no_word_the_desk_shows_carries_an_internal_task_number():
+    """QA 24.11: "(MON-86)" in the confirmation of "סימון "תשלום הוחזר"", "(MON-43)" in the billing form. A task number is
+    ours, not the person's: it stays in the code's comments. Everything the server sends the page, and both files."""
+    import json
+    import re
+    from app.desk import export as fx
+    v = view([sc(1, credit_approved="100"), sc(2, invoice="", receipt="0")], [b2(1), b2(2, billing="0", payment="2")])
+    said = json.dumps(fd.json_safe(v), ensure_ascii=False)
+    assert not re.search(r"MON-\d", said), re.findall(r"[^\"]{0,40}MON-\d+", said)
+    for book in (fx.b2c_workbook(v["b2c"]["rows"], {}), fx.b2b_workbook(v["b2b"]["rows"], {})):
+        import io
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(book))
+        assert not [c.value for ws in wb for row in ws.iter_rows() for c in row if "MON-" in str(c.value or "")]
+
+
+def test_the_legend_says_what_all_holds_and_its_other_words_plainly():
+    """QA 24.11, the legend's wording: "הכל" (a tile on both tabs, and a file's list) had no entry; "פרטי חשבון" said
+    "...שאינה מקלידה באישור ההחזר", which reads as "which is not typing"; "תווית שהמסך לא מכיר" said a label came "after the
+    screen was written" - "נכתב" is the word of the desk's own writes."""
+    for tab in ("b2c", "b2b"):
+        assert "הכל" in fd.legend_terms(tab)
+        flags = {k: x for k, _t, x in fd.LEGEND_FLAGS[tab]}
+        assert "אחרי שהמסך נבנה" in flags["status_unknown"] and "נכתב" not in flags["status_unknown"]
+    words = dict(fd.LEGEND["b2c"])
+    assert '"ללא תקבול"' in words["הכל"] and "סכום המשבצות" in words["הכל"]
+    assert '"בוטל"' in dict(fd.LEGEND["b2b"])["הכל"] and "בכרטסת שלה" in dict(fd.LEGEND["b2b"])["הכל"]
+    bank = words["פרטי חשבון"]
+    assert "שאינה" not in bank and "ממולאות כשההחזר מאושר" in bank and '"החזר לביצוע"' in bank
+    # each tab's "הכל" holds every row of its tab: the sum of its tiles
+    v = view([sc(1), sc(2, st="0", receipt="0"), sc(3, st="4")], [b2(1), b2(2, billing="2")])
+    whole = v["b2c"]["periods"][0]
+    assert whole["count"] == sum(x["count"] for x in whole["states"].values()) == 3
+    assert len(fd.filter_b2b(v["b2b"], "", "", "")) == sum(x["count"] for x in v["b2b"]["numbers"].values()) == 2
+
+
+def test_a_receipt_sent_for_a_payment_that_brought_no_money_in_is_an_exception_that_says_so():
+    """QA 24.11 (recommended; Nadav may veto it): a payment in "ללא תקבול" whose "שליחת קבלה" is "יצאה", one with an
+    invoice's reference - a receipt went out for money that never came in, and no rule caught it. It is in "חריג, לבדיקה"
+    now, its chip naming the receipt and the row's own status; a receipt not sent, or not relevant, leaves it where it was."""
+    rows, case = [], {}
+    for st in (fd.P_UNPAID, fd.P_PROBLEM, fd.P_SCHOLARSHIP, ""):
+        for receipt in (fd.R_SENT, fd.R_PENDING, fd.R_NOT_RELEVANT, ""):
+            rows.append(sc(len(rows) + 1, st=st, receipt=receipt, paid="2500", invoice="INV-7", lead=["L1"]))
+            case[str(len(rows))] = (st, receipt)
+    v = view(rows, leads=[lead("L1")])
+    for r in v["b2c"]["rows"]:
+        sent = case[r["id"]][1] == fd.R_SENT
+        assert (r["state"], "receipt_no_money" in r["flags"]) == (("exception", True) if sent else ("no_money", False)), \
+            case[r["id"]]
+        assert r["money_in"] == 0 and r["actions"] == []
+    one = next(r for r in v["b2c"]["rows"] if case[r["id"]] == (fd.P_UNPAID, fd.R_SENT))
+    assert fd.row_reasons("b2c", one) == ['שליחת קבלה: יצאה, בסטטוס "לא שולם"']
+    # the counts: the four sent move to "חריג", the twelve others stay in "ללא תקבול", and no money moves with them
+    whole = v["b2c"]["periods"][0]["states"]
+    assert (whole["exception"]["count"], whole["no_money"]["count"], whole["exception"]["money"]) == (4, 12, 0)
+    assert v["b2c"]["money_in"] == 0 and v["checks"]["b2c_states_partition"] is True and v["checks"]["ok"] is True
+    # money that came in, or a status the desk does not know (already "חריג"), is no such case
+    other = view([sc(1, lead=["L1"]), sc(2, st="9", lead=["L1"]), sc(3, st="77", lead=["L1"])], leads=[lead("L1")])
+    assert not any("receipt_no_money" in r["flags"] for r in other["b2c"]["rows"])
+    # said where the desk says why: the exceptions' sentence, its chip in the legend, and "ללא תקבול" says it is not there
+    assert 'שליחת קבלה "יצאה", וסטטוס התשלום "לא שולם"' in fd.B2C_STATES["exception"]["about"]
+    assert 'ושליחת קבלה אינה "יצאה"' in fd.B2C_STATES["no_money"]["about"]
+
+
+def test_every_exception_says_why_in_a_chip_of_its_tabs_legend():
+    """A flag that puts a row in "חריג, לבדיקה" has a chip, so the page's "מה לבדוק" and the Excel files say why."""
+    for tab, exceptions in (("b2c", fd.B2C_EXCEPTIONS), ("b2b", fd.B2B_EXCEPTIONS)):
+        assert exceptions <= {k for k, _t, _x in fd.LEGEND_FLAGS[tab]} and exceptions <= set(fd.FLAG_ORDER), tab

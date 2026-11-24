@@ -12,7 +12,9 @@ import hmac
 import io
 import json
 import logging
+import re
 import zipfile
+from datetime import date
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import openpyxl
@@ -60,8 +62,10 @@ def test_the_files_head_mondays_columns_by_their_monday_names():
                  "תאריך החזר", "סטטוס תשלום", "ערוץ תשלום", "סוג חיוב", "תאריך בקשת ביטול", fd.PLANNED_LABEL,
                  'סטטוס שובר משה"ע'):
         assert name in b2c, name
-    # analiza-metrics' file had "ת.ז" among them, read live for it; this service never reads one
-    assert "ת.ז" not in b2c and len(b2c) == 24
+    # analiza-metrics' file had "ת.ז" among them, read live for it; this service never reads one. QA 24.11 added two:
+    # "מה לבדוק", and the counted refund under the page's word for it, beside monday's "סכום החזר"
+    assert "ת.ז" not in b2c and len(b2c) == 26
+    assert {"מה לבדוק", fd.REFUNDED_WORD} <= set(b2c) and "מה לבדוק" in b2b
     for name in ("מועד דרישת תשלום", "חברה", "עסקה", "קוד קורס", 'סכום לחיוב (ללא מע"מ)', "מצב חיוב", "סטטוס תשלום",
                  "תנאי תשלום", "אסמכתת חשבונית", 'סכום ששולם (כולל מע"מ)'):
         assert name in b2b, name
@@ -101,8 +105,8 @@ def test_the_file_is_the_list_as_filtered_right_to_left_with_types_and_a_total_t
     ws = wb["תקבולים"]
     heads = [x.value for x in ws[1]]
     col = {h: i for i, h in enumerate(heads)}
-    # one column fewer than analiza-metrics' ("ת.ז" is gone): A to X, not A to Y
-    assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:X3"
+    # analiza-metrics' 25 columns but "ת.ז", and "מה לבדוק" and "הוחזרו" since QA 24.11: A to Z
+    assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:Z3"
     # monday's "תאריך תקבול", its source beside it (QA 2.5); the name and "נציג מכירות" side by side, as on Student Charge
     assert heads[:6] == ["תאריך תקבול", "מקור התאריך", "אסמכתת חשבונית", "סטודנט/ית", "נציג מכירות", "סכום ששולם"]
     data = {ws.cell(row=i, column=4).value: [x.value for x in ws[i]] for i in (2, 3)}
@@ -423,3 +427,166 @@ def test_the_files_line_names_the_reader_and_never_a_value(desk, monkeypatch, ca
     assert any("user=1 endpoint=desk-export-file outcome=file results=3" in x for x in lines)
     assert any("user=2 endpoint=desk-export-file outcome=link_expired" in x for x in lines)
     assert not any("תלמיד" in x or "sig=" in x or SECRET in x for x in lines)
+
+
+# --- QA of D2 (24.11): what the file says of a row, and its totals ---------------------------------------------------
+
+def book(desk, body: dict, user: int = 1):  # noqa: F811
+    return openpyxl.load_workbook(io.BytesIO(desk.client.get(export_link(desk, user, **body).json()["url"]).content))
+
+
+def total_row(ws) -> dict:
+    """The row under the list that totals what Excel's filter shows: {header: its formula}, for each column that has one."""
+    heads = [x.value for x in ws[1]]
+    i = next(i for i in range(2, ws.max_row + 1) if ws.cell(row=i, column=2).value == 'סה"כ לפי הסינון')
+    return {h: ws.cell(row=i, column=c).value for c, h in enumerate(heads, start=1)
+            if str(ws.cell(row=i, column=c).value or "").startswith("=SUBTOTAL")}
+
+
+def test_a_row_says_what_to_check_and_its_refund_as_monday_holds_it_beside_the_one_counted(desk, monkeypatch):  # noqa: F811
+    """QA 24.11, 2945713395: 5,000 paid and 6,000 typed as its refund, in "חריג" for "סכום החזר גדול מסכום ששולם". Its file
+    said 5,000 under "סכום החזר" - the counted refund under monday's name - and nothing said what was wrong with it. Now
+    "סכום החזר" is monday's, the refund the page counts is "הוחזרו" beside it, and "מה לבדוק" says on every row that has
+    something what the page's chips say there: all of them, in their order."""
+    linked = {"lead": ["L1"]}
+    served(monkeypatch, snap([sc(1, st="4", paid="5000", refund="6000", **linked), sc(2, invoice="", receipt="0", **linked),
+                              sc(3, st="2", paid="4000", credit_approved="1000", refund="300", refund_date="2026-11-02",
+                                 planned="2026-11-01"),
+                              sc(4, **linked), sc(5, st="4", paid="3000", **linked), sc(6, st="5", paid="0", refund="0", **linked)],
+                             [b2(1, billing="0", payment="1"), b2(2)], leads=[lead("L1")]))
+    heads, rows, info = sheet(desk, {"tab": "b2c", "state": ""}, "תקבולים")
+    one = rows["1"]
+    assert (one["סכום ששולם"], one["סכום החזר"], one[fd.REFUNDED_WORD]) == (5000, 6000, 5000)
+    assert one["שיבוץ"] == "חריג, לבדיקה" and one["מה לבדוק"] == "סכום החזר גדול מסכום ששולם"
+    assert heads.index("מה לבדוק") == heads.index("שיבוץ") + 1
+    assert heads.index(fd.REFUNDED_WORD) == heads.index("סכום החזר") + 1
+    # not only in "חריג": a payment waiting for its receipt says so, as the page's chips do
+    assert rows["2"]["שיבוץ"] == "שולם, שליחת קבלה: טרם" and rows["2"]["מה לבדוק"] == "חסרה אסמכתת חשבונית · שליחת קבלה: טרם"
+    # every chip, where the page shows five and "ועוד 2"; the row's own status in quotes, as on the page
+    assert rows["3"]["מה לבדוק"] == " · ".join([
+        'סכום לזיכוי בסטטוס "יש בעיה"', 'סכום החזר בסטטוס "יש בעיה"', 'תאריך החזר בסטטוס "יש בעיה"',
+        'שליחת קבלה: יצאה, בסטטוס "יש בעיה"', fd.PLANNED_LABEL + " עבר", fd.LAST_DAY_LABEL + " לא ידוע",
+        "בלי הרשמה ובלי ליד מקור"])
+    assert rows["4"]["מה לבדוק"] is None
+    # a full refund with no amount typed: monday holds none, the page counts all that was paid
+    assert (rows["5"]["סכום החזר"], rows["5"][fd.REFUNDED_WORD]) == (None, 3000)
+    # a 0 typed is 0 (QA 24.11, 2829373007: the page says "סכום החזר 0", the file's cell was empty), and counts nothing
+    assert (rows["6"]["סכום החזר"], rows["6"][fd.REFUNDED_WORD]) == (0, None)
+    # the second sheet says what each of the three is
+    assert "כפי שהוא במאנדיי" in info["סכום החזר"] and "כמו במסך" in info[fd.REFUNDED_WORD]
+    assert 'לא רק ב"חריג, לבדיקה"' in info["מה לבדוק"]
+    # the companies' file says it too
+    _h, charges, about = sheet(desk, {"tab": "b2b", "state": ""}, "חיובים")
+    assert charges["1"]["מה לבדוק"] == 'מועד דרישת התשלום עבר · אין תנאי תשלום · "שולם" לפני "חויב"'
+    assert charges["2"]["מה לבדוק"] is None and "מה לבדוק" in about
+
+
+def test_the_students_file_totals_what_the_page_counts_and_never_mondays_refund_as_typed(desk, monkeypatch):  # noqa: F811
+    s = snap([sc(1, st="4", paid="5000", refund="6000"), sc(2, st="4", paid="3000"), sc(3, credit_approved="700"), sc(4)],
+             [b2(1)])
+    served(monkeypatch, s)
+    wb = book(desk, {"tab": "b2c", "state": ""})
+    # a total under each amount the page totals (fd.B2C_TOTALS), and none under monday's refund as typed
+    assert set(total_row(wb["תקבולים"])) == {"סכום ששולם", fd.REFUNDED_WORD, "סכום לזיכוי"}
+    info = {r[0].value: r[1].value for r in wb["פרטים"].iter_rows()}
+    page = fd.list_totals("b2c", fd.filter_b2c(fd.build_view(s, TODAY)["b2c"], "", "", ""))
+    assert (info['סה"כ סכום ששולם'], info['סה"כ ' + fd.REFUNDED_WORD]) == (page["money_in"], page["refunded"]) == (16000, 8000)
+
+
+def test_the_file_writes_what_the_page_writes_for_a_nameless_label_and_a_company_without_terms(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: 2829373007's "ערוץ תשלום" holds a value whose label has no name - the page says "תווית בלי שם", the
+    file's cell was empty; and the ledger file of a company without terms ("משרד העבודה") had "תנאי תשלום" empty on every
+    row, where the page says "אין תנאי תשלום". The file writes what the page writes, in every status column of both."""
+    nameless = sc(1, st="5", paid="0", refund="0", lead=["L1"])
+    for key in ("channel", "ctype", "refund_method"):
+        nameless[fd.SC[key]], nameless[fd.SC[key] + "#"] = "", "17"
+    nameless[fd.SC["status"]] = nameless[fd.SC["receipt"]] = ""    # "הוחזר חלקי" and "יצאה" by their index, no name
+    charge = b2(3, payment="2", due="2026-09-01")
+    charge[fd.B2["billing"]] = charge[fd.B2["payment"]] = ""        # "חויב" and "לא שולם" by their index, no name
+    served(monkeypatch, snap([nameless, sc(2, channel="אשראי", lead=["L1"])],
+                             [charge, b2(4, payment="2", due="2026-09-01", account="A2"),
+                              b2(5, payment="2", due="2026-09-01", account="")],
+                             accounts=[acct("A1", ""), acct("A2", "שוטף+30")], leads=[lead("L1")]))
+    word = fd.UNNAMED_LABEL
+    _h, rows, _i = sheet(desk, {"tab": "b2c", "state": ""}, "תקבולים")
+    assert [rows["1"][h] for h in ("ערוץ תשלום", "סוג חיוב", "אופן החזר", "סטטוס תשלום", "שליחת קבלה")] == [word] * 5
+    assert rows["1"]["סכום החזר"] == 0                              # and its 0 refund is 0, as the page says (item 1)
+    assert (rows["2"]["ערוץ תשלום"], rows["2"]["סטטוס תשלום"], rows["2"]["אופן החזר"]) == ("אשראי", "שולם", None)
+    _h, charges, _i = sheet(desk, {"tab": "b2b", "state": ""}, "חיובים")
+    assert (charges["3"]["מצב חיוב"], charges["3"]["סטטוס תשלום"]) == (word, word)
+    assert (charges["4"]["מצב חיוב"], charges["4"]["סטטוס תשלום"]) == ("חויב", "לא שולם")
+    # the company's terms, or "אין תנאי תשלום" where it has none; a charge with no company has no terms to lack
+    assert [charges[i]["תנאי תשלום"] for i in ("3", "4", "5")] == [fd.NO_TERMS, "שוטף+30", None]
+    _h, ledger, _i = sheet(desk, {"tab": "b2b", "state": "", "customer": "A1"}, "חיובים")
+    assert [r["תנאי תשלום"] for r in ledger.values()] == [fd.NO_TERMS]
+
+
+def test_each_total_is_also_a_number_in_the_second_sheet_the_files_own_as_made(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: the row under the list is a SUBTOTAL formula with no stored value: Excel computes it on opening the file,
+    and a preview (a phone, Quick Look) may show it empty. The formula stays - it follows the filter - and the second sheet
+    gives each total as a number, under a line that says they are the file's as made: the sum of the very cells the
+    formula sums, and for the students the page's own totals of the same list."""
+    s = snap([sc(1, st="4", paid="5000", refund="6000"), sc(2, paid="1234.56", credit_approved="100"), sc(3, st="0", paid="300")],
+             [b2(1, payment="0", amount="10000", paid="5000"), b2(2, payment="0", amount="2000"),
+              b2(3, payment="2", due="2026-09-01"), b2(4, billing="2", amount="50000")])
+    served(monkeypatch, s)
+    for body, name in (({"tab": "b2c", "state": ""}, "תקבולים"), ({"tab": "b2b", "state": ""}, "חיובים"),
+                       ({"tab": "b2b_customers"}, "לפי לקוח")):
+        wb = book(desk, body)
+        ws = wb[name]
+        heads, formulas = [x.value for x in ws[1]], total_row(wb[name])
+        info = [(r[0].value, r[1].value) for r in wb["פרטים"].iter_rows()]
+        keys, said = [k for k, _v in info], dict(info)
+        at = keys.index(fx.FILE_TOTALS[0])
+        assert formulas and '"%s"' % name in said[fx.FILE_TOTALS[0]] and "כפי שהופק" in fx.FILE_TOTALS[0]
+        # one number per formula, in the columns' order, right under the line that says what they are
+        assert keys[at + 1:at + 1 + len(formulas)] == [fx.total_label(h) for h in heads if h in formulas]
+        for h in formulas:
+            cells = [ws.cell(row=i, column=heads.index(h) + 1).value for i in range(2, said["שורות"] + 2)]
+            assert round(said[fx.total_label(h)], 2) == round(sum(v for v in cells if isinstance(v, (int, float))), 2), h
+    page = fd.list_totals("b2c", fd.filter_b2c(fd.build_view(s, TODAY)["b2c"], "", "", ""))
+    wb = book(desk, {"tab": "b2c", "state": ""})
+    said = {r[0].value: r[1].value for r in wb["פרטים"].iter_rows()}
+    assert [said['סה"כ ' + h] for h in ("סכום ששולם", fd.REFUNDED_WORD, "סכום לזיכוי")] == \
+        [float(page[k]) for k in ("money_in", "refunded", "credit_approved")] == [6234.56, 5000, 100]
+    # a header that says "סה"כ" itself is not said twice
+    assert fx.total_label('סה"כ יתרה פתוחה (ללא מע"מ)') == 'סה"כ יתרה פתוחה (ללא מע"מ)'
+
+
+def test_the_companies_file_says_its_paid_totals_leave_out_a_partly_paid_charge_without_its_paid_amount(desk, monkeypatch):  # noqa: F811
+    """The page gives "סכום ששולם (כולל מע"מ)" and "יתרה לגבייה" no total while a partly paid charge in its list has no paid
+    amount typed ("חסר ב-..."); the file's totals of the two, now numbers in its second sheet too, are without it, and say so."""
+    served(monkeypatch, snap([sc(1)], [b2(1, payment="0", amount="10000", paid="5000"), b2(2, payment="0", amount="2000")]))
+    said = {r[0].value: r[1].value for r in book(desk, {"tab": "b2b", "state": "partial"})["פרטים"].iter_rows()}
+    assert said['סה"כ יתרה לגבייה (כולל מע"מ)'] == 6800 and said['סה"כ סכום ששולם (כולל מע"מ)'] == 5000
+    assert said["שימו לב"].startswith('חיוב אחד ב"שולם חלקית" בלי סכום ששולם (כולל מע"מ)') and "בלעדיו" in said["שימו לב"]
+
+    def notes(*charges):
+        rows = fd.filter_b2b(fd.build_view(snap([sc(1)], list(charges)), TODAY)["b2b"], "partial", "", "")
+        return [r[1].value for r in openpyxl.load_workbook(io.BytesIO(fx.b2b_workbook(rows, {})))["פרטים"].iter_rows()
+                if r[0].value == "שימו לב"]
+    assert notes(b2(1, payment="0", amount="10000", paid="5000")) == []
+    assert notes(b2(1, payment="0", amount="1"), b2(2, payment="0", amount="2"))[0].startswith('2 חיובים ב"שולם חלקית"')
+
+
+# the Content-Disposition of RFC 6266 with RFC 8187's ext-value: the ASCII fallback first, then the UTF-8 name, every byte
+# outside attr-char percent-encoded
+DISPOSITION = re.compile(r'attachment; filename="([A-Za-z0-9._-]+)"; filename\*=UTF-8\'\'([A-Za-z0-9!#$&+.^_`|~%-]+)')
+
+
+def test_the_file_name_goes_as_ascii_for_old_clients_and_as_hebrew_in_utf8_for_the_rest(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: a file reached the downloader named "..._24.11.2026.xlsx", without its Hebrew letters. That date is the
+    Hebrew name's alone (the ASCII one says 2026-11-24): the downloader read filename* and dropped the letters itself. The
+    header is pinned here as RFC 6266 has it, through the file's own route too, and a character outside RFC 8187's attr-char
+    is encoded - a "/" went out as it was."""
+    day_ = date(2026, 11, 24)
+    for name, ascii_name in (fx.b2c_file_names("לטיפול", "tasks", "כל התקופה", "", day_),
+                             fx.b2b_file_names("חריג, לבדיקה", "exception", "מרכז רפואי העמק/כללית", "A2", day_),
+                             fx.customers_file_names(day_), ("א/ב ג;ד\"ה'ו(ז)*%.xlsx", "x.xlsx")):
+        m = DISPOSITION.fullmatch(fx.download_headers(name, ascii_name)["Content-Disposition"])
+        assert m and m.group(1) == ascii_name and unquote(m.group(2), encoding="utf-8", errors="strict") == name, name
+    served(monkeypatch, export_snapshot())
+    f = desk.client.get(export_link(desk, state="tasks").json()["url"])
+    m = DISPOSITION.fullmatch(f.headers["content-disposition"])
+    assert m and m.group(1).startswith("finance-students-tasks-all-")
+    assert unquote(m.group(2), encoding="utf-8", errors="strict").startswith("תקבולים-סטודנטים_לטיפול_כל-התקופה_")

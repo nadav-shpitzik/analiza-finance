@@ -231,14 +231,19 @@ _REFUNDED_LABELS = _quoted([PAY[P_REFUNDED], PAY[P_PART]])
 # sentence of "הושלם" was true of refunds to execute too, which are not there)
 _NO_REFUND = "בלי סכום לזיכוי, סכום החזר או תאריך החזר"
 _EXCEPTION_LABEL = "חריג, לבדיקה"
+_NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]])
+# a receipt that went out ("שליחת קבלה: יצאה") on a payment whose status brought no money in (QA 24.11, recommended): no
+# rule caught it, and it sat in "ללא תקבול" with an invoice's reference
+_RECEIPT_NO_MONEY = "שליחת קבלה %s, וסטטוס התשלום %s" % (_q(RECEIPT[R_SENT]), _NO_MONEY_LABELS)
 B2C_STATES = OrderedDict([
     ("exception", {"label": _EXCEPTION_LABEL, "task": True, "money": "money_in",
                    # "לשבץ", not "לספור": a refund above its payment is here and its money IS counted (capped)
                    "about": "תקבולים שהמסך לא יכול לשבץ: תווית בסטטוס תשלום או בשליחת קבלה שהמסך לא מכיר; סכום "
                             "ששולם שלא הוקלד בתקבול שנכנס בו כסף; סכום החזר גדול מסכום ששולם; %s בלי סכום החזר, או "
-                            "עם 0; יש סכום לזיכוי, וסטטוס התשלום אינו %s; או סכום החזר או תאריך החזר, וסטטוס התשלום "
-                            "אינו %s. ליד כל שורה כתוב מה לבדוק."
-                            % (_PART, _quoted([PAY[P_PAID], PAY[P_REFUNDED], PAY[P_PART]]), _REFUNDED_LABELS)}),
+                            "עם 0; יש סכום לזיכוי, וסטטוס התשלום אינו %s; סכום החזר או תאריך החזר, וסטטוס התשלום אינו "
+                            "%s; או %s. ליד כל שורה כתוב מה לבדוק."
+                            % (_PART, _quoted([PAY[P_PAID], PAY[P_REFUNDED], PAY[P_PART]]), _REFUNDED_LABELS,
+                               _RECEIPT_NO_MONEY)}),
     ("refund_to_execute", {"label": "החזר לביצוע", "task": True, "money": "credit_approved",
                            "about": "החזרים שאושרו והכסף עוד לא יצא: יש סכום לזיכוי, סטטוס תשלום עדיין %s, ואין סכום "
                                     "החזר או תאריך החזר. אחרי ההעברה מסמנים %s. בראש הרשימה: החזרים בלי תאריך בקשת "
@@ -257,12 +262,16 @@ B2C_STATES = OrderedDict([
     ("done", {"label": "הושלם", "task": False, "money": "money_in",
               "about": "הכסף נכנס, הקבלה יצאה, ואין החזר פתוח: סטטוס תשלום %s, ושליחת קבלה %s, %s. החזר שאושר "
                        "נמצא ב\"החזר לביצוע\"." % (_PAID, _RECEIPT_DONE, _NO_REFUND)}),
+    # QA 24.11: the sentence said '"הוחזר חלקי" בלי סכום החזר או עם 0, וסכום החזר גדול מסכום ששולם, נמצאים ב"חריג"', and
+    # its "ו" read as one row with both. Two cases now, and every one there is (b2c_state: B2C_EXCEPTIONS on these
+    # statuses, and "הוחזר חלקי" without an amount)
     ("refunded", {"label": "החזר בוצע", "task": False, "money": "refunded",
-                  "about": "סטטוס תשלום %s. %s בלי סכום החזר או עם 0, וסכום החזר גדול מסכום ששולם, נמצאים ב%s."
+                  "about": "סטטוס תשלום %s. %s בלי סכום החזר או עם 0 נמצא ב%s, וגם תקבולים בשני הסטטוסים שסכום החזר "
+                           "בהם גדול מסכום ששולם, שסכום ששולם בהם לא הוקלד, או שבשליחת קבלה שלהם תווית שהמסך לא מכיר."
                            % (_REFUNDED_LABELS, _PART, _q(_EXCEPTION_LABEL))}),
     ("no_money", {"label": "ללא תקבול", "task": False, "money": "money_in",
-                  "about": "שורות שלא נכנס בהן כסף: סטטוס תשלום %s, %s."
-                           % (_or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]]), _NO_REFUND)}),
+                  "about": "שורות שלא נכנס בהן כסף: סטטוס תשלום %s, %s, ושליחת קבלה אינה %s."
+                           % (_NO_MONEY_LABELS, _NO_REFUND, _q(RECEIPT[R_SENT]))}),
 ])
 TASK_STATES = [k for k, v in B2C_STATES.items() if v["task"]]
 
@@ -273,9 +282,15 @@ TASKS_ABOUT = {
     "b2b": "כל מה שמחכה לפעולה, יחד: %s. כל חיוב מופיע פעם אחת, ובעמודה שיבוץ כתוב באיזו משבצת הוא. ממועד דרישת "
            "התשלום הישן לחדש." % _quoted([B2B_STATES[k]["label"] for k in B2B_TASK_STATES], "ו"),
 }
-_NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]])
+# the students' two money figures, the desk's own words for what it counts (the legend says how): what came in, and how
+# much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
+RECEIVED_WORD, REFUNDED_WORD = "התקבלו", "הוחזרו"
 _RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפרטים: היום, או כמה ימים נותרו עד אליו, או כמה ימים עברו מאז.")
-_UNNAMED_WORD = ("תווית בלי שם", "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
+# what the page writes in a status cell that holds a value with no label (`unnamed_labels`), and what the Excel files write
+# there too (QA 24.11: the file's cell was empty); and beside a company whose "תנאי תשלום" is empty, on the page and in
+# the files alike
+UNNAMED_LABEL, NO_TERMS = "תווית בלי שם", "אין תנאי תשלום"
+_UNNAMED_WORD = (UNNAMED_LABEL, "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
                                  "נראה כמו תא ריק. פותחים את השורה במאנדיי ובוחרים תווית.")
 
 # The legend ("מקרא"), per tab, in four parts (QA 11.11, 2.2: words on the screen were missing from it). The page shows it
@@ -291,6 +306,8 @@ LEGEND = {
                   "תקבול בשיבוץ אחד בלבד, הראשון שמתאים בסדר המשבצות, ולכן שום תקבול לא נספר פעמיים. השיבוצים "
                   "מוסברים כאן למטה, וכל אחד גם מעל הרשימה שלו."),
         ("לטיפול", TASKS_ABOUT["b2c"]),
+        ("הכל", "כל התקבולים של התקופה שנבחרה, בכל השיבוצים, גם %s: סכום המשבצות. הרשימה שלו מהחדש לישן."
+                % _q(B2C_STATES["no_money"]["label"])),
         ("יום היצירה", "ליד תאריך תקבול: תאריך תקבול לא הוקלד, ולכן מוצג היום (בשעון ישראל) שבו נוצרה השורה במאנדיי. "
                        "לפיו נקבעים גם החודש והתקופה של התקבול."),
         (LAST_DAY_LABEL, "תאריך בקשת ביטול בהרשמה ועוד %d יום, כמו באפליקציית ההחזרים. ליד התאריך: באיחור של כמה "
@@ -301,13 +318,16 @@ LEGEND = {
         ("החזר", "בפרטים של תקבול שיש בו החזר (ביקש החזר, אושר, בוצע, או שהוקלד בו סכום החזר או תאריך החזר): %s, %s "
                  "והעמודות של ההחזר בשורה. ב%s גם פרטי חשבון." % (LAST_DAY_LABEL, PLANNED_LABEL, _q("החזר לביצוע"))),
         _RELATIVE_DAYS,
-        ("התקבלו · הוחזרו", "סכום ששולם בתקבולים שנכנס בהם כסף (סטטוס תשלום %s), וסכום החזר מתוכם. %s בלי סכום "
-                            "החזר, או עם 0, נספר כהחזר של כל סכום ששולם, והחזר לא נספר מעבר לסכום ששולם."
-                            % (_quoted([PAY[k] for k in (P_PAID, P_ASKED, P_REFUNDED, P_PART)]), _q(PAY[P_REFUNDED]))),
+        ("%s · %s" % (RECEIVED_WORD, REFUNDED_WORD),
+         "סכום ששולם בתקבולים שנכנס בהם כסף (סטטוס תשלום %s), וסכום החזר מתוכם. %s בלי סכום "
+         "החזר, או עם 0, נספר כהחזר של כל סכום ששולם, והחזר לא נספר מעבר לסכום ששולם."
+         % (_quoted([PAY[k] for k in (P_PAID, P_ASKED, P_REFUNDED, P_PART)]), _q(PAY[P_REFUNDED]))),
         ("מחזור", "המחזור שההרשמה מקושרת אליו; כשבהרשמה אין מחזור, המחזור של הליד מקור. יותר ממחזור אחד, או אף "
                   "אחד: בלי מחזור, ופרטי התקבול אומרים למה."),
-        ("פרטי חשבון", "ארבע עמודות הבנק בלוח Student Charge (שם בעל החשבון, בנק, סניף ומספר חשבון), שאינה מקלידה "
-                       "באישור ההחזר. מוצגות רק ב\"החזר לביצוע\"."),
+        # QA 24.11: "...שאינה מקלידה באישור ההחזר" (Inna types them as she approves) read as "which is not typing"
+        ("פרטי חשבון", "ארבע עמודות הבנק בלוח Student Charge: שם בעל החשבון, בנק, סניף ומספר חשבון. הן ממולאות כשההחזר "
+                       "מאושר, ומוצגות רק בפרטים של תקבול ב\"החזר לביצוע\": המסך קורא אותן ממאנדיי בשמך ובהרשאות שלך "
+                       "כשהפרטים נפתחים, והן לא נשמרות במסך."),
         ("סכום מחוק", "סכום ששולם בתקבול שהסטטוס שלו לא מכניס כסף (%s): מוצג כמו שהוקלד, ולא נספר באף סכום."
                       % _NO_MONEY_LABELS),
         _UNNAMED_WORD,
@@ -328,9 +348,11 @@ LEGEND = {
                   "בשיבוץ אחד בלבד, הראשון שמתאים בסדר המשבצות, ולכן שום חיוב לא נספר פעמיים. השיבוצים מוסברים כאן "
                   "למטה, וכל אחד גם מעל הרשימה שלו."),
         ("לטיפול", TASKS_ABOUT["b2b"]),
+        ("הכל", "כל החיובים, בכל השיבוצים, גם %s: סכום המשבצות. הרשימה שלו ממועד דרישת התשלום החדש לישן. כשנבחרה "
+                "חברה: כל החיובים שלה, מהישן לחדש, כמו בכרטסת שלה." % _q(B2B_STATES["cancelled"]["label"])),
         ("מועד פירעון", "לפי תנאי התשלום של החברה: שוטף הוא סוף החודש של מועד דרישת התשלום, ושוטף+30, שוטף+45 "
                         "ושוטף+60 הם סוף החודש ועוד 30, 45 או 60 יום. בלי תנאי תשלום, או \"אחר\": מועד דרישת "
-                        "התשלום עצמו. ליד מועד הפירעון כתובים תנאי התשלום, או \"אין תנאי תשלום\"."),
+                        "התשלום עצמו. ליד מועד הפירעון כתובים תנאי התשלום, או %s." % _q(NO_TERMS)),
         # two entries, not one: "מתוכה בפיגור" is the money of "בפיגור" only, while days late are counted on a partly paid
         # charge too (the hostile review of the QA round: one sentence said both of both)
         ("מתוכה בפיגור", "מתוך היתרה הפתוחה: החיובים ב%s, שמועד הפירעון שלהם עבר. ליד הסכום: כמה ממנו בחברות בלי "
@@ -384,8 +406,9 @@ LEGEND = {
 _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
 LEGEND_FLAGS = {
     "b2c": [
+        # "נבנה", not "נכתב", which is the word of the desk's own writes ("נכתב, מתעדכן"; QA 24.11)
         ("status_unknown", "תווית שהמסך לא מכיר", "בסטטוס תשלום או בשליחת קבלה יש תווית שנוספה במאנדיי אחרי שהמסך "
-                                                    "נכתב. התקבול לא נספר בכסף עד שהמסך יכיר אותה."),
+                                                    "נבנה. התקבול לא נספר בכסף עד שהמסך יכיר אותה."),
         ("credit_on_status", "סכום לזיכוי בסטטוס {status}",
          "יש סכום לזיכוי, כלומר החזר שאושר, וסטטוס התשלום אינו %s: החזר מאושר יוצא משורה בסטטוס %s, %s. %s ו%s "
          "שלו ממשיכים לרוץ." % (_PAID, _PAID, _REFUND_NOT_MARKED, LAST_DAY_LABEL, PLANNED_LABEL)),
@@ -393,6 +416,8 @@ LEGEND_FLAGS = {
          "הוקלד סכום החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
         ("refund_date_on_status", "תאריך החזר בסטטוס {status}",
          "הוקלד תאריך החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
+        ("receipt_no_money", "שליחת קבלה: %s, בסטטוס {status}" % RECEIPT[R_SENT],
+         "%s: קבלה יצאה על כסף שלא נכנס. אחד מהם לא נכון." % _RECEIPT_NO_MONEY),
         ("refund_last_day_passed", LAST_DAY_LABEL + " עבר", "היום האחרון להחזר לפי החוק עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_overdue", PLANNED_LABEL + " עבר", "מועד ההעברה שנקבע באישור עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
@@ -412,7 +437,7 @@ LEGEND_FLAGS = {
         ("unlinked", "בלי הרשמה ובלי ליד מקור", "התקבול לא מקושר להרשמה וגם לא לליד מקור, ולכן אין לו מחזור."),
     ],
     "b2b": [
-        ("status_unknown", "תווית שהמסך לא מכיר", "במצב חיוב או בסטטוס תשלום יש תווית שנוספה במאנדיי אחרי שהמסך נכתב. "
+        ("status_unknown", "תווית שהמסך לא מכיר", "במצב חיוב או בסטטוס תשלום יש תווית שנוספה במאנדיי אחרי שהמסך נבנה. "
                                                     "החיוב לא נספר ביתרה הפתוחה עד שהמסך יכיר אותה."),
         ("invoice_late", "מועד דרישת התשלום עבר", "מועד דרישת התשלום עבר, והחיוב עוד לא חויב."),
         ("no_contract", "בהרצה ללא חוזה", "העסקה בסטטוס \"בהרצה ללא חוזה\"."),
@@ -427,7 +452,7 @@ LEGEND_FLAGS = {
         ("billed_no_invoice", "חסרה אסמכתת חשבונית", "מצב חיוב %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ." % _BILLED),
         ("paid_not_billed", "\"שולם\" לפני \"חויב\"", "סטטוס תשלום %s, ומצב חיוב אינו %s." % (_q(B2B_PAY[BP_PAID]), _BILLED)),
         ("payer_mismatch", "החברה אינה Account משלם בעסקה", "החברה בחיוב אחרת מ-Account משלם בעסקה."),
-        ("terms_missing", "אין תנאי תשלום", "תנאי תשלום של החברה ריק בלוח החברות, ולכן מועד הפירעון הוא מועד דרישת "
+        ("terms_missing", NO_TERMS, "תנאי תשלום של החברה ריק בלוח החברות, ולכן מועד הפירעון הוא מועד דרישת "
                                             "התשלום עצמו, וממנו נספר גם הפיגור. מופיע גם ליד מועד הפירעון, ליד החברה "
                                             "ב\"לפי לקוח\" ובכרטסת שלה."),
         ("amount_missing", "סכום לחיוב (ללא מע\"מ) לא הוקלד", "חיוב לחייב, או שכבר חויב, בלי סכום."),
@@ -467,7 +492,7 @@ LEGEND_MONDAY = {
         ("תנאי תשלום", "עמודה בלוח החברות, של החברה בחיוב. ממנה נספר מועד פירעון."),
         ("ח.פ", "עמודה בלוח החברות, של החברה בחיוב: המספר שעל החשבונית. בכרטסת, תחת פרטי חיוב."),
         ("מפתח חשבשבת", "עמודה בלוח החברות, של החברה בחיוב: מספר הכרטיס שלה בחשבשבת. חברה עם כמה כרטיסים באותו ח.פ "
-                        "מקבלת ח.פ בלי מפתח (MON-43). בכרטסת, תחת פרטי חיוב."),
+                        "מקבלת ח.פ בלי מפתח. בכרטסת, תחת פרטי חיוב."),   # MON-43
         ("חשבונית על שם", "עמודה בלוח החברות, של החברה בחיוב: השם שהחשבונית יוצאת עליו. בכרטסת, תחת פרטי חיוב."),
         ("עסקה", "עמודה בלוח B2B Charge: העסקה בלוח העסקאות (Deals) שהחיוב שייך לה. בפרטים, תחת \"עסקה\": סטטוס, "
                  "שווי עסקה ו-Account משלם שלה."),
@@ -490,6 +515,29 @@ WHAT_TO_CHECK = {
 def flag_legend_term(text: str) -> str:
     """A chip as the legend names it: the row's own status is shown as "...", since it changes from row to row."""
     return text.replace("{status}", "\"...\"")
+
+
+# The order the page lists a row's chips in its "מה לבדוק" column (frontend/finance.js FLAG_ORDER, held to this by
+# tests/test_desk_parity_js.py): contradictions and deadlines first, then what is missing, then the rest. Every chip of
+# LEGEND_FLAGS is in it once. The Excel files list a row's reasons in this order and in the chips' words (`row_reasons`).
+FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
+              "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
+              "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
+              "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
+              "partial_amount_unknown", "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"]
+
+
+def status_word(row: dict) -> str:
+    """A payment's "סטטוס תשלום" inside a chip: in quotes, as monday spells it, or "ריק" (finance.js statusWord)."""
+    return _q(row["status"]) if row.get("status") else "ריק"
+
+
+def row_reasons(tab: str, row: dict) -> list[str]:
+    """What the page's column "מה לבדוק" says of a row (finance.js rowChips): each of its chips, in FLAG_ORDER, in the
+    chip's own words - "{status}" the row's own status (`status_word`). The page shows five and "ועוד N"; this is all of
+    them, for the Excel files, which carry the column on every row (QA 24.11: a row in "חריג" said nothing there)."""
+    texts = {k: t for k, t, _x in LEGEND_FLAGS[tab]}
+    return [texts[k].replace("{status}", status_word(row)) for k in FLAG_ORDER if k in row["flags"] and k in texts]
 
 
 # ---------------------------------------------------------------- actions from the desk (round 3, slice 3, 11.11)
@@ -519,14 +567,14 @@ DESK_ACTIONS = OrderedDict([
     ("refund_done", {"board": "sc", "button": "סימון %s" % _q(PAY[P_REFUNDED]),
                      "steps": [[_set(SC["status"], _PAY_TITLE, PAY, P_REFUNDED)]],
                      "after": "אחרי הכתיבה אפליקציית ההחזרים מעתיקה את סכום לזיכוי לסכום החזר, ואם זו השורה האחרונה של "
-                              "הבקשה, סוגרת אותה (MON-86)."}),
+                              "הבקשה, סוגרת אותה."}),
     # part of it went back: "סכום החזר" first, then the status - when the status lands the amount is there, and the
     # request closes once (MON-86: it closes in either order, a webhook on each column)
     ("refund_partial", {"board": "sc", "button": "סימון %s" % _q(PAY[P_PART]),
                         "steps": [[_typed(SC["refund"], "סכום החזר", "number")],
                                   [_set(SC["status"], _PAY_TITLE, PAY, P_PART)]],
                         "after": "קודם נכתב סכום החזר, ואחריו סטטוס תשלום. אחרי שניהם אפליקציית ההחזרים סוגרת את "
-                                 "הבקשה, אם זו השורה האחרונה שלה (MON-86)."}),
+                                 "הבקשה, אם זו השורה האחרונה שלה."}),
     ("receipt_sent", {"board": "sc", "button": "%s: %s" % (_RECEIPT_TITLE, _q(RECEIPT[R_SENT])),
                       "steps": [[_set(SC["receipt"], _RECEIPT_TITLE, RECEIPT, R_SENT)]]}),
     # the references, typed in place (MON-87 for the credit note)
@@ -541,7 +589,7 @@ DESK_ACTIONS = OrderedDict([
                            _typed(B2["invoice"], "אסמכתת חשבונית", "text", required=False, skip_empty=True),
                            {"column": B2["due"], "title": "מועד דרישת תשלום", "kind": "date", "today": True,
                             "if_empty": True}]],
-                "after": "מועד דרישת תשלום נכתב רק כשהוא ריק במאנדיי, והוא היום (MON-92)."}),
+                "after": "מועד דרישת תשלום נכתב רק כשהוא ריק במאנדיי, והוא היום."}),
     ("b2b_paid", {"board": "b2", "button": "סימון %s" % _q(B2B_PAY[BP_PAID]),
                   "steps": [[_set(B2["payment"], _PAY_TITLE, B2B_PAY, BP_PAID)]]}),
     ("b2b_partial", {"board": "b2", "button": "סימון %s" % _q(B2B_PAY[BP_PARTIAL]),
@@ -630,9 +678,10 @@ ACCOUNT_FIELDS = OrderedDict([
 # form lists them: by days, then "אחר"
 ACCOUNT_TERMS = OrderedDict([("1", "שוטף"), ("2", "שוטף+30"), ("5", "שוטף+45"), ("3", "שוטף+60"), ("4", "אחר")])
 INVOICE_NAME_MAX = 120
-# MON-43 (knowledge ADR-0086, boundaries §2), shown beside מפתח חשבשבת in the form
+# MON-43 (knowledge ADR-0086, boundaries §2), shown beside מפתח חשבשבת in the form - without its number, which is ours,
+# not the person's (QA 24.11). Every task number above (MON-86, MON-92) is kept in a comment for the same reason
 MON43 = ("חברה עם כמה כרטיסים בחשבשבת באותו ח.פ (למשל משרד הביטחון) מקבלת ח.פ בלי מפתח חשבשבת: עמודה אחת לא "
-         "יכולה לשאת כמה כרטיסים, ומקומו של מפתח כזה בעסקה או בחיוב (MON-43).")
+         "יכולה לשאת כמה כרטיסים, ומקומו של מפתח כזה בעסקה או בחיוב.")
 ACCOUNT_HINTS = {"vat_id": "9 ספרות, בלי מקפים", "hash_key": "עד 15 אותיות באנגלית או ספרות",
                  "invoice_name": "עד %d תווים" % INVOICE_NAME_MAX}
 
@@ -773,6 +822,8 @@ def _b2c_row(r: dict, today: date, labels: Counter, asked: date | None = None) -
         flags.append("invoice_missing")
     if s_idx == P_PAID and r_idx in ("", R_PENDING):
         flags.append("receipt_pending")
+    if s_known and s_idx not in MONEY_IN and r_idx == R_SENT:
+        flags.append("receipt_no_money")    # a receipt for money that never came in: the status or the receipt is wrong
     # An approved refund ("סכום לזיכוי") stays somebody's work until its status says the money went back (QA 11.11,
     # 1.1: a refund whose status turned "יש בעיה" fell into "ללא תקבול" and out of every work list). On "שולם" it is a
     # refund to execute; on any other status ("יש בעיה", "לא שולם", "מלגת אנליזה", "ביקש החזר", empty, or a label the
@@ -847,7 +898,7 @@ def _b2c_row(r: dict, today: date, labels: Counter, asked: date | None = None) -
 
 
 B2C_EXCEPTIONS = {"status_unknown", "amount_missing", "refund_exceeds_paid", "credit_on_status", "refund_amount_on_status",
-                  "refund_date_on_status"}
+                  "refund_date_on_status", "receipt_no_money"}
 REFUND_AMOUNT_UNSET = {"refund_amount_missing", "refund_amount_zero"}
 
 
