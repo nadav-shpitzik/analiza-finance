@@ -484,6 +484,27 @@ def test_a_pending_tile_says_no_amount_while_none_is_typed():
     assert tile_of(pending("1500"), "data-b2state", "pending") == "fin-state dot | 2 ממתין לנתונים 1,500 ₪"
 
 
+def test_a_receipt_sent_on_a_payment_that_brought_no_money_in_is_a_red_chip_and_a_sentence_in_its_details():
+    """The server's new exception (QA 24.11, approved by Nadav; branch qa-server): a payment of "ללא תקבול" whose "שליחת קבלה"
+    is "יצאה" sits in "חריג, לבדיקה" with the flag receipt_no_money. Until the page knew it, the row was there with no
+    chip. The page draws it in the server's words - a contradiction between two columns, so red - in the server's order,
+    and says it in the row's details; tests/test_desk_parity_js.py holds the words and the order to the server's."""
+    v = with_row(view(), sc_row("3108", "תלמיד/ה 8", "exception", status="לא שולם", status_idx="0", money_in="0", counted=False,
+                                paid_typed="4000", net="0", receipt="יצאה", receipt_idx="1", flags=["unlinked", "receipt_no_money"]))
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "exception", "period": "", "open": {"3108": True}}}}],
+                monday=world())
+    html = got["steps"][0]["html"]
+    assert cells_of(html, "3108")["notes"] == (
+        '<div class="fin-chips"><span class="fin-chip bad">שליחת קבלה: יצאה, בסטטוס &quot;לא שולם&quot;</span>'
+        '<span class="fin-chip q">בלי הרשמה ובלי ליד מקור</span></div>')
+    assert ("<li>שליחת קבלה &quot;יצאה&quot;, וסטטוס תשלום &quot;לא שולם&quot;: קבלה יצאה על כסף שלא נכנס</li>"
+            in detail_of(html, "3108"))
+    flags = node(LOAD + "console.log(JSON.stringify(F._flags()));", None)
+    assert flags["all"]["receipt_no_money"] == "שליחת קבלה: יצאה, בסטטוס {status}"
+    order = json.loads(re.search(r"var FLAG_ORDER = (\[.*?\]);", PAGE.read_text(encoding="utf-8"), flags=re.S).group(1))
+    assert order[order.index("refund_date_on_status") + 1] == "receipt_no_money"
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of

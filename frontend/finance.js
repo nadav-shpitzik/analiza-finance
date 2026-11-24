@@ -70,6 +70,10 @@
  *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
  *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
  *      with rows as long as real ones (a list's narrowest width went from about 1210 to about 1070 pixels).
+ * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
+ *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
+ *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
+ *      row sat in "חריג" with no chip.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -103,6 +107,8 @@
     refund_exceeds_paid: "סכום החזר גדול מסכום ששולם", amount_missing: "סכום ששולם לא הוקלד",
     credit_on_status: "סכום לזיכוי בסטטוס {status}", refund_amount_on_status: "סכום החזר בסטטוס {status}",
     refund_date_on_status: "תאריך החזר בסטטוס {status}", unlinked: "בלי הרשמה ובלי ליד מקור",
+    /* a receipt that went out on a payment that brought no money in: in "חריג, לבדיקה" (QA 24.11, the server's rule 6) */
+    receipt_no_money: "שליחת קבלה: יצאה, בסטטוס {status}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -112,12 +118,13 @@
   /* the same flag on the other board, where its column has another name */
   var FLAG_ON = { b2: { amount_missing: "סכום לחיוב (ללא מע\"מ) לא הוקלד" } };
   var BAD = { refund_overdue: 1, refund_last_day_passed: 1, refund_exceeds_paid: 1, invoice_late: 1, no_contract: 1,
-    over_deal_value: 1, status_unknown: 1, credit_on_status: 1, refund_amount_on_status: 1, refund_date_on_status: 1 };
+    over_deal_value: 1, status_unknown: 1, credit_on_status: 1, refund_amount_on_status: 1, refund_date_on_status: 1,
+    receipt_no_money: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
     billed_no_invoice: 1, terms_missing: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
-    "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
+    "receipt_no_money", "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
     "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
@@ -649,6 +656,10 @@
     },
     refund_date_on_status: function (r) {
       return "תאריך החזר " + d(r.refund_date) + ", וסטטוס תשלום " + statusWord(r) + " ולא " + REFUNDED_LABELS;
+    },
+    /* a receipt sent on a payment whose status brought no money in: the status or the receipt is wrong */
+    receipt_no_money: function (r) {
+      return "שליחת קבלה \"יצאה\", וסטטוס תשלום " + statusWord(r) + ": קבלה יצאה על כסף שלא נכנס";
     },
     refund_amount_zero: function (r) {
       return "סטטוס תשלום " + statusWord(r) + ", וסכום החזר 0" +
