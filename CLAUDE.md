@@ -82,7 +82,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (`app/desk/gate.py`). It answers counts only. The desk's reading (`app/desk/reading.py`) has the old `read()`'s shape for
   D2; the reader refuses every `NEVER_READ` column for every caller (an ID number, a bank account, an account's business
   number, and every mirror of one: three, read live 24.11), keeps only the cells it asked for, and a linked row answered
-  from another board is a stranger, counted and dropped. The SDK is analiza-metrics' copy (its sha256 is pinned by a test). uvicorn's access line never carries a sessionToken (`NoTokenInAccessLog`).
+  from another board is a stranger, counted and dropped. The SDK is analiza-metrics' copy (its sha256 is pinned by a test). uvicorn's access line never carries a query string (`NoQueryInAccessLog`: a sessionToken, a search, a signed link).
 - **The desk's page (D2):** `frontend/finance.js` and `finance.css` are analiza-metrics' (da671b2), ported faithfully (what
   changed is listed at the top of `finance.js`); `frontend/desk.js` mounts them (the SDK, the sessionToken, `monday` whenever
   monday supplied a context, `board` only for the two charge boards), and `/desk/?check=1` draws D1's self-check

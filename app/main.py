@@ -69,21 +69,22 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=SERVICE, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
-class NoTokenInAccessLog(logging.Filter):
-    """uvicorn's access line carries the path with its query string, and monday may load the desk's page with the
-    sessionToken in it. The value is replaced before the line is written (rule 2 of CLAUDE.md, for this token too)."""
-
-    _RE = re.compile(r"((?:^|[?&])sessiontoken=)[^&\s]*", re.IGNORECASE)
+class NoQueryInAccessLog(logging.Filter):
+    """uvicorn's access line carries the path with its query string, and on this service a query can carry what no log may
+    keep: the sessionToken monday may load the page with, a search's text (a student's name, `/api/desk/totals?q=`, sent at
+    every pause in typing), or a signed export link (a two-minute key to a file of names and money). So the whole query is
+    replaced before the line is written, whatever it holds (D2's review: hiding `sessionToken=` alone left the other two).
+    The path stays: which route was asked is what the line is for."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
-        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str) and "sessiontoken=" in args[2].lower():
-            record.args = args[:2] + (self._RE.sub(r"\1[redacted]", args[2]),) + args[3:]
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str) and "?" in args[2]:
+            record.args = args[:2] + (args[2].split("?", 1)[0] + "?[redacted]",) + args[3:]
         return True
 
 
 # uvicorn configures its loggers before it imports the app, so a filter added here stays
-logging.getLogger("uvicorn.access").addFilter(NoTokenInAccessLog())
+logging.getLogger("uvicorn.access").addFilter(NoQueryInAccessLog())
 
 # frame-ancestors is what lets monday embed the desk's page at all, and it must be a real header (a <meta> tag is ignored
 # for it); the page loads no plugin and sets no base. An /api answer is one person's and is never kept by a cache.

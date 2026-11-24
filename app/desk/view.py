@@ -51,6 +51,7 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .reading import TAB_BOARDS
 from .reading import (AC, ACCOUNTS_BOARD, B2, B2B_CHARGE, BOARDS, CO, COHORTS_BOARD, DEALS_BOARD, DL, EN,  # noqa: F401
                       ENROLLMENTS_BOARD, LD, LEADS_BOARD, SC, STUDENT_CHARGE, _uniq, cohort_ids, enrollment_cohorts,
                       enrollment_ids, lead_ids, lead_names_of, lead_rep, lead_reps_of, leads_deciding)
@@ -1451,6 +1452,15 @@ def build_view(snapshot: dict, today: date) -> dict:
               and checks["b2c_states_partition"] and checks["b2c_money_ties"] and checks["b2c_refunds_tie"])
     b2b_ok = (checks["b2b_rows_read"] == checks["b2b_items_count"] == checks["b2b_rows_placed"] == checks["b2b_rows_unique"]
               and checks["b2b_states_partition"] and checks["b2b_money_ties"])
+    # The reading's own counts (app/desk/reading.py `checks`): a board read short, a row answered from another board, or a
+    # row of the right board without a column it was asked for, makes its tab not whole here too. analiza-metrics could
+    # not hold such a reading; this one can, and the Excel file already said so while the page drew it whole (D2's review).
+    read_checks = snapshot.get("checks") or {}
+    if read_checks:
+        checks["b2c_read_whole"] = all((read_checks.get(k) or {}).get("ok") is True for k in TAB_BOARDS["b2c"])
+        checks["b2b_read_whole"] = all((read_checks.get(k) or {}).get("ok") is True for k in TAB_BOARDS["b2b"])
+        b2c_ok = b2c_ok and checks["b2c_read_whole"]
+        b2b_ok = b2b_ok and checks["b2b_read_whole"]
     checks.update({"b2c_ok": bool(b2c_ok), "b2b_ok": bool(b2b_ok), "ok": bool(b2c_ok and b2b_ok)})
 
     notes.update(Counter(f for x in srows for f in x["flags"] if f in ("refund_exceeds_paid", "amount_missing")))

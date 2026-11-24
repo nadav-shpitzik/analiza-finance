@@ -727,7 +727,7 @@ def test_the_access_log_never_carries_a_session_token():
                                    ("1.2.3.4:5", "GET", path, "1.1", 200), None)
         assert all(f.filter(record) for f in logging.getLogger("uvicorn.access").filters)
         line = record.getMessage()
-        assert tok not in line and "[redacted]" in line and ("boardId=1" in line or "boardId" not in path)
+        assert tok not in line and line.endswith(path.split("?")[0] + '?[redacted] HTTP/1.1" 200')
 
 
 
@@ -889,7 +889,7 @@ def test_the_access_log_keeps_no_piece_of_the_token():
     for f in logging.getLogger("uvicorn.access").filters:
         f.filter(record)
     line = record.getMessage()
-    assert not any(part in line for part in tok.split(".")) and "x=1" in line
+    assert not any(part in line for part in tok.split(".")) and "x=1" not in line and "/desk/?[redacted]" in line
 
 
 def test_the_security_headers_are_exactly_these(desk):
