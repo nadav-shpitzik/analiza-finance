@@ -73,6 +73,10 @@
  * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
  *      carries a chevron at its start (after the box where it has one), lit while the row is pointed at and turned while
  *      its details are open, beside the pointer and the hover it had: a narrow column, and every list still fits (QA 4).
+ * QA 9 The table scrolled inside a frame of 78% of the view (about six rows inside monday) in a page that scrolls too. A
+ *      table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view (the
+ *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
+ *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
@@ -2570,9 +2574,9 @@
   function listKey() {
     return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.b2.state, state.b2.view, state.b2.customer, state.query]);
   }
-  /* A table taller or wider than its box scrolls inside it (QA 2.8), and a redraw builds it anew: opening a row's details,
-     or a newer reading landing, must not throw the reader back to the box's top. Each list keeps its scroll across a
-     redraw; another list starts at its top. */
+  /* A table wider than its frame scrolls inside it (QA 2.8; since QA 9 only such a table, fitFrames), and a redraw builds it
+     anew: opening a row's details, or a newer reading landing, must not throw the reader back to the box's top. Each list
+     keeps its scroll across a redraw; another list starts at its top. */
   function tableScrolls() {
     var out = {};
     [].forEach.call(root.querySelectorAll ? root.querySelectorAll(".fin-tw[data-list]") : [], function (el) {
@@ -2580,12 +2584,28 @@
     });
     return out;
   }
+  /* QA 9 (24.11): one scroll. A table that fits its frame scrolls with the page, its header held at the top of the view;
+     one wider than its frame (a narrow view) gets the frame that scrolls (fin-tw-x, as tall as the view), so its sideways
+     scrollbar is in reach. Measured after every drawing, and again when the view's width changes */
+  function fitFrames() {
+    [].forEach.call(root && root.querySelectorAll ? root.querySelectorAll(".fin-tw") : [], function (el) {
+      var t = el.querySelector("table");
+      el.classList.remove("fin-tw-x");
+      if (t && t.offsetWidth > el.clientWidth + 1) { el.classList.add("fin-tw-x"); }
+    });
+  }
+  var refit = 0;
+  function onResize() {
+    if (refit || !VIEW) { return; }
+    refit = (window.requestAnimationFrame || setTimeout)(function () { refit = 0; fitFrames(); });
+  }
   function render() {
     if (!VIEW) { noReading(); return; }        /* D2: nothing read on the server yet */
     var keep = focusKey(), scrolls = tableScrolls(), a = document.activeElement;
     /* an input being typed into keeps its caret: a redraw (a total landing, a newer reading) builds it anew */
     var caret = keep && a && a.tagName === "INPUT" && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
     paint();
+    fitFrames();
     [].forEach.call(root.querySelectorAll ? root.querySelectorAll(".fin-tw[data-list]") : [], function (el) {
       var at = scrolls[el.getAttribute("data-list")];
       if (at) { el.scrollTop = at[0]; el.scrollLeft = at[1]; }
@@ -2951,6 +2971,8 @@
     document.addEventListener("visibilitychange", onVisible);
     /* the view's window taking the focus back: after monday's item card closes over it, the first click in the view */
     window.addEventListener("focus", onFocus);
+    /* monday's sidebar opened or closed, the window resized: whether each table still fits its frame (QA 9) */
+    window.addEventListener("resize", onResize);
     /* round 3, slice 3: whether this person may write from here (monday's context) - asked beside the first reading, never
        in its way: desk.js shows the desk when this promise settles, and monday may be slow to answer, or not answer */
     var first = load(false);

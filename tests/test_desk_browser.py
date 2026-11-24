@@ -500,3 +500,36 @@ def test_a_row_says_it_opens_its_details_by_its_pointer_its_hover_and_a_chevron_
     assert pointed["color"] != still["color"]                                   # the chevron lights while the row is pointed at
     assert opened["turn"].startswith("matrix(-1, ") and opened["turn"].endswith("0, 0)")    # turned half a circle
     assert got["steps"]["total"][0][0] == "k-date" and got["steps"]["total"][0][1].startswith('סה"כ')
+
+
+def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_its_frame_takes_the_views_height(serve):
+    """QA 9 (24.11): on a 748-pixel-high screen the table scrolled inside a short frame (about six rows) inside a page that
+    scrolls too. Where the table fits its frame, the page has the one scroll and the table's header stays at the top of the
+    view as the page scrolls; at a narrow width (half of 1366), where the table is wider than its frame, the frame that
+    scrolls - sideways too - is as tall as the view."""
+    base, _log = serve(long_view())
+    got = qa_visit(r"""
+  await page.click('[data-bstate=""]');
+  await page.waitForSelector(".fin-tw tbody tr");
+  out.steps[at] = await page.evaluate(() => {
+    const tw = document.querySelector(".fin-tw"), t = tw.querySelector("table");
+    return { inner: tw.scrollHeight > tw.clientHeight + 1, overflowY: getComputedStyle(tw).overflowY,
+      sideways: tw.scrollWidth > tw.clientWidth + 1, frame: tw.clientHeight, table: Math.round(t.getBoundingClientRect().height),
+      view: window.innerHeight, page: document.documentElement.scrollHeight > window.innerHeight };
+  });
+  const top = await page.$eval(".fin-tw", (tw) => tw.getBoundingClientRect().top + window.scrollY);
+  await page.evaluate((y) => window.scrollTo(0, y), top + 200);
+  await page.waitForTimeout(100);
+  out.steps[at + " scrolled"] = await page.evaluate(() => ({
+    head: Math.round(document.querySelector(".fin-tw thead").getBoundingClientRect().top),
+    frame: Math.round(document.querySelector(".fin-tw").getBoundingClientRect().top) }));
+""", base, fake_sdk({}), sizes=((1280, 748), (683, 748)))
+    assert got["errors"] == []
+    wide, narrow = got["steps"]["1280x748"], got["steps"]["683x748"]
+    # wide: the table taller than the view scrolls with the page - no frame that scrolls - and its header stays on top
+    assert wide["table"] > wide["view"] and wide["page"], wide
+    assert not wide["inner"] and wide["overflowY"] == "visible" and not wide["sideways"], wide
+    scrolled = got["steps"]["1280x748 scrolled"]
+    assert scrolled["frame"] < 0 and scrolled["head"] == 0, scrolled
+    # narrow: the table wider than its frame scrolls in a frame as tall as the view (it was 78% of it)
+    assert narrow["sideways"] and narrow["overflowY"] == "auto" and narrow["frame"] >= 0.9 * narrow["view"], narrow
