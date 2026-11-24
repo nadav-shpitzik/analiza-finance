@@ -3,7 +3,10 @@
 
 Ported on 24.11 from analiza-metrics app/usage.py at `da671b2`, faithfully: the same kinds, detail keys, ranges and
 alphabets, so a row written here reads like a row written there, and the history D5 imports (the desk move plan §4.4) is
-one vocabulary. New here: this paragraph, and the note on `bill`, the one kind the ported page no longer sends.
+one vocabulary. New here: this paragraph, and the note on `bill`, the one kind the ported page no longer sends. Since the
+review of D2 (a32395f), three alphabets are narrower than analiza-metrics', each to what its page sends: the visit's id is
+letters only, a word carries no number (WORD_RUN, WORD_DIGITS), and a period is a period key the page can name - so a
+digit run long enough to be an ID number has no place left in a row.
 
 WHY. Nadav, 16.11: "בוא נוודא שיש לנו גם נתוני שימוש שלה שם כדי שנוכל לשפר את זה עם הזמן" - the finance desk is built
 for one bookkeeper (Chava), and what she opens, searches, misses and leaves for monday is what tells the next round what
@@ -16,8 +19,8 @@ kind's own details. Every kind and every detail key is in the lists below; anyth
 
 WHAT AN EVENT NEVER IS. A name, an amount, the search's text, an ID number, a bank account, an account or an item id.
 That is the page's rule, and this module makes it the table's too: a detail is a number in a range of its own, a yes or
-no, a period key, or a word that starts with a lowercase Latin letter - so a number, a Hebrew name or a free text that a
-page tried to send is refused here, counted, and never written. A search is kept as its shape only: how many
+no, a period key, or a word that starts with a lowercase Latin letter and carries no number - so a number, a Hebrew name
+or a free text that a page tried to send is refused here, counted, and never written. A search is kept as its shape only: how many
 characters, which kind of characters, how many rows it found with the filters and without.
 """
 from __future__ import annotations
@@ -69,9 +72,19 @@ NUMBERS = {"ms": 600_000, "len": 200, "results": 100_000, "unfiltered": 100_000,
 FLAGS = frozenset({"refreshing", "open"})
 # a word: a state, an action, a code, a kind of search - lowercase Latin, digits and "_" after a first letter, or empty
 WORD = re.compile(r"(?:[a-z][a-z0-9_]{0,39})?")
-# a period key as app/desk/view.py b2c_periods names it: "", "2026-10", "2026-09+2026-10"
-PERIOD = re.compile(r"(?:\d{4}-\d{2}(?:\+\d{4}-\d{2})?)?")
-SESSION = re.compile(r"[a-z0-9]{8,40}")
+# ... and never a number: no run of WORD_RUN digits or more, and at most WORD_DIGITS digits in all, so an ID number, an item
+# id or an amount cannot pass behind a letter (id039482716, item5093448677, a4000), nor cut by "_" as the page's useWord
+# makes of a message (id_039_482_716). The vocabulary's own words carry short runs: b2c, d31_60, http_503 (D2's review)
+WORD_RUN = 4
+WORD_DIGITS = 6
+_DIGIT_RUN = re.compile(r"\d{%d}" % WORD_RUN)
+# a period key exactly as app/desk/view.py b2c_periods names one: "" (the whole span), a month ("2026-10"), or a VAT
+# period, an odd month and the next of one year ("2026-09+2026-10") - nothing else the page can send (D2's review: any
+# four digits, a dash and two more passed, so a number could be sent as a "period")
+PERIOD = re.compile(r"(?:20\d{2}-(?:0[1-9]|1[0-2])|(20\d{2})-(?:01\+\1-02|03\+\1-04|05\+\1-06|07\+\1-08|09\+\1-10|11\+\1-12))?")
+# the visit's random id: letters only (D2's review: with digits, an ID number passed as a session and was kept on every row
+# of its batch). frontend/finance.js useSession makes sixteen
+SESSION = re.compile(r"[a-z]{8,40}")
 
 
 class Refused(Exception):
@@ -82,6 +95,12 @@ class Refused(Exception):
         self.code = code
 
 
+def word_ok(v: Any) -> bool:
+    """A word of the vocabulary: WORD's alphabet, and no number in it (WORD_RUN, WORD_DIGITS)."""
+    return (isinstance(v, str) and WORD.fullmatch(v) is not None and _DIGIT_RUN.search(v) is None
+            and sum(ch.isdigit() for ch in v) <= WORD_DIGITS)
+
+
 def _value_ok(key: str, v: Any) -> bool:
     if key in NUMBERS:
         return type(v) is int and 0 <= v <= NUMBERS[key]
@@ -89,7 +108,7 @@ def _value_ok(key: str, v: Any) -> bool:
         return type(v) is bool
     if key == "period":
         return isinstance(v, str) and PERIOD.fullmatch(v) is not None
-    return isinstance(v, str) and WORD.fullmatch(v) is not None
+    return word_ok(v)
 
 
 def clean_event(e: Any) -> dict | None:
@@ -99,7 +118,7 @@ def clean_event(e: Any) -> dict | None:
     kind, t, tab, st, d = e.get("k"), e.get("t", 0), e.get("tab", ""), e.get("st", ""), e.get("d", {})
     if kind not in KINDS or type(t) is not int or t < 0 or tab not in TABS:
         return None
-    if not isinstance(st, str) or WORD.fullmatch(st) is None or not isinstance(d, dict):
+    if not word_ok(st) or not isinstance(d, dict):
         return None
     allowed = KINDS[kind]
     if any(k not in allowed or not _value_ok(k, v) for k, v in d.items()):

@@ -43,6 +43,8 @@
  *     says monday's activity log keeps who wrote, the before and the after.
  * And from the adversarial review of 62fd993: a reading whose view could not be built (`view_error`) is said as the
  * server's fault, with no refresh offered as its fix; an item's link (href) goes through esc() like every other value.
+ * From the adversarial review of a32395f: the visit's id for the usage events is sixteen letters, never a digit
+ * (useSession; the server refuses any other).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1779,14 +1781,17 @@
      sending for the visit, quietly: never a word on the screen. */
   var USE_MAX = 20, USE_FLUSH_MS = 30000, USE_SEARCH_MS = 1500;
   var USE = { q: [], timer: null, session: "", at: 0, off: false, opened: false, search: null, lastQuery: "" };
+  /* the visit's id: sixteen random letters, never a digit (app/desk/usage.py SESSION: with digits, an ID number could pass
+     as one; D2's review) */
   function useSession() {
-    var s = "";
+    var s = "", i;
     try {
       var a = new Uint8Array(16);
       window.crypto.getRandomValues(a);
-      s = [].map.call(a, function (b) { return (b % 36).toString(36); }).join("");
+      s = [].map.call(a, function (b) { return String.fromCharCode(97 + b % 26); }).join("");
     } catch (e) { s = ""; }
-    return s || (Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^a-z0-9]/g, "").slice(0, 24);
+    if (!s) { for (i = 0; i < 16; i++) { s += String.fromCharCode(97 + Math.floor(Math.random() * 26)); } }
+    return s;
   }
   /* an error as a usage word: lowercase Latin, digits and "_", starting with a letter (app/usage.py WORD) */
   function useWord(x) { return String(x || "").toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^[^a-z]+/, "").slice(0, 40); }

@@ -1257,6 +1257,8 @@ def test_the_page_sends_its_usage_in_closed_words_and_never_a_name_an_amount_a_s
     assert batches and batches[-1]["keep"] is True                       # the last one sent as the view went out of sight
     events = [e for b in batches for e in b["body"]["events"]]
     assert {b["body"]["desk"] for b in batches} == {"finance"} and len({b["body"]["session"] for b in batches}) == 1
+    # the visit's id is sixteen letters, never a digit (D2's review: the server refuses any other)
+    assert re.fullmatch(r"[a-z]{16}", batches[0]["body"]["session"]) and usage.SESSION.fullmatch(batches[0]["body"]["session"])
     kinds = [e["k"] for e in events]
     for k in ("open", "state", "row", "search", "id_shown", "id_copied", "legend", "open_item", "export",
               "period", "tab", "hide"):

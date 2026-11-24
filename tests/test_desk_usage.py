@@ -28,7 +28,7 @@ from tests.test_desk import SECRET, desk, session_token  # noqa: F401 - `desk` i
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "frontend" / "finance.js"
-SESSION_ID = "k3j4h5g6f7d8s9a0"
+SESSION_ID = "kqjwhxgyfzdtsuae"  # letters only, as the page makes one (D2's review)
 READER = 7301
 DUMMY_URL = "postgresql://nobody@127.0.0.1:1/never"  # never connected to: the writer is replaced in these tests
 STORE_HEALTH = main.store_health  # the real one: the `use` fixture stubs it, so /health reads no database there
@@ -70,12 +70,34 @@ def test_a_well_formed_batch_becomes_rows_of_the_readers_own_id():
     ev("act", action="refund_done", phase="done", amount="4000"),
     ev("open", ms=1.5), ev("open", ms=-1), ev("open", ms=True), ev("open", ms=600_001),   # a float, below, a bool, above
     ev("legend", open="yes"), ev("period", period="אוקטובר"), ev("period", period="2026-10; drop"),
+    # D2's review: a number behind a letter or cut by "_" is no word, and a period is one the page can name
+    ev("state", st="id039482716"), ev("load_failed", code="id_039_482_716"), ev("act", action="a4000", phase="done"),
+    ev("period", period="039482716"), ev("period", period="0394-82+7160-00"), ev("period", period="2026-13"),
+    ev("period", period="2026-10+2026-11"), ev("period", period="2026-09+2025-10"), ev("period", period="1999-10"),
     ev("teleport"), ev("state", st="Tasks"), ev("state", st="123"), ev("state", tab="b2x"),
     {"k": "state", "t": -5}, {"k": "state", "t": "5"}, {"k": "state", "extra": 1}, "state", None,
 ])
 def test_an_event_outside_the_lists_is_refused_and_the_rest_of_its_batch_is_kept(event):
     rows, refused = usage.clean_batch(batch(ev("state"), event, ev("hide")), 7)
     assert refused == 1 and [r["kind"] for r in rows] == ["state", "hide"]
+
+
+def test_every_period_and_word_with_digits_the_page_can_send_passes():
+    """The other side of D2's review's narrower alphabets: every period key app/desk/view.py b2c_periods can name (the
+    whole span, each month, each VAT pair of a year), and the words with digits the page sends - the tab, the aging bands
+    of the companies' list, an HTTP status the page names a failed load by - all pass."""
+    from app.desk import view as fd
+
+    months = ["%d-%02d" % (y, m) for y in (2025, 2026) for m in range(1, 13)]
+    keys = [p["key"] for p in fd.b2c_periods([{"month": m, "person": "p", "money_in": 0, "refunded": 0, "state": ""}
+                                               for m in months])]
+    assert "" in keys and "2026-11+2026-12" in keys and "2025-01+2025-02" in keys and len(keys) == 1 + 24 + 12
+    for key in keys:
+        assert usage._value_ok("period", key), key
+    for word in ["b2c", "b2b", *fd.AGE_BANDS, "http_503", "http_429", "refund_done", "not_a_board_member", ""]:
+        assert usage.word_ok(word), word
+    rows, refused = usage.clean_batch(batch(ev("state", st="d31_60"), ev("load_failed", code="http_503")), 7)
+    assert refused == 0 and len(rows) == 2
 
 
 @pytest.mark.parametrize("body", [
