@@ -462,10 +462,11 @@ def test_a_row_says_what_to_check_and_its_refund_as_monday_holds_it_beside_the_o
     assert heads.index(fd.REFUNDED_WORD) == heads.index("סכום החזר") + 1
     # not only in "חריג": a payment waiting for its receipt says so, as the page's chips do
     assert rows["2"]["שיבוץ"] == "שולם, שליחת קבלה: טרם" and rows["2"]["מה לבדוק"] == "חסרה אסמכתת חשבונית · שליחת קבלה: טרם"
-    # every chip, where the page shows five and "ועוד 1"; the row's own status in quotes, as on the page
+    # every chip, where the page shows five and "ועוד 2"; the row's own status in quotes, as on the page
     assert rows["3"]["מה לבדוק"] == " · ".join([
         'סכום לזיכוי בסטטוס "יש בעיה"', 'סכום החזר בסטטוס "יש בעיה"', 'תאריך החזר בסטטוס "יש בעיה"',
-        fd.PLANNED_LABEL + " עבר", fd.LAST_DAY_LABEL + " לא ידוע", "בלי הרשמה ובלי ליד מקור"])
+        'שליחת קבלה: יצאה, בסטטוס "יש בעיה"', fd.PLANNED_LABEL + " עבר", fd.LAST_DAY_LABEL + " לא ידוע",
+        "בלי הרשמה ובלי ליד מקור"])
     assert rows["4"]["מה לבדוק"] is None
     # a full refund with no amount typed: monday holds none, the page counts all that was paid
     assert (rows["5"]["סכום החזר"], rows["5"][fd.REFUNDED_WORD]) == (None, 3000)

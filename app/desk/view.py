@@ -231,14 +231,19 @@ _REFUNDED_LABELS = _quoted([PAY[P_REFUNDED], PAY[P_PART]])
 # sentence of "הושלם" was true of refunds to execute too, which are not there)
 _NO_REFUND = "בלי סכום לזיכוי, סכום החזר או תאריך החזר"
 _EXCEPTION_LABEL = "חריג, לבדיקה"
+_NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]])
+# a receipt that went out ("שליחת קבלה: יצאה") on a payment whose status brought no money in (QA 24.11, recommended): no
+# rule caught it, and it sat in "ללא תקבול" with an invoice's reference
+_RECEIPT_NO_MONEY = "שליחת קבלה %s, וסטטוס התשלום %s" % (_q(RECEIPT[R_SENT]), _NO_MONEY_LABELS)
 B2C_STATES = OrderedDict([
     ("exception", {"label": _EXCEPTION_LABEL, "task": True, "money": "money_in",
                    # "לשבץ", not "לספור": a refund above its payment is here and its money IS counted (capped)
                    "about": "תקבולים שהמסך לא יכול לשבץ: תווית בסטטוס תשלום או בשליחת קבלה שהמסך לא מכיר; סכום "
                             "ששולם שלא הוקלד בתקבול שנכנס בו כסף; סכום החזר גדול מסכום ששולם; %s בלי סכום החזר, או "
-                            "עם 0; יש סכום לזיכוי, וסטטוס התשלום אינו %s; או סכום החזר או תאריך החזר, וסטטוס התשלום "
-                            "אינו %s. ליד כל שורה כתוב מה לבדוק."
-                            % (_PART, _quoted([PAY[P_PAID], PAY[P_REFUNDED], PAY[P_PART]]), _REFUNDED_LABELS)}),
+                            "עם 0; יש סכום לזיכוי, וסטטוס התשלום אינו %s; סכום החזר או תאריך החזר, וסטטוס התשלום אינו "
+                            "%s; או %s. ליד כל שורה כתוב מה לבדוק."
+                            % (_PART, _quoted([PAY[P_PAID], PAY[P_REFUNDED], PAY[P_PART]]), _REFUNDED_LABELS,
+                               _RECEIPT_NO_MONEY)}),
     ("refund_to_execute", {"label": "החזר לביצוע", "task": True, "money": "credit_approved",
                            "about": "החזרים שאושרו והכסף עוד לא יצא: יש סכום לזיכוי, סטטוס תשלום עדיין %s, ואין סכום "
                                     "החזר או תאריך החזר. אחרי ההעברה מסמנים %s. בראש הרשימה: החזרים בלי תאריך בקשת "
@@ -265,8 +270,8 @@ B2C_STATES = OrderedDict([
                            "בהם גדול מסכום ששולם, שסכום ששולם בהם לא הוקלד, או שבשליחת קבלה שלהם תווית שהמסך לא מכיר."
                            % (_REFUNDED_LABELS, _PART, _q(_EXCEPTION_LABEL))}),
     ("no_money", {"label": "ללא תקבול", "task": False, "money": "money_in",
-                  "about": "שורות שלא נכנס בהן כסף: סטטוס תשלום %s, %s."
-                           % (_or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]]), _NO_REFUND)}),
+                  "about": "שורות שלא נכנס בהן כסף: סטטוס תשלום %s, %s, ושליחת קבלה אינה %s."
+                           % (_NO_MONEY_LABELS, _NO_REFUND, _q(RECEIPT[R_SENT]))}),
 ])
 TASK_STATES = [k for k, v in B2C_STATES.items() if v["task"]]
 
@@ -277,7 +282,6 @@ TASKS_ABOUT = {
     "b2b": "כל מה שמחכה לפעולה, יחד: %s. כל חיוב מופיע פעם אחת, ובעמודה שיבוץ כתוב באיזו משבצת הוא. ממועד דרישת "
            "התשלום הישן לחדש." % _quoted([B2B_STATES[k]["label"] for k in B2B_TASK_STATES], "ו"),
 }
-_NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]])
 # the students' two money figures, the desk's own words for what it counts (the legend says how): what came in, and how
 # much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
 RECEIVED_WORD, REFUNDED_WORD = "התקבלו", "הוחזרו"
@@ -412,6 +416,8 @@ LEGEND_FLAGS = {
          "הוקלד סכום החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
         ("refund_date_on_status", "תאריך החזר בסטטוס {status}",
          "הוקלד תאריך החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
+        ("receipt_no_money", "שליחת קבלה: %s, בסטטוס {status}" % RECEIPT[R_SENT],
+         "%s: קבלה יצאה על כסף שלא נכנס. אחד מהם לא נכון." % _RECEIPT_NO_MONEY),
         ("refund_last_day_passed", LAST_DAY_LABEL + " עבר", "היום האחרון להחזר לפי החוק עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_overdue", PLANNED_LABEL + " עבר", "מועד ההעברה שנקבע באישור עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
@@ -514,7 +520,7 @@ def flag_legend_term(text: str) -> str:
 # The order the page lists a row's chips in its "מה לבדוק" column (frontend/finance.js FLAG_ORDER, held to this by
 # tests/test_desk_parity_js.py): contradictions and deadlines first, then what is missing, then the rest. Every chip of
 # LEGEND_FLAGS is in it once. The Excel files list a row's reasons in this order and in the chips' words (`row_reasons`).
-FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
+FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
               "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
               "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
               "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
@@ -816,6 +822,8 @@ def _b2c_row(r: dict, today: date, labels: Counter, asked: date | None = None) -
         flags.append("invoice_missing")
     if s_idx == P_PAID and r_idx in ("", R_PENDING):
         flags.append("receipt_pending")
+    if s_known and s_idx not in MONEY_IN and r_idx == R_SENT:
+        flags.append("receipt_no_money")    # a receipt for money that never came in: the status or the receipt is wrong
     # An approved refund ("סכום לזיכוי") stays somebody's work until its status says the money went back (QA 11.11,
     # 1.1: a refund whose status turned "יש בעיה" fell into "ללא תקבול" and out of every work list). On "שולם" it is a
     # refund to execute; on any other status ("יש בעיה", "לא שולם", "מלגת אנליזה", "ביקש החזר", empty, or a label the
@@ -890,7 +898,7 @@ def _b2c_row(r: dict, today: date, labels: Counter, asked: date | None = None) -
 
 
 B2C_EXCEPTIONS = {"status_unknown", "amount_missing", "refund_exceeds_paid", "credit_on_status", "refund_amount_on_status",
-                  "refund_date_on_status"}
+                  "refund_date_on_status", "receipt_no_money"}
 REFUND_AMOUNT_UNSET = {"refund_amount_missing", "refund_amount_zero"}
 
 
