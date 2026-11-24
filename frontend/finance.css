@@ -1,0 +1,354 @@
+/* The finance desk (knowledge backlog 0280). Everything is scoped under #screen-finance, so nothing here
+   reaches the metrics board's own styles; the theme follows body[data-theme], which app.js sets from
+   monday's context like for every other screen.
+   The whole page follows a row's details panel (Nadav 10.11: "זה הכיוון, שיהיה נעים וברור ומסודר"): one message per
+   area, a quiet label over or beside its value, white panels on the page's grey, one spacing rhythm (4/8/12/16/24), and
+   colour only as a thin accent that means something - a state's dot, a real warning, the light tint of what is chosen
+   ("שים לב גם לא לפוצץ בצבעים, שיהיה עדין"). Weight, size and space make the hierarchy. */
+#screen-finance {
+  --fin-bg: #f6f7fb; --fin-panel: #ffffff; --fin-ink: #1f2430; --fin-muted: #5f6779; --fin-line: #e3e6ef; --fin-soft: #eef1f7;
+  --fin-paid: #00a65a; --fin-partial: #f2a33a; --fin-unpaid: #df2f4a; --fin-approval: #2f7cf6; --fin-approved: #9b5de5;
+  --fin-pending: #b8bfcc; --fin-refund: #5f6779; --fin-wait: #f2a33a; --fin-focus: #2f6fe0; --fin-link: #1f5fd6;
+  --fin-v-closed: #00a65a; --fin-v-open: #f2a33a; --fin-v-pending: #2f7cf6; --fin-v-not: #d3d8e2; --fin-v-out: #6b7385;
+  --fin-bad: #fde8eb; --fin-bad-ink: #a3142b; --fin-q: #eef0f4; --fin-q-ink: #4d5566;
+  /* boundaries of what is typed into or pressed: 3:1 on the panel and on the page */
+  --fin-line-strong: #868e9f;
+  /* what is chosen (a tile, a switch): a very light tint, its edge in the focus colour */
+  --fin-sel: color-mix(in srgb, var(--fin-focus) 6%, var(--fin-panel));
+  --fin-shadow: 0 1px 2px rgba(20, 28, 48, .06), 0 1px 1px rgba(20, 28, 48, .04);
+  /* the app's own page background shows through, so the desk is not a block of another grey */
+  background: transparent; color: var(--fin-ink);
+  font: 14px/1.45 "Rubik", "Assistant", "Segoe UI", Arial, system-ui, sans-serif;
+}
+body[data-theme="dark"] #screen-finance {
+  --fin-bg: #181b22; --fin-panel: #22262f; --fin-ink: #e9ecf3; --fin-muted: #a4acbd; --fin-line: #343a47; --fin-soft: #2a2f3a;
+  --fin-pending: #6b7385; --fin-refund: #a4acbd; --fin-focus: #7aa7ff; --fin-link: #8db4ff; --fin-v-not: #4a5162; --fin-v-out: #9aa2b3;
+  --fin-bad: #3b1d23; --fin-bad-ink: #ff9aa8; --fin-q: #2e3340; --fin-q-ink: #c3c9d6;
+  --fin-line-strong: #717a8c;
+  --fin-sel: color-mix(in srgb, var(--fin-focus) 10%, var(--fin-panel));
+}
+#screen-finance * { box-sizing: border-box; }
+#screen-finance button { font: inherit; color: inherit; }
+#screen-finance a { color: var(--fin-link); }
+#screen-finance .fin-wrap { max-width: 1280px; margin: 0 auto; padding: 16px 20px 40px; }
+#screen-finance .fin-subtle { color: var(--fin-muted); font-size: 12.5px; }
+#screen-finance .fin-badtext { color: var(--fin-bad-ink); }
+#screen-finance .fin-nw { white-space: nowrap; }
+#screen-finance .fin-msg { color: var(--fin-muted); }
+/* said to a screen reader, not shown */
+#screen-finance .fin-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0; }
+
+/* the header: the name, when it was read, the search and the refresh - one line, every control the same height */
+#screen-finance .fin-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+#screen-finance .fin-top h1 { font-size: 22px; margin: 0; font-weight: 600; }
+#screen-finance .fin-asof { color: var(--fin-muted); font-size: 13px; }
+/* a newer reading on its way: a word and a slow dot, nothing louder */
+#screen-finance .fin-refreshing { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: 8px; }
+#screen-finance .fin-refreshing::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: fin-pulse 1.4s ease-in-out infinite; }
+@keyframes fin-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { #screen-finance .fin-refreshing::before { animation: none; } }
+#screen-finance .fin-spacer { flex: 1; }
+#screen-finance .fin-searchbox { position: relative; display: inline-flex; }
+#screen-finance .fin-searchicon { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); color: var(--fin-muted);
+  pointer-events: none; }
+#screen-finance .fin-search, #screen-finance .fin-select, #screen-finance .fin-btn { height: 34px; border: 1px solid var(--fin-line-strong);
+  border-radius: 8px; background: var(--fin-panel); font: inherit; font-size: 14px; }
+#screen-finance .fin-search { padding: 0 10px; padding-inline-start: 32px; min-width: 260px; color: var(--fin-ink); }
+#screen-finance .fin-search::placeholder { color: var(--fin-muted); }
+#screen-finance .fin-btn { padding: 0 14px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
+#screen-finance button.fin-btn { color: var(--fin-ink); }
+#screen-finance .fin-btn:hover { border-color: var(--fin-focus); }
+#screen-finance .fin-btn[disabled] { opacity: .5; cursor: default; }
+#screen-finance .fin-btn[disabled]:hover { border-color: var(--fin-line-strong); }
+/* a link inside a sentence is underlined lightly, so it is not told apart by its colour alone */
+#screen-finance .fin-linkbtn { border: 0; background: none; color: var(--fin-link); cursor: pointer; padding: 0; font-size: inherit;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+#screen-finance .fin-linkbtn:hover { text-decoration-color: currentColor; }
+
+/* the tabs, and at their end the way to the legend ("מקרא", round 3) - outside the tablist, since it is no tab */
+#screen-finance .fin-tabbar { display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--fin-line); margin: 4px 0 16px; }
+#screen-finance .fin-tabs { display: flex; gap: 4px; }
+#screen-finance .fin-legendbtn { margin-inline-start: auto; margin-bottom: 9px; font-size: 13px; }
+#screen-finance .fin-tab { border: 0; background: none; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  font-size: 15px; color: var(--fin-muted); }
+#screen-finance .fin-tab:hover { color: var(--fin-ink); }
+#screen-finance .fin-tab.on { color: var(--fin-ink); border-bottom-color: var(--fin-focus); font-weight: 600; }
+
+/* a tab's money: a few figures, a quiet label over each value, its VAT note, and (students) the period that sets them */
+#screen-finance .fin-figs { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 28px; margin: 0 0 16px; }
+#screen-finance .fin-figs dl { display: flex; flex-wrap: wrap; gap: 10px 32px; margin: 0; font-variant-numeric: tabular-nums; }
+#screen-finance .fin-figs dt { color: var(--fin-muted); font-size: 12.5px; }
+#screen-finance .fin-figs dd { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.35; }
+#screen-finance .fin-figs dd small { font-size: 12.5px; font-weight: 400; color: var(--fin-muted); }
+#screen-finance .fin-figs-note { color: var(--fin-muted); font-size: 12px; padding-bottom: 3px; }
+#screen-finance .fin-figs .fin-field { margin-inline-start: auto; }
+#screen-finance .fin-field { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance .fin-select { color: var(--fin-ink); padding: 0 8px; min-width: 200px; }
+
+/* the states: the first row is her work, its sum ("לטיפול") the anchor; the second, lighter row is everything else */
+#screen-finance .fin-states { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+#screen-finance .fin-stategroup { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+#screen-finance .fin-state { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; padding: 10px 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; text-align: right; font-variant-numeric: tabular-nums; }
+#screen-finance .fin-state:hover { border-color: var(--fin-line-strong); }
+#screen-finance .fin-state:focus-visible { outline: 2px solid var(--fin-ink); outline-offset: 2px; }
+/* chosen: the light tint and a two-pixel edge, and the name in weight - not the colour alone */
+#screen-finance .fin-state.on { border-color: var(--fin-focus); box-shadow: inset 0 0 0 1px var(--fin-focus); background: var(--fin-sel); }
+#screen-finance .fin-state.on .l { font-weight: 600; }
+#screen-finance .fin-state .n { font-size: 22px; font-weight: 700; line-height: 1.2; }
+#screen-finance .fin-state .l { font-size: 13px; line-height: 1.3; display: flex; align-items: flex-start; gap: 6px; }
+#screen-finance .fin-state .m { font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance .fin-state.anchor { justify-content: center; }
+#screen-finance .fin-state.anchor .n { font-size: 30px; }
+#screen-finance .fin-state.anchor .l { font-size: 15px; font-weight: 600; }
+#screen-finance .fin-state.zero .n, #screen-finance .fin-state.zero .l { color: var(--fin-muted); }
+#screen-finance .fin-state.zero .m { display: none; }
+#screen-finance .fin-state.zero.task .n::after { content: " ✓"; color: var(--fin-paid); font-size: 15px; }
+/* the other states: small pills, the dot leading, then the count, the name and the money - the count and the money never touch */
+#screen-finance .fin-stategroup.rest { display: flex; flex-wrap: wrap; gap: 8px; }
+#screen-finance .fin-stategroup.rest .fin-state { flex-direction: row; flex-wrap: wrap; align-items: center; column-gap: 6px; padding: 5px 12px;
+  border-radius: 999px; }
+#screen-finance .fin-stategroup.rest .fin-state .n { font-size: 14px; font-weight: 600; }
+#screen-finance .fin-stategroup.rest .fin-state .m { margin-inline-start: 4px; }
+/* a state's dot: the same small mark in its tile, its pill, its rows and its details */
+#screen-finance .fin-statechip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+#screen-finance .fin-statechip::before, #screen-finance .fin-stategroup:not(.rest) .fin-state.dot .l::before,
+#screen-finance .fin-stategroup.rest .fin-state.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c); flex: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
+#screen-finance .fin-stategroup:not(.rest) .fin-state.dot .l::before { margin-top: calc(.65em - 4px); }
+/* nothing in it, nothing to mark: an empty state's dot is grey */
+#screen-finance .fin-stategroup:not(.rest) .fin-state.zero.dot .l::before { background: var(--fin-pending); }
+
+/* the list: one panel, its head inside it, then the table */
+#screen-finance .fin-panel { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; overflow: hidden; }
+#screen-finance .fin-listhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 14px 16px 12px; }
+#screen-finance .fin-listhead h2 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+/* a chosen state's sentence: what is in the list and why, in monday's labels, quiet under the list's title */
+#screen-finance .fin-about { margin: 6px 0 0; max-width: 760px; font-size: 13px; line-height: 1.5; color: var(--fin-muted); }
+/* the legend: the words the desk computes, one quiet panel above the tab's figures */
+#screen-finance .fin-legend { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; padding: 12px 16px 14px;
+  margin: 0 0 16px; }
+#screen-finance .fin-legend-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
+#screen-finance .fin-legend h2 { margin: 0; font-size: 15px; font-weight: 600; }
+/* one width for the terms in every part, so the explanations start at the same line throughout */
+#screen-finance .fin-legend dl { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13.5px; }
+#screen-finance .fin-legend dl > div { display: contents; }
+#screen-finance .fin-legend dt { font-weight: 600; }
+/* the legend's four parts: the desk's own words, the states, the chips, monday's columns and where they come from */
+#screen-finance .fin-legend-part { margin: 14px 0 6px; font-size: 12.5px; font-weight: 600; color: var(--fin-muted); }
+#screen-finance .fin-legend-part:first-of-type { margin-top: 4px; }
+#screen-finance .fin-legend dd { margin: 0; color: var(--fin-muted); max-width: 760px; }
+@media (max-width: 560px) {
+  #screen-finance .fin-legend dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  #screen-finance .fin-legend dd { margin-bottom: 6px; }
+}
+#screen-finance .fin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* positioned, so a header said only to a screen reader stays inside the table's own scroll and never widens the page;
+   a size container, so a row's details can take the width that is visible rather than the table's (see .fin-dx) */
+/* QA 11.11, 2.8: the companies' tables ran wider than the frame, cutting "מה לבדוק" and "אסמכתת חש...", and their only
+   sideways scrollbar sat under the last row. Now the long cells wrap (names, chips, headers), so a list fits the panel on
+   a laptop; where it still cannot (a phone), the table scrolls inside a box no taller than the screen, its header held
+   on top, so the sideways scrollbar is always within reach */
+#screen-finance .fin-tw { position: relative; overflow: auto; max-height: 78vh; -webkit-overflow-scrolling: touch;
+  container-type: inline-size; }
+#screen-finance table.fin-t { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+#screen-finance table.fin-t thead { position: sticky; top: 0; z-index: 1; }
+#screen-finance table.fin-t th { font-weight: 600; font-size: 12.5px; color: var(--fin-muted); text-align: right; padding: 8px 10px;
+  border-top: 1px solid var(--fin-line); border-bottom: 1px solid var(--fin-line); vertical-align: bottom; background: var(--fin-panel); }
+#screen-finance table.fin-t td { font-size: 14px; padding: 9px 10px; border-bottom: 1px solid var(--fin-line); vertical-align: middle; }
+/* the first and the last column keep the panel's own margin, so the list's title and its first column line up */
+#screen-finance table.fin-t tr > :first-child { padding-inline-start: 16px; }
+#screen-finance table.fin-t tr > :last-child { padding-inline-end: 16px; }
+#screen-finance table.fin-t tr:last-child td { border-bottom: 0; }
+/* numbers: same-width digits, aligned to the end of the cell so the units sit under each other (the number reads
+   left-to-right inside right-to-left text, so its end is the cell's right edge) */
+#screen-finance table.fin-t td.n { text-align: right; white-space: nowrap; }
+#screen-finance table.fin-t th.n { text-align: right; }
+#screen-finance table.fin-t .k-student { white-space: nowrap; }
+/* a company's and a deal's name wrap rather than widen the table; a date stays in one piece */
+#screen-finance table.fin-t td.k-account { min-width: 96px; }
+#screen-finance table.fin-t td.k-deal { min-width: 140px; }
+#screen-finance table.fin-t .k-date, #screen-finance table.fin-t td.k-demand, #screen-finance table.fin-t .k-planned,
+#screen-finance table.fin-t .k-refund_date, #screen-finance table.fin-t .k-asked, #screen-finance table.fin-t .k-last_day { white-space: nowrap; }
+#screen-finance table.fin-t td.k-due { min-width: 84px; }
+#screen-finance table.fin-t td.k-charge { min-width: 180px; }
+/* what to look at: its chips wrap inside the cell, never past the frame */
+#screen-finance table.fin-t td.k-notes { min-width: 170px; }
+#screen-finance table.fin-t td .fin-chip { white-space: normal; border-radius: 10px; }
+#screen-finance table.fin-t .k-open { width: 44px; text-align: center; }
+/* a row's name opens its monday card: a link by its underline, in the ink of the row until it is pointed at */
+#screen-finance a.fin-name { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 3px; }
+#screen-finance a.fin-name:hover, #screen-finance a.fin-name:focus-visible { color: var(--fin-link); text-decoration-color: currentColor; }
+#screen-finance table.fin-t td.k-open { padding-top: 0; padding-bottom: 0; }
+#screen-finance a.fin-open { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px;
+  color: var(--fin-muted); vertical-align: middle; }
+#screen-finance a.fin-open:hover, #screen-finance a.fin-open:focus-visible { color: var(--fin-link); background: var(--fin-panel);
+  box-shadow: inset 0 0 0 1px var(--fin-line); }
+#screen-finance tr.fin-rowbtn { cursor: pointer; }
+#screen-finance tr.fin-rowbtn:hover td { background: var(--fin-soft); }
+#screen-finance tr.fin-rowbtn:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: -2px; }
+#screen-finance tr.fin-rowbtn.open td { background: var(--fin-soft); border-bottom-color: transparent; }
+#screen-finance tr.fin-detail > td { background: var(--fin-soft); padding-top: 4px; padding-bottom: 16px; }
+/* what to look at in a row: neutral pills; a real warning keeps a red dot and red words, an aside is only outlined */
+#screen-finance .fin-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+#screen-finance .fin-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--fin-q); color: var(--fin-q-ink);
+  border-radius: 999px; padding: 0 8px; font-size: 12.5px; white-space: nowrap; }
+#screen-finance .fin-chip.bad { color: var(--fin-bad-ink); }
+#screen-finance .fin-chip.bad::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--fin-unpaid); flex: none; }
+#screen-finance .fin-chip.q { background: transparent; color: var(--fin-muted); box-shadow: inset 0 0 0 1px var(--fin-line); }
+/* nothing to show: said calmly where the rows would be, with the one step that helps */
+#screen-finance .fin-empty { padding: 28px 16px 32px; text-align: center; color: var(--fin-muted); border-top: 1px solid var(--fin-line); }
+#screen-finance .fin-empty p { margin: 0 0 6px; font-size: 14px; }
+#screen-finance .fin-panel.fin-empty { margin-top: 16px; }
+#screen-finance .fin-listnote { margin: 0; padding: 8px 16px 10px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12px; }
+
+/* the footer: whether everything was read, and the way to ask - one quiet line under a hairline */
+#screen-finance .fin-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 24px;
+  margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12.5px; }
+#screen-finance .fin-health { flex: 1 1 320px; }
+#screen-finance .fin-health ul { margin: 6px 0 0; padding-inline-start: 18px; }
+#screen-finance .fin-ask { text-decoration: none; white-space: nowrap; }
+#screen-finance .fin-ask:hover { text-decoration: underline; }
+.fin-toast { position: fixed; bottom: 16px; inset-inline-start: 16px; background: #1f2430; color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 50; }
+
+@media (max-width: 900px) {
+  #screen-finance .fin-searchbox { flex: 1 1 100%; order: 5; }
+  #screen-finance .fin-search { min-width: 0; width: 100%; }
+}
+@media (max-width: 560px) {
+  #screen-finance .fin-wrap { padding: 12px 12px 32px; }
+  #screen-finance table.fin-t .hide-xs { display: none; }
+  #screen-finance table.fin-t td.k-charge { min-width: 160px; }
+  #screen-finance .fin-figs, #screen-finance .fin-figs dl { gap: 8px 20px; }
+  #screen-finance .fin-figs dd { font-size: 16px; }
+  #screen-finance .fin-figs .fin-field { flex: 1 1 100%; margin-inline-start: 0; }
+  #screen-finance .fin-figs .fin-select { flex: 1; min-width: 0; }
+  /* on a phone the sum of her work heads the tiles on a row of its own */
+  #screen-finance .fin-state.anchor { grid-column: 1 / -1; }
+  #screen-finance .fin-state.anchor .n { font-size: 26px; }
+}
+/* the companies tab: the list / by-customer switch */
+#screen-finance .fin-seg { display: inline-flex; }
+#screen-finance .fin-seg .fin-btn { border-radius: 0; }
+#screen-finance .fin-seg .fin-btn:first-child { border-start-start-radius: 8px; border-end-start-radius: 8px; }
+#screen-finance .fin-seg .fin-btn:last-child { border-start-end-radius: 8px; border-end-end-radius: 8px; margin-inline-start: -1px; }
+#screen-finance .fin-btn.on { background: var(--fin-sel); border-color: var(--fin-focus); font-weight: 600; position: relative; }
+
+/* a row's details (10.11, Nadav: "בטוח אפשר לשפר פה את הUI"): the situation in one line with the way to monday beside it,
+   then only what the row does not show, two pairs a line, then the warnings as sentences */
+/* when the table is wider than the screen (a phone), the details stay as wide as what is visible and in place while the
+   row scrolls sideways, instead of running off the edge */
+#screen-finance .fin-dx { max-width: 940px; max-width: min(940px, calc(100cqi - 32px)); padding: 4px 2px 6px; position: sticky; inset-inline-start: 16px; }
+#screen-finance .fin-dx-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+#screen-finance .fin-dx-sit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 15px; }
+#screen-finance .fin-dx-sit b { font-weight: 600; }
+#screen-finance .fin-dx-open { text-decoration: none; white-space: nowrap; }
+#screen-finance .fin-dx-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 14px; }
+#screen-finance .fin-dx-grid dt { color: var(--fin-muted); }
+#screen-finance .fin-dx-grid dd { margin: 0; min-width: 0; }
+/* the lead's ID number in a payment's details (16.11): one click selects all of it, digits evenly spaced */
+#screen-finance .fin-idnum { user-select: all; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+/* a button that is an icon, no word (its copy button): the row's open icon's size and quiet colour; its margin keeps the
+   28-pixel target from making the line taller */
+#screen-finance .fin-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  margin: -4px 0; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fin-muted); cursor: pointer;
+  vertical-align: middle; }
+#screen-finance .fin-iconbtn:hover, #screen-finance .fin-iconbtn:focus-visible { color: var(--fin-link); background: var(--fin-panel);
+  box-shadow: inset 0 0 0 1px var(--fin-line); }
+#screen-finance .fin-iconbtn:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: 1px; }
+/* the details in parts, each headed by where its fields come from (the row, its enrollment, its cohort, its company, its
+   deal), every field always in its place (QA 2.9) */
+#screen-finance .fin-dx-block + .fin-dx-block, #screen-finance .fin-dx-box + .fin-dx-block { margin-top: 12px; }
+#screen-finance .fin-dx-rel { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fin-line); }
+#screen-finance .fin-dx-rel > .fin-dx-block { margin-top: 0; }
+#screen-finance .fin-dx-h { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--fin-muted); }
+#screen-finance .fin-dx-h .fin-dx-name { font-weight: 400; color: var(--fin-ink); margin-inline-start: 4px; }
+#screen-finance .fin-dx-rel { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 24px; }
+#screen-finance .fin-dx-rel .fin-dx-grid { grid-template-columns: max-content minmax(0, 1fr); }
+#screen-finance .fin-dx-box { margin-top: 10px; padding: 8px 12px; border: 1px solid var(--fin-line-strong, var(--fin-line)); border-radius: 8px; background: var(--fin-panel); font-size: 14px; }
+#screen-finance .fin-dx-warn { list-style: none; margin: 10px 0 0; padding: 8px 12px; border-inline-start: 3px solid var(--fin-bad-ink); background: var(--fin-bad); color: var(--fin-bad-ink); border-radius: 6px; font-size: 14px; }
+#screen-finance .fin-dx-warn li::before { content: "⚠ "; }
+#screen-finance .fin-dx-more { margin-top: 10px; font-size: 13.5px; line-height: 1.9; }
+@media (max-width: 700px) { #screen-finance .fin-dx-grid { grid-template-columns: max-content minmax(0, 1fr); } }
+
+/* the aging by customer: the bands under one header ("לפי מועד פירעון"), their total last */
+#screen-finance table.fin-t th.fin-group { text-align: center; border-bottom: 0; padding-bottom: 4px;
+  box-shadow: inset 0 -2px 0 var(--fin-line-strong); }
+/* the bands' group framed down the table: a hairline at its first and last band (QA 2.3) */
+#screen-finance table.fin-t .fin-band-first { border-inline-start: 1px solid var(--fin-line-strong); }
+#screen-finance table.fin-t .fin-band-last { border-inline-end: 1px solid var(--fin-line-strong); }
+#screen-finance table.fin-t tr.fin-sub > th { border-top: 0; padding-top: 2px; }
+#screen-finance table.fin-t tr.fin-sub > :first-child { padding-inline-start: 10px; }
+#screen-finance table.fin-t tr.fin-sub > :last-child { padding-inline-end: 10px; }
+#screen-finance table.fin-t th small { font-weight: 400; }
+#screen-finance table.fin-t td.n.fin-wrap { white-space: normal; min-width: 170px; }
+/* the aging, up to thirteen columns: a little tighter than a list, so it fits a laptop's panel with every optional column;
+   a company's name, its terms and a band's range each stay readable - "61-90 ימים" never breaks inside its range */
+#screen-finance table.fin-aging-t th, #screen-finance table.fin-aging-t td { padding-left: 6px; padding-right: 6px; }
+#screen-finance table.fin-aging-t td { font-size: 13px; }
+#screen-finance table.fin-aging-t td:first-child { min-width: 110px; }
+#screen-finance table.fin-aging-t .k-terms, #screen-finance table.fin-aging-t .k-terms .fin-chip,
+#screen-finance table.fin-aging-t th.k-aging_d1_30, #screen-finance table.fin-aging-t th.k-aging_d31_60,
+#screen-finance table.fin-aging-t th.k-aging_d61_90, #screen-finance table.fin-aging-t th.k-aging_d90 { white-space: nowrap; }
+/* the totals row the server computes, and a chosen customer's aging line */
+#screen-finance table.fin-t tfoot td { border-top: 2px solid var(--fin-line-strong, var(--fin-line)); border-bottom: 0; background: var(--fin-soft); font-weight: 600; }
+#screen-finance .fin-aging { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -4px 0 12px; font-size: 13.5px; }
+
+/* round 3, slice 3: what is written from here. A row's actions come first, under its situation (the view is about 527
+   pixels tall inside monday), in a quiet block of their own with a hairline under it; the plan before a write, its progress
+   and its result under the controls. One button carries weight - "כתיבה" / "שמירה", the one that writes - everything else
+   is the desk's usual outline. */
+#screen-finance .fin-acts { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--fin-line); }
+#screen-finance .fin-act-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; }
+#screen-finance .fin-act { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+#screen-finance .fin-act-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance .fin-act-field > span { color: var(--fin-muted); }
+#screen-finance .fin-input { height: 34px; border: 1px solid var(--fin-line-strong); border-radius: 8px; background: var(--fin-panel);
+  color: var(--fin-ink); font: inherit; font-size: 14px; padding: 0 10px; min-width: 150px; }
+#screen-finance .fin-input.num { min-width: 120px; width: 130px; font-variant-numeric: tabular-nums; }
+#screen-finance .fin-input:focus-visible, #screen-finance .fin-select:focus-visible, #screen-finance .fin-btn:focus-visible {
+  outline: 2px solid var(--fin-focus); outline-offset: 1px; }
+#screen-finance .fin-input[disabled] { opacity: .55; }
+#screen-finance .fin-btn.fin-primary { background: var(--fin-focus); border-color: var(--fin-focus); color: #fff; font-weight: 600; }
+#screen-finance .fin-btn.fin-primary:hover { filter: brightness(1.06); }
+body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
+#screen-finance .fin-act-why { margin: 0 0 8px; color: var(--fin-muted); font-size: 13.5px; }
+#screen-finance .fin-act-msg { margin: 10px 0 0; font-size: 14px; }
+#screen-finance .fin-act-msg.ok { color: var(--fin-ink); }
+#screen-finance .fin-act-msg.ok::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fin-paid); margin-inline-end: 7px; vertical-align: middle; }
+#screen-finance .fin-act-msg.bad { color: var(--fin-bad-ink); }
+#screen-finance .fin-act-detail { margin: 2px 0 0; overflow-wrap: anywhere; }
+/* the plan: exactly what will be written, in a framed box, and the one button that writes it */
+#screen-finance .fin-act-plan { margin-top: 10px; padding: 10px 14px; border: 1px solid var(--fin-focus); border-radius: 8px;
+  background: var(--fin-sel); font-size: 14px; }
+#screen-finance .fin-act-plan:focus { outline: none; }
+#screen-finance .fin-act-plan:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: 2px; }
+#screen-finance .fin-act-plan p { margin: 0 0 6px; }
+#screen-finance .fin-act-plan ul { margin: 0 0 8px; padding-inline-start: 18px; }
+#screen-finance .fin-act-plan li + li { margin-top: 2px; }
+#screen-finance .fin-act-go { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+/* a row written from here, until a reading shows it: a word beside its name, and a slow dot, like "מתעדכן" */
+#screen-finance .fin-written { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: 6px; font-size: 12px;
+  color: var(--fin-muted); white-space: nowrap; }
+#screen-finance .fin-written::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--fin-focus);
+  animation: fin-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { #screen-finance .fin-written::before { animation: none; } }
+/* "אין תנאי תשלום" that leads to the company's ledger: the same chip, pressable, underlined lightly as the desk's links are */
+#screen-finance button.fin-chiplink { border: 0; font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
+#screen-finance button.fin-chiplink:hover { color: var(--fin-link); text-decoration-color: currentColor; }
+#screen-finance button.fin-chiplink:focus-visible { outline: 2px solid var(--fin-focus); outline-offset: 1px; }
+
+/* the ledger's "פרטי חיוב": the company's four billing details, and the form that edits them (written by the server) */
+#screen-finance .fin-billing { padding: 12px 16px 14px; margin: 0 0 16px; }
+#screen-finance .fin-billing-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; }
+#screen-finance .fin-billing-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+#screen-finance .fin-billing-head .fin-btn { margin-inline-start: auto; }
+#screen-finance .fin-billing-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 18px; }
+#screen-finance .fin-billing-form .fin-input, #screen-finance .fin-billing-form .fin-select { width: 100%; min-width: 0; }
+#screen-finance .fin-billing-form small { font-size: 12px; line-height: 1.4; }
+#screen-finance .fin-billing-note { color: var(--fin-ink); background: var(--fin-q); border-radius: 6px; padding: 4px 8px; margin-top: 2px; }

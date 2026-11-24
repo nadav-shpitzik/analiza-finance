@@ -1,0 +1,824 @@
+"""The desk's page in node (D2): frontend/finance.js, ported from analiza-metrics at da671b2, and frontend/desk.js, the glue
+that mounts it. Needs node; skipped without it.
+
+Ported from analiza-metrics' tests/test_finance_js.py, test_finance_id_js.py and test_finance_actions_js.py: the tests
+that hold the page to itself - its words, its return rule, its house style, the ID number read as the person, the
+allowlist refusing before monday is asked - run here on the hand-made view of tests/desk_page_view.py. The tests that
+hold the page to the server wait for the server's port: the students' and the companies' filters against filter_b2c and
+filter_b2b, the exportable search alphabet against query_exportable, the refund labels, the return rule against the
+refresh gap, the legend against every label and chip, the aging headers against the Excel file, the usage events against
+app/usage.py, and the page's write allowlist (WRITABLE) against the server's actions (desk_writes).
+
+New with the move: no path under /api/finance, every monday request through the one door, a refund's bank account and a
+company's ח.פ read as the person only when shown, the billing details read only, an answer with no view yet, and the
+usage batches stopping quietly at the first failure."""
+from __future__ import annotations
+
+import copy
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from tests.desk_page_view import SC_BOARD, B2_BOARD, answer, sc_row, view
+
+NODE = shutil.which("node")
+pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
+FRONT = Path(__file__).resolve().parents[1] / "frontend"
+PAGE = FRONT / "finance.js"
+GLUE = FRONT / "desk.js"
+LEADS_BOARD, ACCOUNTS_BOARD = "5089697337", "5089697343"
+ID_COLUMN, VAT_COLUMN = "text_mkzvem4", "text_mm3y3gm7"
+BANK_COLUMNS = ["text_mm8cxm9y", "text_mm8cv3v3", "text_mm8cgc0d", "text_mm8ckgh8"]
+
+# mount() in a document just big enough for it: a fake monday (cells by board and item, status labels, and per-request
+# overrides), the server's answers in order per request ("GET <path>" / "POST <path>"; a request with no answer left never
+# settles), a clock the test may move, and steps that click, type, return to the view, act and write
+HARNESS = r"""
+const vm = require("vm"), fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+let now = 1000000;
+if (input.clock) { const RealDate = Date; global.Date = class extends RealDate { static now() { return now; } }; }
+const toasts = [], copied = [], sent = [], calls = [], posts = [], usage = [], executed = [], handlers = {}, listeners = {};
+const search = { focus() {}, setSelectionRange() {}, value: "" };
+global.document = { visibilityState: "visible", activeElement: null, body: { appendChild() {} },
+  addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
+  getElementById(id) { return id === "fin-q" ? search : null; },
+  createElement() { const el = { setAttribute() {}, remove() {}, click() {}, style: {}, select() {} };
+    Object.defineProperty(el, "textContent", { set(v) { toasts.push(v); } }); return el; },
+  execCommand() { return !!input.oldCopyWorks; } };
+Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: input.clipboard === "none" ? {} :
+  { clipboard: { writeText(t) { if (input.clipboard === "refuses") { return Promise.reject(new Error("denied")); }
+    copied.push(t); return Promise.resolve(); } } } });
+global.window = { scrollY: 0, scrollTo() {}, open() {}, location: { href: "https://desk.test/desk/" },
+  addEventListener(t, f) { (listeners["window:" + t] = listeners["window:" + t] || []).push(f); },
+  crypto: require("crypto").webcrypto };
+const root = { innerHTML: "", addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
+  querySelector() { return null; }, querySelectorAll() { return []; } };
+vm.runInThisContext(fs.readFileSync(process.argv[1], "utf8"));
+const F = window.FinanceDesk;
+const M = input.monday || {}, boards = M.boards || {}, labels = M.labels || {}, queue = M.answers || [];
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
+function cv(item, c) {
+  const x = (item || {})[c];
+  if (x && typeof x === "object") { return { id: c, text: x.text || "", value: null, index: x.index, label: x.label }; }
+  return { id: c, text: x == null ? "" : String(x), value: null };
+}
+const monday = M.absent ? null : {
+  get: (what) => what !== "context" ? Promise.resolve({ data: "" }) : input.context === "never" ? new Promise(() => {})
+    : Promise.resolve({ data: input.context || {} }),
+  execute: (what, args) => { executed.push({ what: what, args: args }); return Promise.resolve(); },
+  api: (query, opts) => {
+    const v = (opts || {}).variables || {};
+    sent.push({ kind: query.trim().split(" ")[0], query: query, variables: v, apiVersion: (opts || {}).apiVersion });
+    const a = queue.shift() || {};
+    if (a.reject) { return Promise.reject(a.reject); }
+    if (a.hold) { return new Promise(() => {}); }
+    if (a.answer) { return Promise.resolve(a.answer); }
+    if (query.trim().startsWith("mutation")) {
+      const item = boards[v.b][v.i], vals = JSON.parse(v.v);
+      Object.keys(vals).forEach((c) => {
+        const val = vals[c];
+        if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
+        else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
+        else { item[c] = String(val); }
+      });
+      return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
+    }
+    const b = String((v.b || [])[0]), cells = boards[b] || {};
+    const items = a.noItems ? [] : (v.i || []).filter((id) => has(cells, id)).map((id) => ({ id: id, name: cells[id].__name || "",
+      board: { id: cells[id].__board || b }, column_values: (v.c || []).map((c) => cv(cells[id], c)) }));
+    const columns = a.noColumn ? [] : (v.c || []).map((c) => ({ id: c, type: "x",
+      settings_str: JSON.stringify({ labels: (labels[b] || {})[c] || {} }) }));
+    return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
+  }
+};
+function answer(key) {
+  calls.push(key);
+  const a = ((input.answers || {})[key] || []).shift();
+  return !a ? new Promise(() => {}) : a.reject ? Promise.reject(a.reject) : Promise.resolve(a.body);
+}
+const deps = { api: (p) => answer("GET " + p),
+  post: (p, body, keep) => {
+    if (p === "/api/usage") {
+      usage.push({ body: body, keep: !!keep });
+      return input.usageFails ? Promise.reject(input.usageFails) : Promise.resolve({ stored: body.events.length, refused: 0 });
+    }
+    posts.push([p, body === undefined ? null : body]); return answer("POST " + p);
+  },
+  monday: monday, board: input.board === undefined ? "5093448677" : input.board, later: (fn) => fn(), today: () => "2026-11-24",
+  useFlushMs: input.useFlushMs, useSearchMs: input.useSearchMs, mondayWaitMs: input.mondayWaitMs };
+function click(ds, cls) {
+  const el = { dataset: ds, classList: { contains: (c) => (cls || []).indexOf(c) !== -1 }, closest: () => null,
+    getAttribute: () => "", disabled: false, textContent: "" };
+  handlers.click({ target: { closest: (sel) => sel.indexOf("[data-") !== -1 ? el : null }, preventDefault() {} });
+}
+const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 0)); } };
+(async () => {
+  await F.mount(root, deps);
+  await settle();
+  const first = root.innerHTML;
+  const steps = [];
+  for (const step of input.steps || []) {
+    let refused = null;
+    if (step.mutate) { Object.keys(step.mutate).forEach((b) => Object.keys(step.mutate[b]).forEach((id) => Object.assign(boards[b][id], step.mutate[b][id]))); }
+    if (step.show) { F._show(step.show); }
+    if (step.click) { click(step.click[0], step.click[1]); }
+    if (step.type !== undefined) { search.value = step.type; handlers.input({ target: { id: "fin-q", value: step.type, dataset: {} } }); }
+    if (step.change) { handlers.change({ target: { id: step.change[0], value: step.change[1], dataset: {} } }); }
+    if (step.hide) { document.visibilityState = "hidden"; (listeners.visibilitychange || []).forEach((f) => f()); }
+    if (step.back) {
+      /* a return to the view: [ms away, how] - "visible" (another tab), "focus" (monday's item card closed) or "both" */
+      now += step.back[0];
+      const how = step.back[1] || "visible";
+      document.visibilityState = "visible";
+      if (how !== "focus") { (listeners.visibilitychange || []).forEach((f) => f()); }
+      if (how !== "visible") { (listeners["window:focus"] || []).forEach((f) => f()); }
+    }
+    if (step.act) { F._act(step.act[0], step.act[1], step.typed); }
+    if (step.confirm) { F._confirm(); }
+    if (step.write) { refused = await F._write(step.write[0], step.write[1], step.write[2]).then(() => "sent", (e) => e.code); }
+    if (step.wait) { await new Promise((r) => setTimeout(r, step.wait)); }
+    await settle();
+    const act = F._actState();
+    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error,
+      refused: refused, can: F._can(), sent: sent.length,
+      plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null });
+  }
+  /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
+  fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
+    usage: usage, toasts: toasts, copied: copied, executed: executed }));
+  process.exit(0);
+})();
+"""
+
+LOAD = """
+const vm = require("vm"), fs = require("fs");
+global.window = {};
+vm.runInThisContext(fs.readFileSync(process.argv[1], "utf8"));
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const F = window.FinanceDesk;
+"""
+
+
+def node(script: str, data, page: Path = PAGE) -> object:
+    out = subprocess.run([NODE, "-e", script, str(page)], input=json.dumps(data, default=str, ensure_ascii=False),
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def drive(body: dict | None = None, steps=(), monday: dict | None = None, answers: dict | None = None, **extra) -> dict:
+    data = {"answers": answers if answers is not None else {"GET /api/desk": [{"body": body if body is not None else answer()}]},
+            "monday": monday or {}, "steps": list(steps), **extra}
+    out = subprocess.run([NODE, "-e", HARNESS, str(PAGE)], input=json.dumps(data, ensure_ascii=False), capture_output=True,
+                         text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def code_of(path: Path) -> str:
+    """A file's code without its comments: a comment may tell the history, the code may not hold it."""
+    return re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
+
+
+def detail_of(html: str, row_id: str) -> str:
+    start = html.index('data-row="%s"' % row_id)
+    detail = html[html.index('<tr class="fin-detail">', start):]
+    return detail[:detail.index("</td></tr>")]
+
+
+def fact(html: str, title: str) -> str:
+    """One fact's value in a details grid or the billing details: what follows <dt>title</dt>."""
+    head = "<dt>%s</dt><dd>" % title
+    return html[html.index(head) + len(head):].split("</dd>")[0]
+
+
+def bank_box(html: str) -> str:
+    """A refund's "פרטי חשבון" box in its details: what follows its label."""
+    head = '<div class="fin-dx-box"><span class="fin-subtle">פרטי חשבון</span> '
+    box = html[html.index(head) + len(head):]
+    return box[:box.index("</div>")]
+
+
+LEADS = {"6101": "000000018", "6102": "", "6103": "000000034", "6105": "000000042"}
+BANK = {"text_mm8cxm9y": "בעל/ת החשבון", "text_mm8cv3v3": "12", "text_mm8cgc0d": "345", "text_mm8ckgh8": "1234567"}
+VATS = {"7701": "500000001", "7702": "", "7703": "500000027"}
+
+
+def world(leads=None, bank=None, vats=None, **more) -> dict:
+    """The fake monday the page reads as the person: the Leads board's ID numbers, a refund's bank account on Student
+    Charge, the companies' ח.פ on Accounts."""
+    boards = {LEADS_BOARD: {k: {ID_COLUMN: v} for k, v in (LEADS if leads is None else leads).items()},
+              SC_BOARD: {"3103": dict(BANK if bank is None else bank)},
+              ACCOUNTS_BOARD: {k: {VAT_COLUMN: v} for k, v in (VATS if vats is None else vats).items()}}
+    return {"boards": boards, **more}
+
+
+REFUND_OPEN = {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {"3103": True}}}
+ALL_OPEN = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {k: True for k in ("3101", "3102", "3103", "3104", "3105")}}}
+LEDGER = {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "7703", "open": {}}}
+
+
+# --- the paths and the one door (D2) ------------------------------------------------------------------------------------
+
+def receipt_world() -> dict:
+    """world(), and the payment 3102 as monday holds it for "שליחת קבלה: יצאה": its row, and the column's labels."""
+    monday = world(labels={SC_BOARD: {"color_mm4cq1hw": {"0": "טרם", "1": "יצאה", "2": "לא רלוונטי"}}})
+    monday["boards"][SC_BOARD]["3102"] = {"__name": "תלמיד/ה 2", "color_mm4cq1hw": {"text": "טרם", "index": 0, "label": "טרם"}}
+    return monday
+
+
+def test_the_page_never_calls_a_path_under_api_finance():
+    """Every request the page can make, made: the open, the newer reading (`?fresh=1`), a return, the refresh, the totals,
+    the Excel link, a write's refresh and the usage batch. None is under /api/finance, and no file of the page names one."""
+    for name in ("finance.js", "desk.js", "check.js", "index.html"):
+        assert "/api/finance" not in (FRONT / name).read_text(encoding="utf-8"), name
+    later = answer(taken_at="2026-11-24T08:00:30+00:00")
+    got = drive(answer(refreshing=True), [
+        {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {"3102": True}}}},
+        {"act": ["sc:3102", "receipt_sent"]}, {"confirm": True},
+        {"click": [{"export": "b2c"}]},
+        {"back": [60_000]},
+        {"click": [{"refresh": "1"}]},
+        {"hide": True}],
+        monday=receipt_world(),
+        answers={"GET /api/desk": [{"body": answer(refreshing=True)}], "GET /api/desk?fresh=1": [{"body": later}],
+                 "POST /api/desk/refresh": [{"body": later}] * 4,
+                 "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?tab=b2c&sig=s"}}]},
+        context={"permissions": {"approvedScopes": ["boards:read", "boards:write"]}}, clock=True)
+    paths = [c.split(" ", 1)[1].split("?")[0] for c in got["calls"]] + ["/api/usage"] * len(got["usage"])
+    assert set(paths) == {"/api/desk", "/api/desk/totals", "/api/desk/refresh", "/api/desk/export-link", "/api/usage"}
+    assert "GET /api/desk?fresh=1" in got["calls"] and got["steps"][2]["phase"] == "done"
+    assert got["executed"] == [{"what": "openLinkInTab", "args": {"url": "https://desk.test/api/desk/export.xlsx?tab=b2c&sig=s"}}]
+    assert not [p for p in paths if p.startswith("/api/finance")]
+
+
+def test_every_monday_request_of_the_page_goes_through_the_one_door():
+    """finance.js calls monday.api in one place (mondayCall) and composes its one mutation in one place (mondayWrite); every
+    read - a row before a write, the ID number, a bank account, a ח.פ - goes through it at the pinned API version. The
+    glue never calls monday.api; the self-check (/desk/?check=1, D1's) has its own one read, held by tests/test_desk.py."""
+    page = code_of(PAGE)
+    # every `.api(` of the page is this service's (deps.api) or monday's - and monday's is called in one place
+    callers = re.findall(r"([\w.$]+)\s*\.\s*api\s*\(", page)
+    assert set(callers) == {"deps", "deps.monday"} and callers.count("deps.monday") == 1
+    assert not re.search(r"\[\s*[\"']api[\"']\s*\]", page)          # nor by its name in brackets
+    door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
+    assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
+    assert page.count('"mutation ') == 1 and page.count("mondayCall(WRITE_ROW") == 1
+    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == ["READ_CELLS", "READ_ROW", "WRITE_ROW"]
+    assert ".api(" not in code_of(GLUE)
+    assert code_of(FRONT / "check.js").count("monday.api(") == 1
+    # and in a visit that makes every kind of request: one of the page's three queries, at the version the server reads
+    got = drive(answer(), [{"show": ALL_OPEN}, {"show": REFUND_OPEN}, {"act": ["sc:3102", "receipt_sent"]},
+                           {"show": LEDGER}], monday=world(), context={})
+    kinds = {s["query"] for s in got["sent"]}
+    assert len(got["sent"]) >= 5 and len(kinds) == 2 and {s["apiVersion"] for s in got["sent"]} == {"2026-07"}
+    assert all(q.startswith("query ($i: [ID!], $c: [String!], $b: [ID!]) { items(ids: $i) { id ") for q in kinds)
+
+
+# --- ported: the page's words, columns, return rule and house style (analiza-metrics tests/test_finance_js.py) ----------
+
+def test_the_page_words_a_refunds_lateness_as_innas_app_does():
+    got = node(LOAD + "console.log(JSON.stringify(input.map(F._lastDayText)));", [-12, -2, -1, 0, 1, 2, 14])
+    assert got == ["באיחור של 12 ימים", "באיחור של 2 ימים", "באיחור של יום אחד", "היום הוא היום האחרון", "נותר יום אחד",
+                   "נותרו 2 ימים", "נותרו 14 ימים"]
+
+
+def test_the_page_heads_mondays_columns_by_their_monday_names_and_lays_out_the_refund_and_open_lists():
+    """The page's half of the old test; that its states are the server's (B2C_STATES, B2B_STATES) waits for the port."""
+    cols = node(LOAD + "console.log(JSON.stringify(F._columns()));", None)
+    heads = cols["heads"]
+    assert {k: heads[k] for k in ("received", "receipt", "to_refund", "refunded", "credit_ref", "invoice", "method",
+                                  "refund_date", "asked", "last_day", "planned", "demand", "amount", "paid_so_far",
+                                  "account", "course", "status", "payment", "open")} == {
+        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי", "refunded": "סכום החזר",
+        "credit_ref": "אסמכתת זיכוי", "invoice": "אסמכתת חשבונית", "method": "אופן החזר", "refund_date": "תאריך החזר",
+        "asked": "תאריך בקשת ביטול", "last_day": "מועד אחרון להחזר", "planned": "מועד העברה מתוכנן",
+        "demand": "מועד דרישת תשלום", "amount": 'סכום לחיוב (ללא מע"מ)', "paid_so_far": 'סכום ששולם (כולל מע"מ)',
+        "account": "חברה", "course": "קוד קורס", "status": "מצב חיוב", "payment": "סטטוס תשלום", "open": "פתיחה במאנדיי"}
+    refund = cols["sc"]["refund_to_execute"]
+    i = refund.index("last_day")
+    assert refund[i - 1:i + 2] == ["asked", "last_day", "planned"]              # the two dates side by side
+    done = cols["sc"]["refunded"]
+    assert done[done.index("last_day") + 1] == "planned"
+    assert cols["b2"]["open"][0] == "due" and "to_bill" in cols["b2"] and "approval" not in cols["b2"]
+    # D2: the list "החזר לביצוע" has no bank account column - the page reads one only when a refund's details open
+    assert "bank" not in refund and "bank" not in heads
+
+
+def test_the_page_asks_again_on_return_only_after_5_seconds_and_never_inside_the_refresh_gap():
+    cases = [  # body, landed at (ms), now (ms), not before (ms), busy
+        [{"age_seconds": 0}, 0, 4_000, 0, False], [{"age_seconds": 0}, 0, 6_000, 0, False],
+        [{"age_seconds": 3}, 1_000, 4_000, 0, False],                           # 3s old when it came, 3s since: 6s
+        [{"age_seconds": 60}, 0, 1_000, 5_000, False],                         # the server said not before 5s
+        [{"age_seconds": 60}, 0, 1_000, 0, True],                              # a newer reading is already on its way
+        [{"age_seconds": 60, "refreshing": True}, 0, 1_000, 0, False], [None, 0, 99_000, 0, False]]
+    got = node(LOAD + "console.log(JSON.stringify(input.map(c => F._refetchDue.apply(null, c))));", cases)
+    assert got == [False, True, True, False, False, False, False]
+    source = PAGE.read_text(encoding="utf-8")
+    assert 'document.addEventListener("visibilitychange", onVisible)' in source
+    assert 'window.addEventListener("focus", onFocus)' in source and "setInterval" not in source
+
+
+def test_the_page_has_no_retired_term_and_keeps_the_house_style():
+    source = code_of(PAGE)
+    retired = ["חשבונית זיכוי", "מספר חשבונית", "להפקה", "הפקת", "לפני מע\\\"מ", "להחזיר עד", "היום האחרון להחזר",
+               "פתוח לגבייה", "שולם עד כה", "נותר לגבות", "סטטוס במאנדיי", "מצב חיוב במאנדיי", "סטטוס תשלום במאנדיי",
+               "מועד דרישה\"", "מועד דרישה ", "מועד הדרישה",
+               "מסלול מימון", "\"לחשבון\"", "\"קבלה\"", "\"תקבול\"", "היקף העסקה", "המשלם בעסקה", "הסכום ששולם",
+               "כל הלקוחות", "\"לקוח אחד\"", "לקוחות עם משהו פתוח", "בכל השיבוצים", "בשאר השיבוצים",
+               # D2: the ID number is in no Excel file of this service's
+               "נמצאת גם בקובץ האקסל"]
+    found = [t for t in retired if t in source]
+    assert not found, found
+    for name in ("finance.js", "finance.css", "desk.js", "desk.css", "check.js", "index.html"):
+        text = (FRONT / name).read_text(encoding="utf-8")
+        assert "—" not in text and "→" not in text, name
+
+
+def with_row(v: dict, row: dict) -> dict:
+    v = copy.deepcopy(v)
+    v["b2c"]["rows"].append(row)
+    return v
+
+
+def newer_body(taken: str, age: int, marker: str = "שורה-חדשה") -> dict:
+    """A newer reading holding one more payment waiting for its receipt: on the list the page opens on ("לטיפול")."""
+    return answer(with_row(view(), sc_row("3199", marker, "receipt_pending", receipt="טרם", receipt_idx="0")),
+                  taken_at=taken, age_seconds=age)
+
+
+def visit(answers: dict, returns: list) -> dict:
+    steps = [{"back": r if isinstance(r, list) else [r, "visible"], "raw": True} for r in returns]
+    got = drive(steps=steps, answers=answers, monday={"absent": True}, clock=True)
+    return {"calls": [c for c in got["calls"] if "/totals" not in c], "seen": ["שורה-חדשה" in s["html"] for s in got["steps"]]}
+
+
+def test_a_return_that_meets_the_refresh_gap_still_shows_the_reading_the_server_already_holds():
+    older = {"body": answer()}
+    newer = {"body": newer_body("2026-11-24T08:00:40.250000+00:00", 4)}
+    not_yet = {"reject": {"error": "rate_limited", "retryAfter": 20}}
+    got = visit({"GET /api/desk": [older, newer], "POST /api/desk/refresh": [not_yet]}, [25_000])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh", "GET /api/desk"], "seen": [True]}
+    got = visit({"GET /api/desk": [older, older], "POST /api/desk/refresh": [not_yet, newer]}, [25_000, 5_000, 20_000])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh", "GET /api/desk", "POST /api/desk/refresh"],
+                   "seen": [False, False, True]}
+    newest = {"body": newer_body("2026-11-24T08:00:40.250000+00:00", 0)}
+    got = visit({"GET /api/desk": [older], "POST /api/desk/refresh": [newest, newest]}, [25_000, 3_000, 3_000])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh", "POST /api/desk/refresh"], "seen": [True, True, True]}
+
+
+def test_the_page_asks_again_when_its_window_takes_the_focus_back_after_mondays_item_card():
+    older = {"body": answer()}
+    newer = {"body": newer_body("2026-11-24T08:00:40.250000+00:00", 0)}
+    got = visit({"GET /api/desk": [older], "POST /api/desk/refresh": [newer]}, [[6_000, "focus"]])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh"], "seen": [True]}
+    got = visit({"GET /api/desk": [older], "POST /api/desk/refresh": [newer, newer]}, [[3_000, "focus"], [3_000, "both"]])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh"], "seen": [False, True]}
+    not_yet = {"reject": {"error": "rate_limited", "retryAfter": 5}}
+    got = visit({"GET /api/desk": [older, older], "POST /api/desk/refresh": [not_yet, newer]},
+                [[6_000, "focus"], [2_000, "focus"], [4_000, "focus"]])
+    assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh", "GET /api/desk", "POST /api/desk/refresh"],
+                   "seen": [False, False, True]}
+
+
+# --- ported: the allowlist and one action end to end (analiza-metrics tests/test_finance_actions_js.py) ------------------
+
+@pytest.mark.parametrize("board, item, values", [
+    (ACCOUNTS_BOARD, "1", {VAT_COLUMN: "512345678"}),                               # another board
+    ("5089697338", "1", {"deal_stage": {"index": 1}}),
+    (SC_BOARD, "1", {"text_mm8ckgh8": "123"}),                                       # a column the desk never writes
+    (SC_BOARD, "1", {"numeric_mm8cvnsf": "100"}),                                  # "סכום לזיכוי"
+    (B2_BOARD, "1", {"color_mm1kxpvt": {"index": 4}}),                              # a column of the other board
+    (SC_BOARD, "1", {"color_mm1kxpvt": {"label": "תשלום הוחזר"}}),                  # never by a label's text
+    (SC_BOARD, "1", {"color_mm1kxpvt": {"index": "4"}}),
+    (SC_BOARD, "1", {"color_mm1kxpvt": {"index": 4, "label": "תשלום הוחזר"}}),
+    (SC_BOARD, "1", {"color_mm1kxpvt": {"index": 3}}),                              # an index no action sets
+    (SC_BOARD, "1", {"numeric_mm62za1f": "12a"}), (SC_BOARD, "1", {"numeric_mm62za1f": 500}),
+    (B2_BOARD, "1", {"date_mm4a6y8y": {"date": "11.11.2026"}}), (B2_BOARD, "1", {"date_mm4a6y8y": "2026-11-11"}),
+    (SC_BOARD, "1", {"text_mm8fjzfj": "ZK\n1"}), (SC_BOARD, "1", {"text_mm8fjzfj": "x" * 61}),
+    (SC_BOARD, "1", {"text_mm8fjzfj": "ZK؜1"}),                                # the Arabic letter mark
+    (SC_BOARD, "1", {}), (SC_BOARD, "abc", {"text_mm8fjzfj": "ZK-1"}),
+    (SC_BOARD, "1", {"text_mm8fjzfj": "ZK-1", "date_mm8cp8gj": {"date": "2026-11-11"}}),   # one bad column of two
+])
+def test_a_write_outside_the_allowlist_is_refused_before_monday_is_asked(board, item, values):
+    got = drive(answer(), [{"write": [board, item, values]}], monday=world(), context={})
+    assert got["steps"][0]["refused"] == "write_refused"
+    assert got["sent"] == []
+
+
+def test_the_page_composes_a_mutation_in_one_place_and_calls_monday_api_in_one():
+    source = code_of(PAGE)
+    assert source.count('"mutation ') == 1 and source.count("monday.api(") == 1   # deps.api is this service, not monday
+    assert "change_simple_column_value" not in source and "create_labels_if_missing: false" in source
+
+
+def test_an_action_reads_shows_the_plan_writes_the_index_and_asks_this_services_refresh():
+    """"שליחת קבלה: יצאה", end to end on the hand-made view: the row read live, the plan, one write by index, then a
+    reading that started after it - POST /api/desk/refresh - and the row placed by that reading."""
+    after = view()
+    row = [r for r in after["b2c"]["rows"] if r["id"] == "3102"][0]
+    row.update(state="done", receipt="יצאה", receipt_idx="1", actions=[])
+    got = drive(answer(), [{"act": ["sc:3102", "receipt_sent"]}, {"confirm": True}],
+                monday=receipt_world(), context={"permissions": {"approvedScopes": ["boards:read", "boards:write"]}},
+                answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/refresh": [{"body": answer(after, taken_at="2026-11-24T08:00:09+00:00")}]})
+    plan, wrote = got["steps"]
+    assert plan["phase"] == "confirm" and plan["plan"] == [["שליחת קבלה", False, False, "יצאה"]]
+    read = got["sent"][0]
+    assert read["kind"] == "query" and read["variables"] == {"i": ["3102"], "c": ["color_mm4cq1hw"], "b": [SC_BOARD]}
+    writes = [s for s in got["sent"] if s["kind"] == "mutation"]
+    assert [(w["variables"]["b"], w["variables"]["i"], json.loads(w["variables"]["v"])) for w in writes] == [
+        (SC_BOARD, "3102", {"color_mm4cq1hw": {"index": 1}})]                         # by index, never by text
+    assert wrote["phase"] == "done" and ["/api/desk/refresh", None] in got["posts"]
+    assert "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן." in got["toasts"]
+
+
+# --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------
+
+def test_a_payments_details_show_its_leads_id_number_read_as_the_person_never_from_the_server():
+    body = answer()
+    text = json.dumps(body, ensure_ascii=False)
+    assert "000000018" not in text and "id_number" not in text
+    v = view()
+    for r in v["b2c"]["rows"]:
+        r["lead_ids"] = {"3101": ["6101"], "3102": ["6102", "6103"], "3103": [], "3104": ["6102"], "3105": []}[r["id"]]
+    got = drive(answer(v), [{"show": ALL_OPEN}, {"show": {}}], monday=world())
+    html = got["steps"][0]["html"]
+    cell = fact(detail_of(html, "3101"), "ת.ז")
+    assert cell.startswith('<bdi dir="ltr" class="fin-idnum">000000018</bdi> <button type="button" class="fin-iconbtn" '
+                           'data-id-copy="3101" aria-label="העתקת ת.ז" title="העתקת ת.ז"><svg ')
+    # two leads: the first that holds one; no lead: nothing to read; a lead without one: said so
+    assert "000000034" in fact(detail_of(html, "3102"), "ת.ז")
+    assert fact(detail_of(html, "3103"), "ת.ז") == '<span class="fin-subtle">-</span>'
+    assert fact(detail_of(html, "3104"), "ת.ז") == '<span class="fin-subtle">אין בליד</span>'
+    ids = [s["variables"] for s in got["sent"] if s["variables"]["b"] == [LEADS_BOARD]]
+    assert sorted(ids, key=lambda x: x["i"]) == [{"i": ["6101"], "c": [ID_COLUMN], "b": [LEADS_BOARD]},
+                                                 {"i": ["6102"], "c": [ID_COLUMN], "b": [LEADS_BOARD]},
+                                                 {"i": ["6102", "6103"], "c": [ID_COLUMN], "b": [LEADS_BOARD]}]
+    # drawn again: read once per payment, kept in the page's memory only, and the server never sees a number
+    assert got["steps"][1]["html"] == html and len([s for s in got["sent"] if s["variables"]["b"] == [LEADS_BOARD]]) == 3
+    assert "000000018" not in json.dumps(got["posts"] + got["calls"] + got["usage"])
+
+
+@pytest.mark.parametrize("first, words", [
+    # no CRM seat: the board answers nothing - and since D2 no Excel file holds the number either
+    ({"noBoard": True}, "אין לך גישה ללוח הלידים במאנדיי"),
+    ({"noColumn": True}, "העמודה ת.ז לא נמצאה בלוח הלידים; נדב צריך לבדוק"),
+    ({"noItems": True}, "הליד לא נמצא בלוח הלידים"),
+    ({"reject": {"message": "Unauthorized field or type"}}, "לאפליקציה אין הרשאה לקרוא את לוח הלידים"),
+    ({"reject": {"message": "User unauthorized to perform action"}}, "אין לך גישה ללוח הלידים במאנדיי"),
+    ({"reject": {"message": "Rate limit exceeded"}}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+])
+def test_when_monday_does_not_give_the_id_number_the_details_say_why_and_offer_to_try_again(first, words):
+    one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}
+    got = drive(answer(), [{"show": one}, {"click": [{"idRetry": "3101"}]}], monday=world(answers=[first]))
+    failed, again = got["steps"]
+    assert fact(detail_of(failed["html"], "3101"), "ת.ז") == (
+        '<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" data-id-retry="3101">לנסות שוב</button>'
+        % words)
+    assert "000000018" in fact(detail_of(again["html"], "3101"), "ת.ז") and len(got["sent"]) == 2
+
+
+def test_a_newer_reading_reads_the_number_again_and_the_last_one_stays_on_the_screen_meanwhile():
+    one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}
+    got = drive(answer(), [{"show": one}, {"show": {}}, {"show": {}}], monday=world())
+    assert len(got["sent"]) == 1
+    newer = answer(taken_at="2026-11-24T08:00:30+00:00")
+    got = drive(steps=[{"show": one}, {"click": [{"refresh": "1"}]}], monday=world(answers=[{}, {"hold": True}]),
+                answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [{"body": newer}]})
+    assert len(got["sent"]) == 2 and "POST /api/desk/refresh" in got["calls"]
+    shown = got["steps"][1]["html"]
+    assert "000000018" in fact(detail_of(shown, "3101"), "ת.ז") and "קורא ממאנדיי" not in shown
+
+
+def test_outside_monday_the_id_number_is_not_read_and_the_details_say_where_it_is():
+    got = drive(answer(), [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}}],
+                monday={"absent": True})
+    assert fact(detail_of(got["steps"][0]["html"], "3101"), "ת.ז") == \
+        '<span class="fin-subtle">מוצגת רק כשהתצוגה פתוחה מתוך מאנדיי</span>'
+    assert got["sent"] == []
+
+
+def test_the_copy_button_puts_the_number_on_the_clipboard_and_says_so():
+    one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}
+    got = drive(answer(), [{"show": one}, {"click": [{"idCopy": "3101"}]}], monday=world())
+    assert got["copied"] == ["000000018"] and "ת.ז הועתקה." in got["toasts"]
+    got = drive(answer(), [{"show": one}, {"click": [{"idCopy": "3101"}]}], monday=world(), clipboard="refuses",
+                oldCopyWorks=True)
+    assert got["copied"] == [] and "ת.ז הועתקה." in got["toasts"]
+    got = drive(answer(), [{"show": one}, {"click": [{"idCopy": "3101"}]}], monday=world(), clipboard="none",
+                oldCopyWorks=False)
+    assert "לא הצלחנו להעתיק: לסמן את המספר ולהעתיק ידנית." in got["toasts"]
+
+
+def test_the_id_number_is_the_same_field_in_the_same_place_on_every_payment():
+    v = view()
+    for r in v["b2c"]["rows"]:
+        r["state"] = "done"                       # one list's rows: the same details, refund part or not by its fields
+        r["credit_approved"], r["refund_typed"], r["refund_date"], r["status_idx"] = "0", None, "", "1"
+    got = drive(answer(v), [{"show": ALL_OPEN}], monday=world())
+    details = re.findall(r'<tr class="fin-detail">(.*?)</td></tr>', got["steps"][0]["html"])
+    fields = [re.findall(r"<dt>([^<]+)</dt>", x) for x in details]
+    assert len(fields) == 5 and all(f == fields[0] for f in fields)
+    assert fields[0][fields[0].index("אסמכתת חשבונית") + 1:][:2] == ["ת.ז", "נציג מכירות"]
+
+
+# --- D2: a refund's bank account and a company's ח.פ, read as the person only when shown ---------------------------------
+
+def test_a_refund_to_executes_bank_account_is_read_as_the_person_only_when_its_details_open():
+    body = answer()
+    assert not re.search(r'"bank', json.dumps(body))                         # the server sends no bank account
+    closed = {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}
+    got = drive(body, [{"show": closed}, {"show": REFUND_OPEN}, {"show": {}}], monday=world())
+    listed, opened, again = got["steps"]
+    # the list reads nothing and shows no account; its details read it once (and the ID number), and a redraw reads nothing
+    assert "פרטי חשבון" not in listed["html"] and [listed["sent"], opened["sent"], again["sent"]] == [0, 2, 2]
+    bank_reads = [s["variables"] for s in got["sent"] if s["variables"]["b"] == [SC_BOARD]]
+    assert bank_reads == [{"i": ["3103"], "c": BANK_COLUMNS, "b": [SC_BOARD]}]
+    assert bank_box(opened["html"]) == ('בנק <bdi dir="ltr">12</bdi> · סניף <bdi dir="ltr">345</bdi> · מספר חשבון '
+                                        '<bdi dir="ltr">1234567</bdi> · בעל/ת החשבון')
+    assert again["html"] == opened["html"]
+    # only a refund to execute: the other rows' details hold no account and read none
+    got = drive(body, [{"show": ALL_OPEN}], monday=world())
+    assert [s["variables"]["i"] for s in got["sent"] if s["variables"]["b"] == [SC_BOARD]] == [["3103"]]
+    assert got["steps"][0]["html"].count("פרטי חשבון") == 1
+    # and never to the server: no request to it carries a cell the page read
+    assert not [x for x in BANK.values() if x in json.dumps(got["posts"] + got["calls"] + got["usage"], ensure_ascii=False)]
+
+
+@pytest.mark.parametrize("first, words", [
+    ({"noBoard": True}, "אין לך גישה לפרטי החשבון במאנדיי"),
+    ({"noColumn": True}, "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge; נדב צריך לבדוק"),
+    ({"noItems": True}, "התקבול לא נמצא בלוח Student Charge"),
+    ({"reject": {"message": "Unauthorized field or type"}}, "לאפליקציה אין הרשאה לקרוא את לוח Student Charge"),
+    ({"reject": {"message": "Rate limit exceeded"}}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+    ({"reject": {"message": "Internal server error"}}, "לא נקראו ממאנדיי"),
+])
+def test_when_monday_does_not_give_the_bank_account_the_details_say_why_and_offer_to_try_again(first, words):
+    # the refund's part of the details is drawn first: its bank account is the first read, and meets the refusal
+    got = drive(answer(), [{"show": REFUND_OPEN}, {"click": [{"bankRetry": "3103"}]}], monday=world(answers=[first]))
+    failed, again = got["steps"]
+    assert bank_box(failed["html"]) == ('<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" '
+                                        'data-bank-retry="3103">לנסות שוב</button>' % words)
+    assert "1234567" in bank_box(again["html"])
+
+
+def test_a_bank_account_monday_holds_empty_outside_monday_and_while_it_is_read_are_each_said_as_they_are():
+    empty = drive(answer(), [{"show": REFUND_OPEN}], monday=world(bank={c: "" for c in BANK_COLUMNS}))
+    assert bank_box(empty["steps"][0]["html"]) == '<span class="fin-subtle">-</span>'
+    outside = drive(answer(), [{"show": REFUND_OPEN}], monday={"absent": True})
+    assert bank_box(outside["steps"][0]["html"]) == '<span class="fin-subtle">מוצגים רק כשהתצוגה פתוחה מתוך מאנדיי</span>'
+    assert outside["sent"] == []
+    held = drive(answer(), [{"show": REFUND_OPEN}], monday=world(answers=[{"hold": True}]))
+    assert bank_box(held["steps"][0]["html"]) == '<span class="fin-subtle">קורא ממאנדיי...</span>'
+
+
+def test_a_companys_vat_id_is_read_as_the_person_only_when_its_ledger_shows_the_billing_details():
+    body = answer()
+    assert "vat_id" not in json.dumps(body["view"]["b2b"]["by_customer"])     # the server never reads it
+    got = drive(body, [{"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+                       {"show": LEDGER}, {"show": {}}], monday=world(), board=B2_BOARD)
+    aging, listed, ledger, again = got["steps"]
+    assert got["sent"] == [s for s in got["sent"] if s["variables"] == {"i": ["7703"], "c": [VAT_COLUMN], "b": [ACCOUNTS_BOARD]}]
+    assert len(got["sent"]) == 1 and "500000027" not in aging["html"] + listed["html"]
+    assert fact(ledger["html"], "ח.פ") == '<bdi dir="ltr">500000027</bdi>' and again["html"] == ledger["html"]
+    # whatever an answer might carry under the key, the ח.פ shown is the one monday gives the person now
+    v = view()
+    v["b2b"]["by_customer"]["7703"]["billing"]["vat_id"] = "999999999"
+    got = drive(answer(v), [{"show": LEDGER}], monday=world(), board=B2_BOARD)
+    assert fact(got["steps"][0]["html"], "ח.פ") == '<bdi dir="ltr">500000027</bdi>' and "999999999" not in got["steps"][0]["html"]
+    assert not [x for x in VATS.values() if x and x in json.dumps(got["posts"] + got["calls"] + got["usage"])]
+
+
+@pytest.mark.parametrize("monday, words", [
+    ({"answers": [{"noBoard": True}]}, "אין לך גישה ללוח החברות במאנדיי"),
+    ({"answers": [{"noColumn": True}]}, "העמודה ח.פ לא נמצאה בלוח החברות; נדב צריך לבדוק"),
+    ({"answers": [{"noItems": True}]}, "החברה לא נמצאה בלוח החברות"),
+    ({"answers": [{"reject": {"message": "Your app is missing the required scopes: boards:read"}}]},
+     "לאפליקציה אין הרשאה לקרוא את לוח החברות"),
+    ({"answers": [{"reject": {"message": "complexity budget exhausted"}}]}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+])
+def test_when_monday_does_not_give_the_vat_id_the_billing_details_say_why_and_offer_to_try_again(monday, words):
+    got = drive(answer(), [{"show": LEDGER}, {"click": [{"vatRetry": "7703"}]}], monday=world(**monday), board=B2_BOARD)
+    failed, again = got["steps"]
+    assert fact(failed["html"], "ח.פ") == ('<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" '
+                                           'data-vat-retry="7703">לנסות שוב</button>' % words)
+    assert fact(again["html"], "ח.פ") == '<bdi dir="ltr">500000027</bdi>'
+
+
+def test_a_vat_id_monday_holds_empty_or_cannot_be_read_outside_monday_is_said_as_it_is():
+    ledger = {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "7702", "open": {}}}
+    empty = drive(answer(), [{"show": ledger}], monday=world(), board=B2_BOARD)
+    assert fact(empty["steps"][0]["html"], "ח.פ") == '<span class="fin-subtle">-</span>'
+    outside = drive(answer(), [{"show": ledger}], monday={"absent": True}, board=B2_BOARD)
+    assert fact(outside["steps"][0]["html"], "ח.פ") == '<span class="fin-subtle">מוצג רק כשהתצוגה פתוחה מתוך מאנדיי</span>'
+    assert outside["sent"] == []
+
+
+def test_the_billing_details_are_read_only_with_one_line_and_the_terms_chip_opens_the_ledger():
+    """The edit went through analiza-metrics' server, a route this service does not have: no edit control, no form, one
+    line; "אין תנאי תשלום" still leads to the company's ledger, and no longer promises an edit there."""
+    got = drive(answer(), [{"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+                           {"click": [{"terms": "7703"}]}], monday=world(), board=B2_BOARD)
+    listed, ledger = got["steps"]
+    chip = ('<button type="button" class="fin-chip fin-chiplink" data-terms="7703" title="פתיחת הכרטסת של החברה">'
+            "אין תנאי תשלום</button>")
+    assert chip in listed["html"] and "לעריכת" not in listed["html"]
+    html = ledger["html"]
+    billing = html[html.index('<section class="fin-panel fin-billing"'):]
+    billing = billing[:billing.index("</section>")]
+    assert billing.count('<p class="fin-act-why">עריכת פרטי החיוב תחזור בקרוב, מהדפדפן</p>') == 1
+    assert "<button" not in billing and "<input" not in billing and "<select" not in billing and "data-bill" not in html
+    assert re.findall(r"<dt>([^<]+)</dt>", billing) == ["ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"]
+    assert fact(billing, "מפתח חשבשבת") == '<bdi dir="ltr">H7703</bdi>'
+    assert fact(billing, "תנאי תשלום") == '<span class="fin-chip">אין תנאי תשלום</span>'
+    assert [p for p in got["posts"] if "account" in p[0]] == []
+    hooks = node(LOAD + "console.log(JSON.stringify(Object.keys(F)));", None)
+    assert not [h for h in hooks if "bill" in h.lower()]
+
+
+# --- D2: an answer with no view yet ---------------------------------------------------------------------------------------
+
+def test_an_answer_without_a_view_says_the_data_was_not_read_yet_and_offers_the_refresh():
+    failed = answer(None, last_attempt={"taken_at": "2026-11-24T07:59:00+00:00", "ok": False, "error": "deadline"})
+    got = drive(steps=[{"click": [{"refresh": "1"}], "raw": True}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer(None)}], "POST /api/desk/refresh": [{"body": answer()}]})
+    first = got["first"]
+    assert '<p class="fin-msg">הנתונים עוד לא נקראו</p>' in first and 'data-refresh="1">רענון</button>' in first
+    assert "נכשלה" not in first and "fin-tabs" not in first
+    assert got["calls"][:2] == ["GET /api/desk", "POST /api/desk/refresh"] and "fin-tabs" in got["steps"][0]["html"]
+    got = drive(failed, [], monday=world())
+    assert '<p class="fin-msg">הקריאה האחרונה נכשלה.</p>' in got["first"] and "הנתונים עוד לא נקראו" in got["first"]
+    # a reading on its way (`refreshing`) is asked for by the page's own second request, as for a view
+    got = drive(steps=[{"raw": True}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer(None, refreshing=True)}], "GET /api/desk?fresh=1": [{"body": answer()}]})
+    assert got["calls"][:2] == ["GET /api/desk", "GET /api/desk?fresh=1"] and "fin-tabs" in got["steps"][0]["html"]
+
+
+def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
+    """An instance that has not read yet may answer a return or a refresh: the reading on the screen stays."""
+    none = {"body": answer(None)}
+    got = drive(steps=[{"back": [25_000], "raw": True}, {"click": [{"refresh": "1"}], "raw": True}], monday={"absent": True},
+                clock=True, answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [none, none]})
+    assert [c for c in got["calls"] if "/totals" not in c] == ["GET /api/desk", "POST /api/desk/refresh", "POST /api/desk/refresh"]
+    for step in got["steps"]:
+        assert "fin-tabs" in step["html"] and "הנתונים עוד לא נקראו" not in step["html"]
+        assert "fin-refreshing" not in step["html"]
+
+
+# --- D2: the usage batches -----------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("failure", [{"status": 404, "error": "http_404"}, {"status": 405, "error": "http_405"},
+                                     {"blocked": True, "error": "unauthorized"}, {"message": "Failed to fetch"}])
+def test_the_usage_batches_stop_quietly_at_the_first_failure(failure):
+    """POST /api/usage is not in this service yet: the first batch fails and nothing more is sent this visit, and the
+    failure is never said on the screen."""
+    steps = [{"click": [{"bstate": "done"}]}, {"wait": 30}, {"click": [{"bstate": "refunded"}]}, {"wait": 30},
+             {"click": [{"legend": "1"}]}, {"hide": True}, {"wait": 30}]
+    got = drive(answer(), steps, monday=world(), useFlushMs=5, usageFails=failure)
+    assert len(got["usage"]) == 1 and got["toasts"] == []
+    assert all("usage" not in s["html"] and "http_" not in s["html"] for s in got["steps"])
+
+
+# --- D2: nothing from an answer, or from monday, is ever parsed as HTML unescaped ----------------------------------------
+
+def test_every_value_an_answer_or_monday_gives_is_escaped_into_the_page():
+    bad = '<img src=x onerror="alert(1)">'
+    v = view()
+    for r in v["b2c"]["rows"]:
+        r.update(name=bad, cohort_code=bad, cohort_title=bad, invoice=bad, channel=bad, rep=bad, refund_method=bad,
+                 flow=bad, status=bad, credit_ref=bad)
+    for r in v["b2b"]["rows"]:
+        r.update(name=bad, account=bad, deal=bad, course=bad, invoice=bad, ctx={"account": bad, "deal": bad}, payer=bad,
+                 deal_stage=bad, account_terms=bad)
+    for c in v["b2b"]["customers"]:
+        c["name"] = bad
+    for part in (v["b2c"], v["b2b"]):
+        part["tasks_about"] = bad
+        part["legend"][0]["items"][0].update(term=bad, text=bad)
+        for s in part["states"]:
+            s.update(label=bad, about=bad)
+    v["b2b"]["by_customer"]["7703"].update(name=bad, billing={"hash_key": bad, "invoice_name": bad, "terms": ""})
+    v["b2c"]["periods"][1]["label"] = bad
+    monday = world(leads={"6101": bad}, bank={c: bad for c in BANK_COLUMNS}, vats={"7703": bad})
+    cases = [dict(ALL_OPEN, legend=True), REFUND_OPEN, {"tab": "b2c", "sc": {"state": "exception", "open": {"3104": True}}},
+             {"tab": "b2b", "legend": True, "b2": {"state": "", "view": "list", "customer": "", "open": {"9901": True, "9903": True}}},
+             {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}, LEDGER]
+    got = drive(answer(v), [{"show": c} for c in cases], monday=monday, board=B2_BOARD)
+    for step in got["steps"]:
+        html = step["html"]
+        assert "<img" not in html and "onerror=\"" not in html
+        assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
+    assert len(got["sent"]) >= 3                                                 # the ID, the bank account, the ח.פ
+
+
+# --- the glue (desk.js) --------------------------------------------------------------------------------------------------
+
+GLUE_HARNESS = r"""
+const vm = require("vm"), fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const nodes = {}, mounted = [], ran = [], fetches = [], listened = [], results = [];
+function nodeOf(id) { if (!nodes[id]) { nodes[id] = { id: id, hidden: id !== "screen-loading", textContent: "" }; } return nodes[id]; }
+const body = { attrs: {}, classes: [], setAttribute(k, v) { body.attrs[k] = v; }, classList: { add(c) { body.classes.push(c); } } };
+global.document = { getElementById: nodeOf, body: body, readyState: "complete", addEventListener() {} };
+const tokens = (input.tokens || ["tok-1"]).slice();
+const sdk = {
+  get(what) {
+    if (what === "context") { return Promise.resolve({ data: input.context === undefined ? {} : input.context }); }
+    if (what === "sessionToken") { return Promise.resolve({ data: tokens.length > 1 ? tokens.shift() : tokens[0] }); }
+    return Promise.resolve({ data: null });
+  },
+  listen(what) { listened.push(what); },
+  api() { throw new Error("the glue never calls monday.api"); }
+};
+const queue = (input.fetch || []).slice();
+global.fetch = function (path, init) {
+  fetches.push({ path: path, init: init });
+  const a = queue.shift() || { status: 200, body: {} };
+  return Promise.resolve({ status: a.status, ok: a.status >= 200 && a.status < 300,
+    json: () => a.body === undefined ? Promise.reject(new Error("no json")) : Promise.resolve(a.body),
+    headers: { get: (h) => (a.headers || {})[h] || null } });
+};
+global.window = { location: { search: input.search || "" }, matchMedia: () => ({ matches: false }),
+  mondaySdk: input.noSdk ? undefined : function () { return sdk; },
+  FinanceDesk: input.noDesk ? undefined : { mount(root, deps) {
+    mounted.push({ root: root.id, monday: deps.monday === sdk ? "sdk" : deps.monday, board: deps.board, keys: Object.keys(deps).sort() });
+    let p = Promise.resolve();
+    (input.mountCalls || []).forEach((c) => { p = p.then(() => (c[0] === "GET" ? deps.api(c[1]) : deps.post(c[1], c[2], c[3]))
+      .then((b) => { results.push({ ok: b }); }, (e) => { results.push({ err: e }); })); });
+    return p;
+  } },
+  FinanceDeskCheck: { run(s) { ran.push(s === sdk ? "sdk" : s); } } };
+vm.runInThisContext(fs.readFileSync(process.argv[1], "utf8"));
+setTimeout(() => {
+  const shown = Object.keys(nodes).filter((k) => k.indexOf("screen-") === 0 && !nodes[k].hidden);
+  fs.writeSync(1, JSON.stringify({ mounted: mounted, ran: ran, fetches: fetches, listened: listened, results: results,
+    shown: shown, blocked: nodeOf("blocked-msg").textContent, check: nodeOf("check").hidden, theme: body.attrs["data-theme"],
+    classes: body.classes }));
+  process.exit(0);
+}, 100);
+"""
+
+
+def glue(**data) -> dict:
+    return node(GLUE_HARNESS, data, page=GLUE)
+
+
+@pytest.mark.parametrize("context, board", [
+    ({"boardId": 9999001, "theme": "dark", "user": {"id": "1"}}, ""),          # a private board: monday, no charge board
+    ({"boardId": 5097721228}, "5097721228"), ({"boardIds": [5093448677]}, "5093448677"),
+])
+def test_the_glue_passes_monday_whenever_monday_supplied_a_context_and_the_board_only_when_it_is_a_charge_board(context, board):
+    got = glue(context=context)
+    assert got["mounted"] == [{"root": "fin-root", "monday": "sdk", "board": board, "keys": ["api", "board", "monday", "post"]}]
+    assert got["shown"] == ["screen-finance"] and got["listened"] == ["context"] and got["ran"] == []
+    assert got.get("theme") == ("dark" if context.get("theme") == "dark" else None)
+
+
+def test_without_a_context_the_desk_gets_no_monday_and_without_a_token_the_view_says_where_to_open_it():
+    got = glue(context={})
+    assert got["mounted"][0]["monday"] is None and got["mounted"][0]["board"] == ""
+    got = glue(noSdk=True, search="?sessionToken=local-dev")
+    assert got["mounted"][0]["monday"] is None
+    got = glue(noSdk=True)
+    assert got["mounted"] == [] and got["shown"] == ["screen-blocked"]
+    assert got["blocked"] == "פתחו את התצוגה מתוך monday - שם היא מקבלת את הזהות שלכם."
+    got = glue(noDesk=True, context={"boardId": 1})
+    assert got["blocked"] == "קובץ התצוגה של הכספים לא נטען. רעננו את הדף."
+
+
+def test_the_glue_asks_a_fresh_token_once_on_token_expired_and_carries_a_429_and_keepalive():
+    expired = {"status": 401, "body": {"error": "token_expired"}}
+    got = glue(context={"boardId": 1}, tokens=["tok-1", "tok-2", "tok-3"], mountCalls=[["GET", "/api/desk"]],
+               fetch=[expired, {"status": 200, "body": {"view": None}}])
+    assert [f["init"]["headers"]["Authorization"] for f in got["fetches"]] == ["Bearer tok-1", "Bearer tok-2"]
+    assert got["results"] == [{"ok": {"view": None}}]
+    # once: a second token_expired is a refusal, and a 401 of another kind is not asked again
+    got = glue(context={"boardId": 1}, tokens=["tok-1", "tok-2"], mountCalls=[["GET", "/api/desk"], ["GET", "/api/desk"]],
+               fetch=[expired, expired, {"status": 401, "body": {"error": "unauthorized"}}])
+    assert len(got["fetches"]) == 3
+    assert [r["err"]["error"] for r in got["results"]] == ["token_expired", "unauthorized"]
+    assert all(r["err"]["blocked"] is True for r in got["results"])
+    got = glue(context={"boardId": 1}, mountCalls=[["POST", "/api/desk/refresh"], ["POST", "/api/usage", {"events": []}, True],
+                                                   ["GET", "/api/desk/totals?tab=b2c"]],
+               fetch=[{"status": 429, "body": {"error": "rate_limited", "retry_after_seconds": 17}, "headers": {"Retry-After": "20"}},
+                      {"status": 404, "body": {"detail": "Not Found"}}, {"status": 503, "body": {"error": "app_not_configured"}}])
+    rate, usage, conf = got["results"]
+    assert rate["err"]["error"] == "rate_limited" and rate["err"]["retryAfter"] == 17
+    assert usage["err"]["error"] == "http_404" and usage["err"]["status"] == 404
+    assert conf["err"] == {"blocked": True, "error": "app_not_configured", "status": 503, "body": {"error": "app_not_configured"}}
+    post = got["fetches"][1]["init"]
+    assert post["method"] == "POST" and post["keepalive"] is True and post["headers"]["Content-Type"] == "application/json"
+    assert json.loads(post["body"]) == {"events": []} and "keepalive" not in got["fetches"][0]["init"]
+
+
+def test_check_1_draws_the_self_check_with_the_pages_sdk_and_never_mounts_the_desk():
+    got = glue(search="?check=1", context={"boardId": 1})
+    assert got["ran"] == ["sdk"] and got["mounted"] == [] and got["fetches"] == []
+    assert got["check"] is False and got["shown"] == [] and got["classes"] == ["is-check"]

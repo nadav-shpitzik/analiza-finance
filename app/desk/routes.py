@@ -4,8 +4,10 @@
   A; its External hosting URL is https://analiza-finance.replit.app/desk/). Served `no-cache` with an ETag of its bytes,
   its assets linked as `?v=<hash of their bytes>` and kept a year: monday reloads the iframe on every open, and a stale
   script against a new answer is a blank view (analiza-metrics app/main.py, the same rule).
-- GET /desk/desk.js, /desk/desk.css, /desk/vendor/monday-sdk.js: the assets. The SDK is analiza-metrics' copy, byte for
-  byte (monday-sdk-js 0.4.12; a test holds its sha256).
+- GET /desk/desk.js, /desk/desk.css, /desk/finance.js, /desk/finance.css, /desk/check.js, /desk/vendor/monday-sdk.js: the
+  assets. D2: finance.js and finance.css are the desk, ported from analiza-metrics; desk.js mounts it; check.js is D1's
+  self-check, drawn on /desk/?check=1. The SDK is analiza-metrics' copy, byte for byte (monday-sdk-js 0.4.12; a test holds
+  its sha256).
 - GET /api/desk: the gate (app/desk/gate.py), then who the reader is and the desk's reading (app/desk/reading.py) as
   counts, for the tabs the reader may see (D1), and the desk itself (D2): `view`, those tabs built from that reading
   (app/desk/view.py), a tab whose board the reader is not on removed, not hidden. It carries names and money, so only a
@@ -21,9 +23,11 @@ D2's routes are analiza-metrics app/finance_api.py at `da671b2` (`finance_view`,
 ported: POST /api/finance/account (ADR-0188: a customer's billing details are the person's write, in the browser) and
 POST /api/usage (a later step: it needs a table, so a migration).
 
-Nothing the page or its assets carry is data: everything comes from /api/desk, behind the sessionToken. The service writes
-nothing to monday (ADR-0188): `MONDAY_TOKEN` reads only (app/monday/client.py refuses a mutation). No ID number, bank
-account or business number is ever in an answer or a file: the reading never holds one (NEVER_READ).
+Nothing the page or its assets carry is data: everything comes from /api/desk, behind the sessionToken, and what the server
+never reads (an ID number, a refund's bank account, a company's ח.פ) the page reads from monday as the person. The service
+writes nothing to monday (ADR-0188): `MONDAY_TOKEN` reads only (app/monday/client.py refuses a mutation); the desk's writes
+go out from the browser, as the person (finance.js mondayWrite). No ID number, bank account or business number is ever in
+an answer or a file: the reading never holds one (NEVER_READ).
 """
 
 from __future__ import annotations
@@ -61,11 +65,16 @@ FRONTEND_DIR = ROOT / "frontend"
 STATIC_FILES = {
     "/desk/desk.js": ("desk.js", "application/javascript; charset=utf-8"),
     "/desk/desk.css": ("desk.css", "text/css; charset=utf-8"),
+    "/desk/finance.js": ("finance.js", "application/javascript; charset=utf-8"),
+    "/desk/finance.css": ("finance.css", "text/css; charset=utf-8"),
+    "/desk/check.js": ("check.js", "application/javascript; charset=utf-8"),
     "/desk/vendor/monday-sdk.js": ("vendor/monday-sdk.js", "application/javascript; charset=utf-8"),
 }
 PAGE = "index.html"
 # the page's links to its assets, rewritten to `?v=<hash>` when the page is served
 ASSET_LINKS = (("/desk/desk.js", 'src="/desk/desk.js"'), ("/desk/desk.css", 'href="/desk/desk.css"'),
+               ("/desk/finance.js", 'src="/desk/finance.js"'), ("/desk/finance.css", 'href="/desk/finance.css"'),
+               ("/desk/check.js", 'src="/desk/check.js"'),
                ("/desk/vendor/monday-sdk.js", 'src="/desk/vendor/monday-sdk.js"'))
 ASSET_VERSION_CHARS = 12
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -211,6 +220,21 @@ def desk_js(request: Request):
 @router.get("/desk/desk.css")
 def desk_css(request: Request):
     return _static(request, "/desk/desk.css")
+
+
+@router.get("/desk/finance.js")
+def desk_finance_js(request: Request):
+    return _static(request, "/desk/finance.js")
+
+
+@router.get("/desk/finance.css")
+def desk_finance_css(request: Request):
+    return _static(request, "/desk/finance.css")
+
+
+@router.get("/desk/check.js")
+def desk_check_js(request: Request):
+    return _static(request, "/desk/check.js")
 
 
 @router.get("/desk/vendor/monday-sdk.js")

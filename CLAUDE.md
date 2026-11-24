@@ -83,6 +83,13 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   D2; the reader refuses every `NEVER_READ` column for every caller (an ID number, a bank account, an account's business
   number, and every mirror of one: three, read live 24.11), keeps only the cells it asked for, and a linked row answered
   from another board is a stranger, counted and dropped. The SDK is analiza-metrics' copy (its sha256 is pinned by a test). uvicorn's access line never carries a sessionToken (`NoTokenInAccessLog`).
+- **The desk's page (D2):** `frontend/finance.js` and `finance.css` are analiza-metrics' (da671b2), ported faithfully (what
+  changed is listed at the top of `finance.js`); `frontend/desk.js` mounts them (the SDK, the sessionToken, `monday` whenever
+  monday supplied a context, `board` only for the two charge boards), and `/desk/?check=1` draws D1's self-check
+  (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
+  through finance.js's one door (`mondayCall`; its one mutation in `mondayWrite`, behind `WRITABLE`). What the server never
+  reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
+  page's memory and sent nowhere. Tests: `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
