@@ -167,6 +167,9 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-t td.n { text-align: right; white-space: nowrap; }
 #screen-finance table.fin-t th.n { text-align: right; }
 #screen-finance table.fin-t .k-student { white-space: nowrap; }
+/* a row a search found outside the open list: its own tile under its name (D2, 1.2) */
+#screen-finance .fin-where { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance .fin-where .fin-statechip { font-size: 12.5px; }
 /* a company's and a deal's name wrap rather than widen the table; a date stays in one piece */
 #screen-finance table.fin-t td.k-account { min-width: 96px; }
 #screen-finance table.fin-t td.k-deal { min-width: 140px; }
@@ -205,13 +208,11 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-panel.fin-empty { margin-top: 16px; }
 #screen-finance .fin-listnote { margin: 0; padding: 8px 16px 10px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12px; }
 
-/* the footer: whether everything was read, and the way to ask - one quiet line under a hairline */
+/* the footer: whether everything was read - one quiet line under a hairline (its link to ask Nadav left in D2, 2.2) */
 #screen-finance .fin-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 24px;
   margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12.5px; }
 #screen-finance .fin-health { flex: 1 1 320px; }
 #screen-finance .fin-health ul { margin: 6px 0 0; padding-inline-start: 18px; }
-#screen-finance .fin-ask { text-decoration: none; white-space: nowrap; }
-#screen-finance .fin-ask:hover { text-decoration: underline; }
 .fin-toast { position: fixed; bottom: 16px; inset-inline-start: 16px; background: #1f2430; color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 50; }
 
 @media (max-width: 900px) {
@@ -337,6 +338,21 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-written::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--fin-focus);
   animation: fin-pulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { #screen-finance .fin-written::before { animation: none; } }
+/* 1.1 (D2): two actions on the row itself - the box that picks a row for a batch at the row's start, the row's own button
+   before "פתיחה במאנדיי" - and the batch above the list: its bar of picked rows, its one confirmation, its report */
+#screen-finance table.fin-t .k-pick { width: 28px; padding-inline-end: 0; }
+#screen-finance .fin-pick { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--fin-focus); cursor: pointer; }
+#screen-finance .fin-pick[disabled] { cursor: default; }
+#screen-finance table.fin-t td.k-rowact { white-space: nowrap; padding-top: 4px; padding-bottom: 4px; }
+#screen-finance .fin-btn.fin-rowact { height: 28px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-batch { margin: 0 16px 12px; }
+#screen-finance .fin-batch .fin-act-msg { margin-top: 0; }
+#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+  border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-sel); font-size: 14px; }
+#screen-finance .fin-batchbar .fin-btn { gap: 6px; }
+#screen-finance .fin-batch-plan ul, #screen-finance .fin-batch-done ul { max-height: 220px; overflow: auto; }
+#screen-finance .fin-batch-done p { margin: 6px 0 2px; font-size: 14px; }
+#screen-finance .fin-batch-done ul { margin: 0; padding-inline-start: 18px; font-size: 14px; }
 /* "אין תנאי תשלום" that leads to the company's ledger: the same chip, pressable, underlined lightly as the desk's links are */
 #screen-finance button.fin-chiplink { border: 0; font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }

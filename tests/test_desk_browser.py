@@ -3,8 +3,8 @@ hand-made view (tests/desk_page_view.py), monday a fake SDK. Chromium through Pl
 
 One visit, the way Chava works: the students tab opens on the view's board, a refund to execute is opened (its bank
 account and the ID number are read from monday as the person, then and only then), the companies tab, one company's
-ledger (its ח.פ read the same way, its billing details read only), the Excel link, a refresh; and /desk/?check=1 draws
-D1's six lines. Set DESK_SCREENSHOT=<path.png> to keep a screenshot of the refund's details."""
+ledger (its ח.פ read the same way, its billing details with their edit, ADR-0188), the Excel link, a refresh; and
+/desk/?check=1 draws D1's six lines. Set DESK_SCREENSHOT=<path.png> to keep a screenshot of the refund's details."""
 from __future__ import annotations
 
 import json
@@ -44,8 +44,9 @@ BANK = {"text_mm8cxm9y": "בעל/ת החשבון", "text_mm8cv3v3": "12", "text_
 VAT = {"7701": "500000001", "7702": "", "7703": "500000027"}
 
 
-def stub_app(log: list):
-    """This service's page routes, behind a stub of D2's API that records every request it is asked."""
+def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None):
+    """This service's page routes, behind a stub of D2's API that records every request it is asked: the hand-made view,
+    or `v`; a refresh answers `refreshed` when given (the reading after a write)."""
     from fastapi import FastAPI, Request
     from fastapi.responses import Response
 
@@ -53,7 +54,8 @@ def stub_app(log: list):
     from app.main import CSP
 
     app = FastAPI()
-    refreshed = {"n": 0}
+    count = {"n": 0}
+    held = {"view": v if v is not None else view()}       # the reading this stub holds: the latest it answered
 
     @app.middleware("http")
     async def record(request: Request, call_next):
@@ -66,24 +68,27 @@ def stub_app(log: list):
 
     @app.get("/api/desk")
     def desk():
-        return answer()
+        return answer(v) if v is not None else answer()
 
     @app.post("/api/desk/refresh")
     def refresh():
-        refreshed["n"] += 1
-        return answer(taken_at="2026-11-24T08:00:%02d+00:00" % (10 + refreshed["n"]))
+        count["n"] += 1
+        taken = "2026-11-24T08:00:%02d+00:00" % (10 + count["n"])
+        if refreshed is not None:
+            held["view"] = refreshed
+        return answer(held["view"], taken_at=taken)
 
     @app.get("/api/desk/totals")
     def totals(tab: str = "b2c", state: str = ""):
-        v = view()
+        shown = held["view"]
         if tab == "b2b_customers":
-            rows = v["b2b"]["customers"]
-            keys = ["to_bill", "partial_balance", "open"] + ["aging_" + b["key"] for b in v["b2b"]["bands"]]
+            rows = shown["b2b"]["customers"]
+            keys = ["to_bill", "partial_balance", "open"] + ["aging_" + b["key"] for b in shown["b2b"]["bands"]]
             sums = {k: str(sum(Decimal((c["aging"][k[6:]] if k.startswith("aging_") else c[k]) or 0) for c in rows))
                     for k in keys}
             sums.update(partial_count=sum(c["partial_count"] for c in rows), partial_unknown=0)
             return {"count": len(rows), "sums": sums}
-        part = v["b2c"] if tab == "b2c" else v["b2b"]
+        part = shown["b2c"] if tab == "b2c" else shown["b2b"]
         tasks = {s["key"] for s in part["states"] if s["task"]}
         rows = [r for r in part["rows"] if not state or (r["state"] in tasks if state == "tasks" else r["state"] == state)]
         fields = ("money_in", "refunded", "credit_approved") if tab == "b2c" else ("amount", "open_money", "paid_so_far", "balance")
@@ -239,9 +244,10 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
     assert all(r["query"].startswith("query ") and "mutation" not in r["query"] and r["apiVersion"] == "2026-07" for r in reads)
     assert steps["refund"]["bank"] == "פרטי חשבון בנק 12 · סניף 345 · מספר חשבון 1234567 · בעל/ת החשבון"
 
-    # one company's ledger: its ח.פ read when its billing details show, the details read only, one line about the edit
+    # one company's ledger: its ח.פ read when its billing details show, and their edit (ADR-0188: from the browser, as the
+    # person) one press away - nothing more is read until it is pressed
     billing = steps["ledger"]["billing"]
-    assert "500000027" in billing and "עריכת פרטי החיוב תחזור בקרוב, מהדפדפן" in billing and steps["ledger"]["edit"] == 0
+    assert "500000027" in billing and "תחזור בקרוב" not in billing and steps["ledger"]["edit"] == 1
     assert steps["ledger"]["monday"] == 3
     # the Excel file: the link this service signs, opened in a new tab through monday
     assert steps["exported"] == [{"what": "openLinkInTab", "args": {"url": base + "/api/desk/export.xlsx?tab=b2b&exp=1&sig=stub"}}]

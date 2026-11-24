@@ -311,9 +311,14 @@ LEGEND = {
         ("סכום מחוק", "סכום ששולם בתקבול שהסטטוס שלו לא מכניס כסף (%s): מוצג כמו שהוקלד, ולא נספר באף סכום."
                       % _NO_MONEY_LABELS),
         _UNNAMED_WORD,
-        ("פעולות", "בפרטים של תקבול: מה שאפשר לכתוב ממנו במאנדיי בלי לצאת מהמסך. הכתיבה היא שלך, בהרשאות שלך במאנדיי, "
-                   "ויומן הלוח רושם אותך. לפני הכתיבה המסך קורא את השורה במאנדיי ומראה בדיוק מה ייכתב; אחריה הוא "
-                   "בודק שהערך נשמר, ומבקש קריאה חדשה של הלוחות."),
+        # D2, 1.1 (the desk move plan §1b): two of them on the row itself too, for one row or for several picked at once.
+        # Their names are the buttons' (DESK_ACTIONS, below: "שליחת קבלה" and "סימון" with monday's labels)
+        ("פעולות", "בפרטים של תקבול: מה שאפשר לכתוב ממנו במאנדיי בלי לצאת מהמסך. %s ו%s נמצאות גם בשורה עצמה, "
+                   "בכפתור, ותיבה בתחילת השורה בוחרת כמה שורות לכתיבה אחת (עד 25). הכתיבה היא שלך, "
+                   "בהרשאות שלך במאנדיי, ויומן הלוח רושם אותך. לפני הכתיבה המסך קורא את השורות במאנדיי ומראה בדיוק מה "
+                   "ייכתב בכל אחת; שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת, והמסך אומר למה. אחרי הכתיבה הוא בודק "
+                   "שהערך נשמר בכל שורה, אומר מה נכתב ומה לא, ומבקש קריאה חדשה של הלוחות."
+                   % ("%s: %s" % ("שליחת קבלה", _q(RECEIPT[R_SENT])), "סימון %s" % _q(PAY[P_REFUNDED]))),
         ("נכתב, מתעדכן", "ליד השם של שורה: היא נכתבה מכאן לפני רגע, והמסך מחכה לקריאה חדשה של הלוחות כדי לשבץ אותה "
                          "מחדש. עד אז היא מוצגת עם הערכים שנכתבו, עד שלוש דקות."),
     ],
@@ -362,11 +367,14 @@ LEGEND = {
                    "בודק שהערך נשמר, ומבקש קריאה חדשה של הלוחות."),
         ("נכתב, מתעדכן", "ליד השם של שורה: היא נכתבה מכאן לפני רגע, והמסך מחכה לקריאה חדשה של הלוחות כדי לשבץ אותה "
                          "מחדש. עד אז היא מוצגת עם הערכים שנכתבו, עד שלוש דקות."),
-        # ADR-0188: the edit is the person's own, like every action; in analiza-metrics the server wrote it ("נכתבת בידי
-        # השרת של המסך ולא בשמך, כי ללוח החברות אין גישה בלי מושב CRM"), which this service never does
+        # ADR-0188: the edit is the person's own, from the browser, like every action; in analiza-metrics the server wrote
+        # it ("נכתבת בידי השרת של המסך ולא בשמך, כי ללוח החברות אין גישה בלי מושב CRM"), which this service never does.
+        # What was there before is kept by monday's activity log of the board (MON-41); the old Update on the company is
+        # written only when the app holds the permission to write updates (updates:write), which it does not ask for
         ("פרטי חיוב", "בכרטסת של חברה: ח.פ, מפתח חשבשבת, חשבונית על שם ותנאי תשלום, ארבע עמודות של החברה בלוח החברות. "
-                      "עריכה שלהן נכתבת בשמך, בהרשאות שלך במאנדיי, כמו שאר הפעולות; על החברה נכתב עדכון בשמך: מה היה "
-                      "ומה נכתב."),
+                      "עריכה שלהן נכתבת מהדפדפן בשמך, בהרשאות שלך במאנדיי, כמו שאר הפעולות, ויומן הפעילות של לוח "
+                      "החברות שומר מה היה ומה נכתב. עדכון על החברה, עם מה שהיה ומה שנכתב, נכתב בשמך רק כשלאפליקציה "
+                      "יש הרשאה לכתוב עדכונים במאנדיי."),
     ],
 }
 
@@ -546,7 +554,12 @@ ACTION_BOARDS = {"sc": STUDENT_CHARGE, "b2": B2B_CHARGE}
 def desk_writes() -> dict[str, dict[str, Any]]:
     """Every (board, column) an action writes, with the kind of value - and for a status, instead of its kind, the indexes
     the actions set, in order (review 11.11: the page allowed a status column with every one of its labels): what the
-    page's allowlist must hold, and no more."""
+    page's allowlist must hold, and no more.
+
+    Since ADR-0188 (D2, the desk move plan §1b item 4), also a customer's four billing details on Accounts, which the page
+    writes as the person: each text by its own rule, named by its field (`vat_id` nine digits or empty, `hash_key` up to
+    15 letters, digits or "-" or empty, `invoice_name` up to INVOICE_NAME_MAX characters on one line - analiza-metrics
+    app/account_writer.py `clean` at da671b2), and "תנאי תשלום" as a dropdown by the ids the form offers, never cleared."""
     out: dict[str, dict[str, Any]] = {}
     for a in DESK_ACTIONS.values():
         for step in a["steps"]:
@@ -556,6 +569,8 @@ def desk_writes() -> dict[str, dict[str, Any]]:
                     cols[w["column"]] = sorted(set(cols.get(w["column"]) or []) | {int(w["index"])})
                 else:
                     cols[w["column"]] = w["kind"]
+    out[ACCOUNTS_BOARD] = {f["column"]: {"dropdown": sorted(int(i) for i in ACCOUNT_TERMS)} if f["kind"] == "dropdown" else key
+                           for key, f in ACCOUNT_FIELDS.items()}
     return out
 
 
@@ -602,7 +617,8 @@ def account_billing(accounts: list[dict]) -> dict[str, dict[str, str | None]]:
 # What the ledger draws a customer's four billing details with, and the form that edits them: analiza-metrics
 # app/account_writer.py `form_contract()` at da671b2, its values copied here, since that module is not ported - in this
 # service the server writes nothing to monday (ADR-0188). The edit is the person's own, in the browser through
-# monday.api(), like every action of the desk, and its Update (MON-41) too: nothing here checks or writes a value. The
+# monday.api(), like every action of the desk (its four columns are on desk_writes' allowlist, each by its rule), and so
+# is its Update (MON-41), written only when the app holds updates:write: nothing here checks or writes a value. The
 # business number's field is named by its column so the page can read it as the person; its value is never read here.
 ACCOUNT_FIELDS = OrderedDict([
     ("vat_id", {"column": AC["vat_id"], "title": "ח.פ", "kind": "text"}),

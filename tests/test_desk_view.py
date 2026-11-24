@@ -763,10 +763,13 @@ def test_the_done_refunds_tile_and_the_refunded_figure_have_different_names():
 
 # --- what the desk may write, as the person (analiza-metrics tests/test_finance_actions.py, its pure tests) -----------
 
-# the task's list, verbatim (backlog 0280 round 3 item 6, spec §2.5): every column the browser may write, and no other
+# the task's list, verbatim (backlog 0280 round 3 item 6, spec §2.5): every column the browser may write, and no other -
+# and since D2 (ADR-0188, the desk move plan §1b item 4) a customer's four billing details on Accounts, which the person
+# writes from the browser where analiza-metrics' server wrote them
 ALLOWED = {
     fd.STUDENT_CHARGE: {"color_mm1kxpvt", "numeric_mm62za1f", "text_mm8fjzfj", "text_mm6d6s97", "color_mm4cq1hw"},
     fd.B2B_CHARGE: {"color_mm3zx2n7", "text_mm3y6snz", "date_mm4a6y8y", "color_mm4bhvta", "numeric_mm8zqhag"},
+    fd.ACCOUNTS_BOARD: {"text_mm3y3gm7", "text_mm3yprqa", "text_mm3yfrew", "dropdown_mm3yd36d"},
 }
 
 
@@ -774,14 +777,21 @@ def test_the_actions_write_exactly_the_allowed_columns_and_nothing_on_any_other_
     writes = fd.desk_writes()
     assert {b: set(cols) for b, cols in writes.items()} == ALLOWED
     # a status column is allowed with the indexes the actions set, never with its every label (review 11.11)
-    assert {b: {c: v for c, v in cols.items() if isinstance(v, list)} for b, cols in writes.items()} == {
+    assert {b: {c: v for c, v in cols.items() if isinstance(v, list)} for b, cols in writes.items() if b != fd.ACCOUNTS_BOARD} == {
         fd.STUDENT_CHARGE: {"color_mm1kxpvt": [4, 5], "color_mm4cq1hw": [1]},
         fd.B2B_CHARGE: {"color_mm3zx2n7": [6], "color_mm4bhvta": [0, 1]}}
+    # the billing details: each text by its own rule, the terms by the form's ids (analiza-metrics account_writer's)
+    assert writes[fd.ACCOUNTS_BOARD] == {fd.AC["vat_id"]: "vat_id", fd.AC["hash_key"]: "hash_key",
+                                         fd.AC["invoice_name"]: "invoice_name",
+                                         fd.AC["terms"]: {"dropdown": sorted(int(i) for i in fd.ACCOUNT_TERMS)}}
+    assert writes[fd.ACCOUNTS_BOARD][fd.AC["terms"]] == {"dropdown": [1, 2, 3, 4, 5]}
     # the bank columns, the ID number and "סכום לזיכוי" are never written from the desk
     every = {c for cols in writes.values() for c in cols}
     bank = {fd.SC[k] for k in ("bank_holder", "bank", "bank_branch", "bank_account")}
     assert not every & (bank | {fd.LD["id_number"], fd.SC["credit_approved"], fd.SC["planned"]})
-    assert not every & NEVER_READ
+    # a column the server never reads is never written either - but the business number, which the person writes from
+    # the browser (ADR-0188) and the server never reads (ADR-0173 §1)
+    assert every & NEVER_READ == {fd.AC["vat_id"]}
 
 
 def test_a_status_is_written_by_its_index_from_the_live_dictionaries_with_its_label():
@@ -905,8 +915,17 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
     assert {"פרטי חיוב", "ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"} <= fd.legend_terms("b2b")
     said = {i["term"]: i["text"] for p in fd._legend_out("b2b") for i in p["items"]}
     assert "MON-43" in said["מפתח חשבשבת"] and "בשמך" in said["פרטי חיוב"] and "בידי השרת" not in said["פרטי חיוב"]
+    # what the page does (the adversarial review of 62fd993): written from the browser as the person, the before and the
+    # after in monday's activity log, and an Update on the company only with the permission to write one - never promised
+    bill = said["פרטי חיוב"]
+    assert "נכתבת מהדפדפן בשמך" in bill and "יומן הפעילות של לוח החברות שומר מה היה ומה נכתב" in bill
+    assert "רק כשלאפליקציה יש הרשאה לכתוב עדכונים במאנדיי" in bill and "ועל החברה נכתב עדכון בשמך" not in bill
     # the ID number is never in the Excel file now (app/desk/export.py), and the legend no longer says it is
     students = {i["term"]: i["text"] for p in fd._legend_out("b2c") for i in p["items"]}
+    # D2, 1.1: two actions on the row itself, by their buttons' own names, for several rows at once, never over a change
+    acts = students["פעולות"]
+    assert fd.DESK_ACTIONS["receipt_sent"]["button"] in acts and fd.DESK_ACTIONS["refund_done"]["button"] in acts
+    assert "בשורה עצמה" in acts and "עד 25" in acts and "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת" in acts
     assert "אקסל" not in students["ת.ז"] and "בשמך" in students["ת.ז"]
 
 

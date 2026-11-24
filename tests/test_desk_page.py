@@ -11,8 +11,10 @@ labels, the return rule against the refresh gap, the legend against every label 
 Excel file, and the page's write allowlist (WRITABLE) against the server's actions (desk_writes).
 
 New with the move: no path under /api/finance, every monday request through the one door, a refund's bank account and a
-company's ח.פ read as the person only when shown, the billing details read only, an answer with no view yet, and the
-usage batches stopping quietly at the first failure."""
+company's ח.פ read as the person only when shown, an answer with no view yet, and the
+usage batches stopping quietly at the first failure. With D2's list (the desk move plan §1b): the search over every row
+(1.2), the two actions on the row for one row or several (1.1), and a company's billing details edited from the browser as
+the person, their Update only with updates:write (ADR-0188)."""
 from __future__ import annotations
 
 import copy
@@ -44,6 +46,7 @@ const input = JSON.parse(fs.readFileSync(0, "utf8"));
 let now = 1000000;
 if (input.clock) { const RealDate = Date; global.Date = class extends RealDate { static now() { return now; } }; }
 const toasts = [], copied = [], sent = [], calls = [], posts = [], usage = [], executed = [], handlers = {}, listeners = {};
+const updates = [];
 const search = { focus() {}, setSelectionRange() {}, value: "" };
 global.document = { visibilityState: "visible", activeElement: null, body: { appendChild() {} },
   addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
@@ -79,12 +82,20 @@ const monday = M.absent ? null : {
     if (a.reject) { return Promise.reject(a.reject); }
     if (a.hold) { return new Promise(() => {}); }
     if (a.answer) { return Promise.resolve(a.answer); }
+    if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
+      updates.push(v);
+      return Promise.resolve({ data: { create_update: { id: "9001" } } });
+    }
     if (query.trim().startsWith("mutation")) {
       const item = boards[v.b][v.i], vals = JSON.parse(v.v);
       Object.keys(vals).forEach((c) => {
+        if ((M.keep || []).indexOf(c) !== -1) { return; }                     // monday took the write and kept its value
         const val = vals[c];
         if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
         else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
+        else if (val && typeof val === "object" && "ids" in val) {           // a dropdown: its label's name, by id
+          const l = (labels[v.b][c] || []).filter((x) => x.id === val.ids[0])[0]; item[c] = l ? l.name : "";
+        }
         else { item[c] = String(val); }
       });
       return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
@@ -129,6 +140,9 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.show) { F._show(step.show); }
     if (step.click) { click(step.click[0], step.click[1]); }
     if (step.type !== undefined) { search.value = step.type; handlers.input({ target: { id: "fin-q", value: step.type, dataset: {} } }); }
+    /* a value typed into a box of the page that is not the search ([dataset, value]), or chosen in a list */
+    if (step.input) { handlers.input({ target: { id: "", value: step.input[1], dataset: step.input[0] } }); }
+    if (step.choose) { handlers.change({ target: { id: "", value: step.choose[1], dataset: step.choose[0] } }); }
     if (step.change) { handlers.change({ target: { id: step.change[0], value: step.change[1], dataset: {} } }); }
     if (step.hide) { document.visibilityState = "hidden"; (listeners.visibilitychange || []).forEach((f) => f()); }
     if (step.back) {
@@ -142,16 +156,23 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.act) { F._act(step.act[0], step.act[1], step.typed); }
     if (step.confirm) { F._confirm(); }
     if (step.write) { refused = await F._write(step.write[0], step.write[1], step.write[2]).then(() => "sent", (e) => e.code); }
+    if (step.update) { refused = await F._update(step.update[0], step.update[1], step.update[2]).then(() => "sent", (e) => e.code); }
     if (step.wait) { await new Promise((r) => setTimeout(r, step.wait)); }
     await settle();
-    const act = F._actState();
+    const act = F._actState(), b = F._batchState();
     steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error,
       refused: refused, can: F._can(), sent: sent.length,
-      plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null });
+      plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
+      /* 1.1: the batch on the screen, row by row */
+      batch: b ? { phase: b.phase, error: b.error || "", items: b.items.map((it) => ({ key: it.key, verdict: it.verdict || null,
+        why: it.why || "", result: it.result || null })) } : null, picked: Object.keys(F._picked()).sort(),
+      /* D2 (ADR-0188): a company's billing edit */
+      bill: F._billState() ? { phase: F._billState().phase, error: F._billState().error || "", outcome: F._billState().outcome || null }
+        : null });
   }
   /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
   fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
-    usage: usage, toasts: toasts, copied: copied, executed: executed }));
+    usage: usage, toasts: toasts, copied: copied, executed: executed, updates: updates }));
   process.exit(0);
 })();
 """
@@ -258,10 +279,58 @@ def test_the_page_never_calls_a_path_under_api_finance():
     assert not [p for p in paths if p.startswith("/api/finance")]
 
 
+def test_the_unfilter_button_and_the_link_to_ask_nadav_are_gone():
+    """D2, 2.1 and 2.2 (the desk move plan §1b, 24.11): "חיפוש ללא סינון" (pressed 0 times; since 1.2 a search looks at every
+    row by itself) and "חסר כאן משהו? פנייה לנדב" (no request came through its form since the desk was built) are gone -
+    their words, their code, their hook and their style."""
+    page = code_of(PAGE)
+    for gone in ("data-unfilter", "unfilter(", "UNFILTER", "_unfilter", "data-ask", "fin-ask", "ASK_URL", "5098225215",
+                 "51829235", "חסר כאן משהו", "פנייה לנדב", "חיפוש ללא סינון"):
+        assert gone not in page, gone
+    assert "fin-ask" not in (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert "_unfilter" not in node(LOAD + "console.log(JSON.stringify(Object.keys(F)));", None)
+    got = drive(answer(), [
+        {"show": {"tab": "b2c", "query": "zzz", "sc": {"state": "tasks", "period": "2026-11", "open": {}}}},
+        {"show": {"tab": "b2b", "query": "zzz", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}}],
+        monday=world())
+    for html in [got["first"]] + [s["html"] for s in got["steps"]]:
+        assert "פנייה לנדב" not in html and "data-ask" not in html and "data-unfilter" not in html
+        assert '<div class="fin-foot"><section class="fin-health">' in html
+
+
+def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_company():
+    """D2, 1.2: a search looks at every row of its tab, so its Excel file and its totals are asked with no tile, period or
+    company - the server's filter then picks exactly the rows on the screen (tests/test_desk_parity_js.py). Without a
+    search, the open list's filters go as before."""
+    from urllib.parse import parse_qs
+    got = drive(answer(), [
+        {"show": {"tab": "b2c", "query": "תלמיד/ה", "sc": {"state": "receipt_pending", "period": "2026-11", "open": {}}}},
+        {"click": [{"export": "b2c"}]},
+        {"show": {"tab": "b2b", "query": "חיוב", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}},
+        {"click": [{"export": "b2b"}]},
+        {"show": {"tab": "b2c", "query": "", "sc": {"state": "receipt_pending", "period": "2026-11", "open": {}}}},
+        {"click": [{"export": "b2c"}]},
+        {"show": {"tab": "b2b", "query": "", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}},
+        {"click": [{"export": "b2b"}]}],
+        monday=world(), answers={"GET /api/desk": [{"body": answer()}],
+                                 "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?x=1"}}] * 4})
+    links = [p[1] for p in got["posts"] if p[0] == "/api/desk/export-link"]
+    assert [(x["tab"], x["state"], x["period"], x["customer"], x["q"]) for x in links] == [
+        ("b2c", "", "", "", "תלמיד/ה"), ("b2b", "", "", "", "חיוב"),
+        ("b2c", "receipt_pending", "2026-11", "", ""), ("b2b", "overdue", "", "7701", "")]
+    totals = [{k: v[0] for k, v in parse_qs(c.split("?", 1)[1], keep_blank_values=True).items() if k != "taken"}
+              for c in got["calls"] if c.startswith("GET /api/desk/totals")]
+    assert {"tab": "b2c", "state": "", "period": "", "q": "תלמיד/ה"} in totals
+    assert {"tab": "b2b", "state": "", "customer": "", "q": "חיוב"} in totals
+    assert {"tab": "b2c", "state": "receipt_pending", "period": "2026-11", "q": ""} in totals
+    assert {"tab": "b2b", "state": "overdue", "customer": "7701", "q": ""} in totals
+
+
 def test_every_monday_request_of_the_page_goes_through_the_one_door():
-    """finance.js calls monday.api in one place (mondayCall) and composes its one mutation in one place (mondayWrite); every
-    read - a row before a write, the ID number, a bank account, a ח.פ - goes through it at the pinned API version. The
-    glue never calls monday.api; the self-check (/desk/?check=1, D1's) has its own one read, held by tests/test_desk.py."""
+    """finance.js calls monday.api in one place (mondayCall) and composes each of its two mutations in one place - the
+    columns in mondayWrite, and since D2 (ADR-0188) a billing edit's Update in mondayUpdate; every read - a row before a
+    write, the ID number, a bank account, a ח.פ, a company's billing details - goes through it at the pinned API version.
+    The glue never calls monday.api; the self-check (/desk/?check=1, D1's) has its own one read, held by tests/test_desk.py."""
     page = code_of(PAGE)
     # every `.api(` of the page is this service's (deps.api) or monday's - and monday's is called in one place
     callers = re.findall(r"([\w.$]+)\s*\.\s*api\s*\(", page)
@@ -269,8 +338,10 @@ def test_every_monday_request_of_the_page_goes_through_the_one_door():
     assert not re.search(r"\[\s*[\"']api[\"']\s*\]", page)          # nor by its name in brackets
     door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
     assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
-    assert page.count('"mutation ') == 1 and page.count("mondayCall(WRITE_ROW") == 1
-    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == ["READ_CELLS", "READ_ROW", "WRITE_ROW"]
+    assert page.count('"mutation ') == 2 and page.count("mondayCall(WRITE_ROW") == 1 and page.count("mondayCall(WRITE_UPDATE") == 1
+    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == ["READ_CELLS", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    update = page[page.index("function mondayUpdate("):page.index("function readRows(")]
+    assert "mondayCall(WRITE_UPDATE" in update and "!CAN_UPDATE" in update and "UPDATE_BOARDS" in update
     assert ".api(" not in code_of(GLUE)
     assert code_of(FRONT / "check.js").count("monday.api(") == 1
     # and in a visit that makes every kind of request: one of the page's three queries, at the version the server reads
@@ -413,8 +484,10 @@ def test_a_write_outside_the_allowlist_is_refused_before_monday_is_asked(board, 
 
 
 def test_the_page_composes_a_mutation_in_one_place_and_calls_monday_api_in_one():
+    """Since D2 (ADR-0188) two mutations, each composed once: the columns, and a billing edit's Update (create_update)."""
     source = code_of(PAGE)
-    assert source.count('"mutation ') == 1 and source.count("monday.api(") == 1   # deps.api is this service, not monday
+    assert source.count('"mutation ') == 2 and source.count("monday.api(") == 1   # deps.api is this service, not monday
+    assert source.count("change_multiple_column_values(") == 1 and source.count("create_update(") == 1
     assert "change_simple_column_value" not in source and "create_labels_if_missing: false" in source
 
 
@@ -437,6 +510,239 @@ def test_an_action_reads_shows_the_plan_writes_the_index_and_asks_this_services_
         (SC_BOARD, "3102", {"color_mm4cq1hw": {"index": 1}})]                         # by index, never by text
     assert wrote["phase"] == "done" and ["/api/desk/refresh", None] in got["posts"]
     assert "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן." in got["toasts"]
+
+
+# --- 1.1 (D2, the desk move plan §1b): two actions on the row itself, for one row or several at once ---------------------
+
+RECEIPT_LABELS = {"0": "טרם", "1": "יצאה", "2": "לא רלוונטי"}
+PAY_LABELS = {"0": "לא שולם", "1": "שולם", "2": "יש בעיה", "3": "מלגת אנליזה", "4": "תשלום הוחזר", "5": "הוחזר חלקי",
+              "9": "ביקש החזר"}
+WRITES = {"permissions": {"approvedScopes": ["boards:read", "boards:write"]}}
+TASKS = {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}
+RECEIPT_COL, STATUS_COL = "color_mm4cq1hw", "color_mm1kxpvt"
+
+
+def receipts_view() -> dict:
+    """The hand-made view with a second payment waiting for its receipt (3106), beside 3102."""
+    return with_row(view(), sc_row("3106", "תלמיד/ה 6", "receipt_pending", invoice="30006", receipt="טרם", receipt_idx="0",
+                                   money_in="5000", paid_typed="5000", net="5000", actions=["receipt_sent"]))
+
+
+def receipts_world(answers=None, **cells) -> dict:
+    """monday as the person reads it: the two payments waiting for a receipt, the refund to execute, their labels."""
+    monday = world(labels={SC_BOARD: {RECEIPT_COL: dict(RECEIPT_LABELS), STATUS_COL: dict(PAY_LABELS)}},
+                   answers=list(answers or []))
+    board = monday["boards"][SC_BOARD]
+    for rid in ("3102", "3106"):
+        board[rid] = {"__name": "תלמיד/ה " + rid[-1], RECEIPT_COL: {"text": "טרם", "index": 0, "label": "טרם"}}
+    board["3103"].update({"__name": "תלמיד/ה 3", STATUS_COL: {"text": "שולם", "index": 1, "label": "שולם"}})
+    for rid, cell in cells.items():
+        board[rid].update(cell)
+    return monday
+
+
+def receipts_done(v: dict | None = None) -> dict:
+    """The reading after both receipts were written: both "הושלם"."""
+    v = copy.deepcopy(v or receipts_view())
+    for r in v["b2c"]["rows"]:
+        if r["id"] in ("3102", "3106"):
+            r.update(state="done", receipt="יצאה", receipt_idx="1", actions=[])
+    return v
+
+
+def status_cell(labels: dict, idx: str) -> dict:
+    return {"text": labels[idx], "index": int(idx), "label": labels[idx]}
+
+
+def writes_of(got: dict) -> list:
+    return [(s["variables"]["b"], s["variables"]["i"], json.loads(s["variables"]["v"])) for s in got["sent"]
+            if s["kind"] == "mutation"]
+
+
+def batch_answers(v: dict, refreshed: dict | None = None) -> dict:
+    return {"GET /api/desk": [{"body": answer(v)}],
+            "POST /api/desk/refresh": [{"body": answer(refreshed or receipts_done(v), taken_at="2026-11-24T08:00:09+00:00")}]}
+
+
+def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_its_write():
+    """Select two rows, press once, one confirmation listing each row's write; on "כתיבה" each row is read again right
+    before its own write, written by index and checked against monday's answer; one refresh after the batch."""
+    import html as h
+    v = receipts_view()
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(v))
+    shown, _one, two, plan, done = got["steps"]
+    # the box and the button only on the rows that offer one of the two: the two receipts and the refund to execute
+    assert sorted(re.findall(r'data-pick="(sc:\d+)"', shown["html"])) == ["sc:3102", "sc:3103", "sc:3106"]
+    assert sorted(re.findall(r'data-row-act="([^"]+)"', shown["html"])) == [
+        "sc:3102:receipt_sent", "sc:3103:refund_done", "sc:3106:receipt_sent"]
+    assert 'data-pick-all="1"' in shown["html"] and "<th class=\"k-rowact\">פעולות</th>" in shown["html"]
+    assert shown["sent"] == 0                                                       # nothing read before a press
+    # the bar: what is picked, and one button per action they offer, with its count
+    bar = h.unescape(two["html"])
+    assert "נבחרו 2 שורות" in bar and 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(2)</span>' in bar
+    # one confirmation, from the two rows read in one request, before anything is written
+    assert plan["batch"]["phase"] == "confirm" and [i["verdict"] for i in plan["batch"]["items"]] == ["write", "write"]
+    page = h.unescape(plan["html"])
+    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in page
+    assert '<li><b>תלמיד/ה 2</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
+    assert '<li><b>תלמיד/ה 6</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
+    assert 'data-batch-go="1">כתיבה</button>' in page and plan["sent"] == 1
+    assert got["sent"][0]["kind"] == "query" and got["sent"][0]["variables"] == {
+        "i": ["3102", "3106"], "c": [RECEIPT_COL], "b": [SC_BOARD]}
+    # each row read right before its write, written by index, one after the other
+    assert [(s["kind"], s["variables"]["i"]) for s in got["sent"][1:]] == [
+        ("query", ["3102"]), ("mutation", "3102"), ("query", ["3106"]), ("mutation", "3106")]
+    assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
+    assert done["batch"]["phase"] == "done" and [i["result"] for i in done["batch"]["items"]] == ["written", "written"]
+    assert "נכתב במאנדיי בשמך ב-2 שורות. המסך מתעדכן." in got["toasts"]
+    # one refresh, as after one action; the picks are the batch's and are cleared
+    assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
+    assert done["picked"] == [] and "data-row=\"3102\"" not in done["html"]          # the reading placed them in "הושלם"
+
+
+def test_a_rows_own_button_is_one_press_to_its_confirmation_and_says_what_follows():
+    """One row: its button reads it and shows its one confirmation, with what the refunds app does after (MON-86)."""
+    import html as h
+    v = receipts_view()
+    refunded = copy.deepcopy(v)
+    for r in refunded["b2c"]["rows"]:
+        if r["id"] == "3103":
+            r.update(state="refunded", status="תשלום הוחזר", status_idx="4", actions=[])
+    got = drive(steps=[{"show": TASKS}, {"click": [{"rowAct": "sc:3103:refund_done"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(v, refunded))
+    plan, done = got["steps"][1], got["steps"][2]
+    page = h.unescape(plan["html"])
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in page
+    assert '<li><b>תלמיד/ה 3</b> · סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"</li>' in page
+    assert "אחרי הכתיבה אפליקציית ההחזרים סוגרת את הבקשה." in page                # the action's `after`, from the server
+    assert writes_of(got) == [(SC_BOARD, "3103", {STATUS_COL: {"index": 4}})]
+    assert done["batch"]["items"] == [{"key": "sc:3103", "verdict": "write", "why": "", "result": "written"}]
+
+
+@pytest.mark.parametrize("now, why", [
+    # the desk read "טרם"; monday holds another value now: not written over
+    (status_cell(RECEIPT_LABELS, "2"), 'השתנתה במאנדיי מאז הקריאה, ועכשיו שליחת קבלה "לא רלוונטי"'),
+    # monday already holds it
+    (status_cell(RECEIPT_LABELS, "1"), 'כבר "יצאה" במאנדיי'),
+])
+def test_a_row_changed_in_monday_since_the_reading_is_not_written_and_the_confirmation_says_why(now, why):
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(**{"3106": {RECEIPT_COL: now}}), context=WRITES, answers=batch_answers(receipts_view()))
+    plan, done = got["steps"][3], got["steps"][4]
+    assert [(i["key"], i["verdict"], i["why"]) for i in plan["batch"]["items"]] == [
+        ("sc:3102", "write", ""), ("sc:3106", "skip", why)]
+    page = h.unescape(plan["html"])
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 2", בשמך:' in page and "<p>לא ייכתב:</p><ul><li><b>תלמיד/ה 6</b> · %s</li>" % why in page
+    assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}})]
+    assert "לא נכתב:" in h.unescape(done["html"]) and why in h.unescape(done["html"])
+
+
+def test_a_row_changed_after_the_confirmation_was_shown_is_not_written_and_the_rest_is():
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]},
+                       {"mutate": {SC_BOARD: {"3102": {RECEIPT_COL: status_cell(RECEIPT_LABELS, "2")}}}},
+                       {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    done = got["steps"][5]["batch"]
+    assert [(i["key"], i["result"]) for i in done["items"]] == [("sc:3102", "skipped"), ("sc:3106", "written")]
+    assert done["items"][0]["why"] == 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו שליחת קבלה "לא רלוונטי"'
+    assert writes_of(got) == [(SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
+    report = h.unescape(got["steps"][5]["html"])
+    assert "נכתב במאנדיי בשמך בשורה אחת." in report and "<li><b>תלמיד/ה 6</b></li>" in report
+    assert "<p>לא נכתב:</p>" in report
+
+
+def test_a_row_that_fails_is_said_with_why_and_the_others_are_written():
+    denied = {"reject": {"message": "User unauthorized to perform action"}}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(answers=[{}, {}, denied]), context=WRITES, answers=batch_answers(receipts_view()))
+    done = got["steps"][4]
+    assert [(i["key"], i["result"], i["why"]) for i in done["batch"]["items"]] == [
+        ("sc:3102", "failed", "מאנדיי לא מרשה לך לכתוב בשורה הזאת. לא נכתב כלום."), ("sc:3106", "written", "")]
+    assert "נכתב במאנדיי בשמך בשורה אחת, ובשאר לא: הפירוט ברשימה. המסך מתעדכן." in got["toasts"]
+    assert 'class="fin-act-msg bad" role="alert"' in done["html"] and "<p>נכשל:</p>" in done["html"]
+    assert len([p for p in got["posts"] if p[0] == "/api/desk/refresh"]) == 1
+
+
+def test_a_missing_permission_stops_the_batch_at_its_first_write_and_nothing_else_is_sent():
+    scope = {"reject": {"message": "Your app is missing the required scopes: boards:write"}}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(answers=[{}, {}, scope]), context={}, answers=batch_answers(receipts_view()))
+    done = got["steps"][4]
+    assert [(i["result"], i["why"]) for i in done["batch"]["items"]] == [
+        ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נכתב כלום."), ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נשלח.")]
+    assert [s["kind"] for s in got["sent"]] == ["query", "query", "mutation"] and done["can"]["state"] == "no"
+    assert "לא נכתב כלום: הפירוט ברשימה." in got["toasts"] and not [p for p in got["posts"] if p[0] == "/api/desk/refresh"]
+    assert "data-row-act" not in done["html"] and "data-pick" not in done["html"]   # no button left where it cannot write
+
+
+def test_a_label_renamed_in_monday_stops_the_whole_batch_before_anything_is_written():
+    monday = receipts_world()
+    monday["labels"][SC_BOARD][RECEIPT_COL]["1"] = "נשלחה"
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]}],
+                monday=monday, context=WRITES, answers=batch_answers(receipts_view()))
+    failed = got["steps"][2]["batch"]
+    assert failed["phase"] == "failed" and failed["error"] == "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+    assert writes_of(got) == [] and "data-batch-go" not in got["steps"][2]["html"]
+
+
+@pytest.mark.parametrize("context, monday", [
+    ({"permissions": {"approvedScopes": ["boards:read"], "requiredScopes": ["boards:read"]}}, None),
+    (dict(WRITES, user={"isViewOnly": True}), None),
+    ({}, {"absent": True}),
+])
+def test_where_the_person_cannot_write_the_row_carries_no_box_and_no_button(context, monday):
+    got = drive(answer(receipts_view()), [{"show": TASKS}], monday=monday or receipts_world(), context=context)
+    html = got["steps"][0]["html"]
+    assert "data-pick" not in html and "data-row-act" not in html and "k-rowact" not in html and "k-pick" not in html
+
+
+def test_the_bar_offers_each_action_its_picked_rows_offer_and_a_batch_takes_only_the_rows_of_its_action():
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3103"}]},
+                       {"click": [{"batch": "refund_done"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    bar = h.unescape(got["steps"][2]["html"])
+    assert 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(1)</span>' in bar
+    assert 'data-batch="refund_done">סימון "תשלום הוחזר" <span class="fin-subtle">(1)</span>' in bar
+    assert [i["key"] for i in got["steps"][3]["batch"]["items"]] == ["sc:3103"]
+    # a pick in a list that is not on the screen is not in its bar, nor in its batch
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]},
+                       {"show": {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    assert "נבחרה שורה אחת" in got["steps"][1]["html"] and "fin-batchbar" not in got["steps"][2]["html"]
+
+
+def test_a_new_pick_after_a_batch_drops_its_report_and_shows_the_bar_and_a_confirmation_cancelled_writes_nothing():
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]},
+                       {"click": [{"batchClose": "1"}]}, {"click": [{"rowAct": "sc:3106:receipt_sent"}]},
+                       {"click": [{"pick": "sc:3103"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    plan, cancelled, single, picked = got["steps"][2:]
+    assert plan["batch"]["phase"] == "confirm" and cancelled["batch"] is None and writes_of(got) == []
+    assert cancelled["picked"] == ["sc:3102"] and "נבחרה שורה אחת" in cancelled["html"]       # the pick stays for later
+    assert [i["key"] for i in single["batch"]["items"]] == ["sc:3106"]                       # the row's own: that row only
+    assert picked["batch"] is None and "נבחרו 2 שורות" in picked["html"]
+
+
+def test_every_row_picks_at_most_one_batchs_worth_and_a_pick_past_it_is_said():
+    v = view()
+    for i in range(30):
+        v = with_row(v, sc_row(str(4000 + i), "תלמיד/ה %d" % i, "receipt_pending", receipt="טרם", receipt_idx="0",
+                                actions=["receipt_sent"]))
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}},
+                            {"click": [{"pickAll": "1"}]}, {"click": [{"pick": "sc:4029"}]}, {"click": [{"pickAll": "1"}]}],
+                monday=receipts_world(), context=WRITES)
+    assert len(got["steps"][1]["picked"]) == 25 and "sc:4029" not in got["steps"][2]["picked"]
+    assert "אפשר לבחור עד 25 שורות לכתיבה אחת." in got["toasts"]
+    assert got["steps"][3]["picked"] == []                       # every row it can was picked: the second press lets go
 
 
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------
@@ -483,6 +789,31 @@ def test_when_monday_does_not_give_the_id_number_the_details_say_why_and_offer_t
         '<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" data-id-retry="3101">לנסות שוב</button>'
         % words)
     assert "000000018" in fact(detail_of(again["html"], "3101"), "ת.ז") and len(got["sent"]) == 2
+
+
+def test_an_item_monday_answers_from_another_board_is_a_stranger_and_never_shown():
+    """The adversarial review of 62fd993 asked that a live read refuse an item monday answered from another board, as the
+    server's reader drops a stranger. readCells asks every item's `board { id }` and keeps only the board it asked; this
+    holds it for the three reads: a lead's ID number, a refund's bank account and a company's ח.פ."""
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3102":
+            r["lead_ids"] = ["6101", "6103"]                       # a stranger first, then a lead of the Leads board
+    monday = world()
+    monday["boards"][LEADS_BOARD]["6101"]["__board"] = "9999001"
+    monday["boards"][SC_BOARD]["3103"]["__board"] = "9999002"
+    monday["boards"][ACCOUNTS_BOARD]["7703"]["__board"] = "9999003"
+    one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True, "3102": True, "3103": True}}}
+    got = drive(answer(v), [{"show": one}, {"show": LEDGER}], monday=monday, board=B2_BOARD)
+    html, ledger = got["steps"][0]["html"], got["steps"][1]["html"]
+    # the only lead is a stranger: not found; a stranger beside a lead of the board: the lead's number, never the stranger's
+    assert fact(detail_of(html, "3101"), "ת.ז").startswith('<span class="fin-badtext">הליד לא נמצא בלוח הלידים</span>')
+    assert "000000034" in fact(detail_of(html, "3102"), "ת.ז") and "000000018" not in html
+    assert bank_box(html).startswith('<span class="fin-badtext">התקבול לא נמצא בלוח Student Charge</span>')
+    assert "1234567" not in html
+    assert fact(ledger, "ח.פ").startswith('<span class="fin-badtext">החברה לא נמצאה בלוח החברות</span>')
+    assert "500000027" not in ledger
+    assert all("board { id }" in s["query"] for s in got["sent"])
 
 
 def test_a_newer_reading_reads_the_number_again_and_the_last_one_stays_on_the_screen_meanwhile():
@@ -622,26 +953,215 @@ def test_a_vat_id_monday_holds_empty_or_cannot_be_read_outside_monday_is_said_as
     assert outside["sent"] == []
 
 
-def test_the_billing_details_are_read_only_with_one_line_and_the_terms_chip_opens_the_ledger():
-    """The edit went through analiza-metrics' server, a route this service does not have: no edit control, no form, one
-    line; "אין תנאי תשלום" still leads to the company's ledger, and no longer promises an edit there."""
+# --- D2 (ADR-0188, the desk move plan §1b item 4): a company's billing details, written from the browser as the person ------
+
+HASH_COL, NAME_COL, TERMS_COL = "text_mm3yprqa", "text_mm3yfrew", "dropdown_mm3yd36d"
+BILL_COLS = [VAT_COLUMN, HASH_COL, NAME_COL, TERMS_COL]
+TERMS_LABELS = [{"id": 1, "name": "שוטף"}, {"id": 2, "name": "שוטף+30"}, {"id": 3, "name": "שוטף+60"}, {"id": 4, "name": "אחר"},
+                {"id": 5, "name": "שוטף+45"}]
+UPDATES = {"permissions": {"approvedScopes": ["boards:read", "boards:write", "updates:write"]}, "user": {"id": 1}}
+
+
+def billing_world(answers=None, labels=None, **company) -> dict:
+    """monday as the person reads Accounts: company 7703 ("חברה ג", on the desk) with its four details, and the terms'
+    labels by id; `company` sets its cells."""
+    monday = world(labels={ACCOUNTS_BOARD: {TERMS_COL: labels or TERMS_LABELS}}, answers=list(answers or []))
+    monday["boards"][ACCOUNTS_BOARD]["7703"].update({"__name": "חברה ג", VAT_COLUMN: "", HASH_COL: "H7703",
+                                                     NAME_COL: 'חברה ג בע"מ', TERMS_COL: ""}, **company)
+    return monday
+
+
+def bill_steps(*edits, save=True):
+    """The ledger of 7703, "עריכה", the edits ({"vat_id": ...} typed, {"terms": id} chosen), "המשך", and "שמירה"."""
+    steps = [{"show": LEDGER}, {"click": [{"billEdit": "7703"}]}]
+    for key, value in edits:
+        steps.append({"choose": [{"bill": key}, value]} if key == "terms" else {"input": [{"bill": key}, value]})
+    steps.append({"click": [{"billGo": "1"}]})
+    return steps + ([{"click": [{"billSave": "1"}]}] if save else [])
+
+
+def bill_reads(got) -> list:
+    return [s["variables"] for s in got["sent"] if s["kind"] == "query" and s["variables"]["c"] == BILL_COLS]
+
+
+def test_a_companys_billing_details_are_edited_from_the_browser_as_the_person_read_before_the_write_and_checked_after():
+    """"עריכה" reads the four live as the person; "המשך" shows before and after; "שמירה" reads them again, writes the
+    changed ones through mondayWrite (the terms by id), checks monday's answer, and asks for one refresh. Without
+    updates:write - the app's scopes today - no Update is tried, and the confirmation says the activity log keeps the
+    before and the after. The ח.פ reaches monday only."""
+    import html as h
+    got = drive(steps=bill_steps(("vat_id", " 512345678 "), ("terms", "2")), monday=billing_world(), board=B2_BOARD,
+                context=WRITES, answers={"GET /api/desk": [{"body": answer()}]})
+    shown, form, _vat, _terms, plan, done = got["steps"]
+    assert 'data-bill-edit="7703">עריכה</button>' in shown["html"] and "תחזור בקרוב" not in shown["html"]
+    assert form["bill"]["phase"] == "edit" and 'data-bill="vat_id" dir="ltr" inputmode="numeric" maxlength="9" value=""' in form["html"]
+    assert 'במאנדיי עכשיו: <bdi dir="ltr">H7703</bdi>' in form["html"] and ">שוטף+30</option>" in form["html"]
+    page = h.unescape(plan["html"])
+    assert plan["bill"]["phase"] == "confirm" and 'ייכתב בלוח החברות, בחברה "חברה ג", בשמך:' in page
+    assert '<li><b>ח.פ</b>: עכשיו ריק, ייכתב "512345678"</li><li><b>תנאי תשלום</b>: עכשיו ריק, ייכתב "שוטף+30"</li>' in page
+    assert ("יומן הפעילות של לוח החברות שומר מי כתב, מה היה ומה נכתב. עדכון על החברה לא ייכתב: לאפליקציה אין הרשאה לכתוב "
+            "עדכונים.") in page
+    assert [x for x in got["sent"][:plan["sent"]] if x["kind"] == "mutation"] == []       # nothing written before "שמירה"
+    # read when the form opened and again right before the write, then one write of the two that changed, by the terms' id
+    assert bill_reads(got) == [{"i": ["7703"], "c": BILL_COLS, "b": [ACCOUNTS_BOARD]}] * 2
+    assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {VAT_COLUMN: "512345678", TERMS_COL: {"ids": [2]}})]
+    assert got["updates"] == [] and done["bill"]["outcome"] == "no_update"
+    after = h.unescape(done["html"])
+    assert "נכתב בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב." in after
+    assert fact(done["html"], "תנאי תשלום") == "<bdi>שוטף+30</bdi>" and fact(done["html"], "ח.פ") == '<bdi dir="ltr">512345678</bdi>'
+    assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
+    assert "512345678" not in json.dumps(got["posts"] + got["calls"] + got["usage"])
+
+
+def test_with_updates_write_the_old_apps_update_is_written_on_the_company_with_before_and_after():
+    import html as h
+    got = drive(steps=bill_steps(("vat_id", "512345678"), ("terms", "2")), monday=billing_world(), board=B2_BOARD,
+                context=UPDATES, answers={"GET /api/desk": [{"body": answer()}]})
+    plan, done = got["steps"][4], got["steps"][5]
+    assert "על החברה ייכתב גם עדכון בשמך: מה היה ומה נכתב." in h.unescape(plan["html"])
+    assert [s["kind"] for s in got["sent"]][-2:] == ["mutation", "mutation"]             # the columns, then the Update
+    assert got["updates"] == [{"i": "7703", "body": (
+        "עדכון פרטי חיוב מתוך שולחן הכספים, בשם מי שכתב את העדכון הזה (משתמש 1).<br>"
+        "ח.פ: היה ריק, נכתב &quot;512345678&quot;.<br>תנאי תשלום: היה ריק, נכתב &quot;שוטף+30&quot;.<br>"
+        "הכתיבה נעשתה מהדפדפן בשם מי שכתב, ויומן הפעילות של לוח החברות רושם אותה גם הוא.")}]
+    assert done["bill"]["outcome"] == "posted"
+    assert "נכתב בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב." in h.unescape(done["html"])
+
+
+@pytest.mark.parametrize("edits, words", [
+    ((("vat_id", "51234567"),), "ח.פ: 9 ספרות בדיוק, בלי מקפים ובלי רווחים."),
+    ((("vat_id", "51-234567-8"),), "ח.פ: 9 ספרות בדיוק, בלי מקפים ובלי רווחים."),
+    ((("hash_key", "מפתח"),), "מפתח חשבשבת: עד 15 אותיות באנגלית או ספרות."),
+    ((("hash_key", "1" * 16),), "מפתח חשבשבת: עד 15 אותיות באנגלית או ספרות."),
+    ((("invoice_name", "א" * 121),), "חשבונית על שם: עד 120 תווים, בשורה אחת."),
+    ((("invoice_name", "חברה\u061c"),), "חשבונית על שם: עד 120 תווים, בשורה אחת."),     # the Arabic letter mark
+    ((), "אין שינוי: כל הפרטים כבר כך."),
+    ((("hash_key", " H7703 "),), "אין שינוי: כל הפרטים כבר כך."),
+])
+def test_the_billing_form_says_what_is_wrong_before_anything_is_written(edits, words):
+    got = drive(steps=bill_steps(*edits, save=False), monday=billing_world(), board=B2_BOARD, context=WRITES)
+    last = got["steps"][-1]
+    assert last["bill"] == {"phase": "edit", "error": words, "outcome": None} and words in last["html"]
+    assert writes_of(got) == [] and len(bill_reads(got)) == 1
+
+
+def test_a_detail_monday_holds_that_the_rules_would_refuse_never_blocks_another_and_an_empty_one_clears():
+    """review 11.11: a ח.פ with dashes kept in monday blocked setting the company's terms; a key typed in error is cleared
+    (MON-43); the terms are never cleared from here."""
+    monday = billing_world(**{VAT_COLUMN: "51-234567-8", HASH_COL: "10 269", TERMS_COL: "שוטף"})
+    got = drive(steps=bill_steps(("terms", "3")), monday=monday, board=B2_BOARD, context=WRITES)
+    assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {TERMS_COL: {"ids": [3]}})]
+    got = drive(steps=bill_steps(("hash_key", ""), ("terms", "")), monday=billing_world(**{TERMS_COL: "שוטף"}), board=B2_BOARD,
+                context=WRITES)
+    assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {HASH_COL: ""})]
+
+
+def test_details_changed_in_monday_after_the_form_was_read_are_shown_and_never_written_over():
+    """Monday holds other terms by "שמירה" (and another ח.פ, a box she did not touch): nothing is written, the form shows
+    what monday holds now and keeps what she chose; the untouched box takes the new value, so the next "שמירה" never
+    writes the old one back (review 11.11). Only what is being written must still be what was shown: a change elsewhere
+    is not written over, and does not stop the write."""
+    import html as h
+    steps = bill_steps(("terms", "2"), save=False) + [
+        {"mutate": {ACCOUNTS_BOARD: {"7703": {VAT_COLUMN: "520034620", TERMS_COL: "שוטף"}}}}, {"click": [{"billSave": "1"}]},
+        {"click": [{"billGo": "1"}]}, {"click": [{"billSave": "1"}]}]
+    got = drive(steps=steps, monday=billing_world(), board=B2_BOARD, context=WRITES)
+    moved, again, saved = got["steps"][-3:]
+    assert moved["bill"]["phase"] == "edit" and "בינתיים פרטי החברה השתנו במאנדיי" in moved["bill"]["error"]
+    form = h.unescape(moved["html"])
+    assert 'data-bill="vat_id" dir="ltr" inputmode="numeric" maxlength="9" value="520034620"' in form
+    assert 'במאנדיי עכשיו: <bdi dir="ltr">520034620</bdi>' in form and '<option value="2" selected>' in form
+    assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {TERMS_COL: {"ids": [2]}})] and saved["bill"]["phase"] == "done"
+
+
+def test_terms_whose_labels_moved_in_monday_are_never_written_and_the_other_details_still_are():
+    renamed = [dict(x, name="30 יום") if x["id"] == 2 else x for x in TERMS_LABELS]
+    got = drive(steps=bill_steps(("terms", "2"), save=False), monday=billing_world(labels=renamed), board=B2_BOARD, context=WRITES)
+    assert got["steps"][-1]["bill"]["error"] == "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נכתב כלום. נדב צריך לבדוק."
+    got = drive(steps=bill_steps(("hash_key", "10269")), monday=billing_world(labels=renamed), board=B2_BOARD, context=WRITES)
+    assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {HASH_COL: "10269"})]
+
+
+@pytest.mark.parametrize("context, monday, why", [
+    (dict(WRITES, user={"isViewOnly": True}), None, "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אי אפשר לערוך מכאן."),
+    ({"permissions": {"approvedScopes": ["boards:read"], "requiredScopes": ["boards:read"]}}, None,
+     "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אי אפשר לערוך מכאן."),
+    ({}, {"absent": True}, "עריכת פרטי החיוב נכתבת במאנדיי בשמך, ולכן היא זמינה רק כשהתצוגה פתוחה מתוך מאנדיי."),
+])
+def test_who_may_not_write_sees_the_details_with_why_and_no_edit(context, monday, why):
+    got = drive(answer(), [{"show": LEDGER}, {"click": [{"billEdit": "7703"}]}, {"click": [{"terms": "7703"}]}],
+                monday=monday or billing_world(), board=B2_BOARD, context=context)
+    for step in got["steps"]:
+        assert "data-bill-edit" not in step["html"] and "data-bill=" not in step["html"] and step["bill"] is None
+        assert '<p class="fin-act-why">%s</p>' % why in step["html"]
+    assert writes_of(got) == [] and bill_reads(got) == []
+    assert "לעריכת תנאי תשלום" not in got["steps"][0]["html"]
+
+
+def test_no_terms_beside_a_company_opens_its_ledger_with_the_form_on_the_terms():
     got = drive(answer(), [{"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
-                           {"click": [{"terms": "7703"}]}], monday=world(), board=B2_BOARD)
+                           {"click": [{"terms": "7703"}]}], monday=billing_world(), board=B2_BOARD, context=WRITES)
     listed, ledger = got["steps"]
-    chip = ('<button type="button" class="fin-chip fin-chiplink" data-terms="7703" title="פתיחת הכרטסת של החברה">'
-            "אין תנאי תשלום</button>")
-    assert chip in listed["html"] and "לעריכת" not in listed["html"]
-    html = ledger["html"]
-    billing = html[html.index('<section class="fin-panel fin-billing"'):]
-    billing = billing[:billing.index("</section>")]
-    assert billing.count('<p class="fin-act-why">עריכת פרטי החיוב תחזור בקרוב, מהדפדפן</p>') == 1
-    assert "<button" not in billing and "<input" not in billing and "<select" not in billing and "data-bill" not in html
-    assert re.findall(r"<dt>([^<]+)</dt>", billing) == ["ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"]
-    assert fact(billing, "מפתח חשבשבת") == '<bdi dir="ltr">H7703</bdi>'
-    assert fact(billing, "תנאי תשלום") == '<span class="fin-chip">אין תנאי תשלום</span>'
-    assert [p for p in got["posts"] if "account" in p[0]] == []
-    hooks = node(LOAD + "console.log(JSON.stringify(Object.keys(F)));", None)
-    assert not [h for h in hooks if "bill" in h.lower()]
+    assert ('<button type="button" class="fin-chip fin-chiplink" data-terms="7703" title="פתיחת הכרטסת של החברה, לעריכת '
+            'תנאי תשלום">אין תנאי תשלום</button>') in listed["html"]
+    assert ledger["bill"]["phase"] == "edit" and 'data-bill="terms"' in ledger["html"] and len(bill_reads(got)) == 1
+
+
+@pytest.mark.parametrize("answers, words, maybe", [
+    ([{}, {}, {}, {"reject": {"message": "User unauthorized to perform action"}}],
+     "מאנדיי לא מרשה לך לכתוב בלוח החברות. לא נכתב כלום.", False),
+    ([{}, {}, {}, {"reject": {"message": "Your app is missing the required scopes: boards:write"}}],
+     "לאפליקציה אין הרשאה לכתוב בלוח החברות. לא נכתב כלום.", False),
+    ([{}, {}, {}, {"hold": True}], "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב.",
+     True),
+])
+def test_a_billing_write_that_failed_is_said_in_words_and_one_that_may_have_landed_is_read_again(answers, words, maybe):
+    """The first read is the ledger's ח.פ, then the form's, the one before the write, and the write."""
+    got = drive(steps=bill_steps(("vat_id", "512345678")), monday=billing_world(answers=answers), board=B2_BOARD,
+                context=WRITES, mondayWaitMs=5)
+    done = got["steps"][-1]
+    assert done["bill"]["phase"] == "failed" and done["bill"]["error"] == words and words in got["toasts"]
+    assert (["/api/desk/refresh", None] in got["posts"]) == maybe
+
+
+def test_a_value_monday_kept_otherwise_is_said_and_read_again():
+    monday = billing_world()
+    monday["keep"] = [TERMS_COL]
+    got = drive(steps=bill_steps(("terms", "2")), monday=monday, board=B2_BOARD, context=WRITES)
+    done = got["steps"][-1]
+    assert done["bill"]["error"] == "מאנדיי ענתה, אבל הערך שנשמר אינו מה שנשלח. לבדוק את החברה במאנדיי."
+    assert "לא נכתב כלום" not in done["bill"]["error"] and ["/api/desk/refresh", None] in got["posts"]
+
+
+@pytest.mark.parametrize("step, context, sent", [
+    ({"write": [ACCOUNTS_BOARD, "7701", {VAT_COLUMN: "512345678"}]}, WRITES, True),     # a company the desk shows
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: {"ids": [5]}, HASH_COL: "", NAME_COL: "חברה"}]}, WRITES, True),
+    ({"write": [ACCOUNTS_BOARD, "1", {VAT_COLUMN: "512345678"}]}, WRITES, False),       # an account the desk does not show
+    ({"write": [ACCOUNTS_BOARD, "none", {VAT_COLUMN: "512345678"}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {VAT_COLUMN: "51234567"}]}, WRITES, False),     # a value of another shape
+    ({"write": [ACCOUNTS_BOARD, "7701", {VAT_COLUMN: 512345678}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {HASH_COL: "מפתח"}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {NAME_COL: " חברה"}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {NAME_COL: "א" * 121}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: {"ids": [9]}}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: {"ids": ["2"]}}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: {"ids": [2, 3]}}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: {"labels": ["שוטף"]}}]}, WRITES, False),
+    ({"write": [ACCOUNTS_BOARD, "7701", {TERMS_COL: ""}]}, WRITES, False),              # the terms are never cleared
+    ({"write": [ACCOUNTS_BOARD, "7701", {"text_mm3yxxxx": "x"}]}, WRITES, False),       # a fifth column
+    ({"update": [ACCOUNTS_BOARD, "7701", "עדכון"]}, UPDATES, True),                     # with updates:write
+    ({"update": [ACCOUNTS_BOARD, "7701", "עדכון"]}, WRITES, False),                     # without it: never tried
+    ({"update": [ACCOUNTS_BOARD, "1", "עדכון"]}, UPDATES, False),
+    ({"update": [SC_BOARD, "3101", "עדכון"]}, UPDATES, False),
+    ({"update": [ACCOUNTS_BOARD, "7701", "עד\u202eכון"]}, UPDATES, False),
+    ({"update": [ACCOUNTS_BOARD, "7701", ""]}, UPDATES, False),
+])
+def test_the_billing_writes_and_the_update_go_out_only_inside_the_allowlist_and_the_gate(step, context, sent):
+    """The four columns are on the allowlist with their rules, on a company the desk shows only; the Update only on such a
+    company, and only when monday's context says the app holds updates:write. A refusal sends nothing."""
+    got = drive(answer(), [step], monday=billing_world(), board=B2_BOARD, context=context)
+    assert got["steps"][0]["refused"] == ("sent" if sent else "write_refused")
+    assert len([s for s in got["sent"] if s["kind"] == "mutation"]) == (1 if sent else 0)
 
 
 # --- D2: an answer with no view yet ---------------------------------------------------------------------------------------
@@ -660,6 +1180,25 @@ def test_an_answer_without_a_view_says_the_data_was_not_read_yet_and_offers_the_
     got = drive(steps=[{"raw": True}], monday=world(),
                 answers={"GET /api/desk": [{"body": answer(None, refreshing=True)}], "GET /api/desk?fresh=1": [{"body": answer()}]})
     assert got["calls"][:2] == ["GET /api/desk", "GET /api/desk?fresh=1"] and "fin-tabs" in got["steps"][0]["html"]
+
+
+def test_a_reading_whose_view_could_not_be_built_is_said_as_the_servers_fault_with_no_refresh_offered():
+    """The adversarial review of 62fd993: the boards were read, the view crashed in its build (`view_error`), and the page
+    said "הנתונים עוד לא נקראו" with a refresh that reads the boards again and crashes the same way."""
+    crashed = answer(None, view_error="crashed", taken_at="2026-11-24T08:00:00+00:00",
+                     last_attempt={"taken_at": "2026-11-24T08:00:00+00:00", "ok": True, "error": None})
+    first = drive(crashed, [], monday=world())["first"]
+    assert '<p class="fin-msg">הנתונים נקראו ממאנדיי, אבל השולחן לא נבנה מהם. זו תקלה בשרת, ונדב צריך לבדוק אותה.</p>' in first
+    assert "הנתונים עוד לא נקראו" not in first and "data-refresh" not in first and "<button" not in first
+    assert "fin-tabs" not in first
+    # a view on the screen: a refresh answered with a view that could not be built keeps it, and says why
+    got = drive(steps=[{"click": [{"refresh": "1"}], "raw": True}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [{"body": crashed}]})
+    assert "fin-tabs" in got["steps"][0]["html"] and "השולחן לא נבנה" not in got["steps"][0]["html"]
+    assert got["toasts"] == ["הנתונים החדשים נקראו ממאנדיי, אבל השולחן לא נבנה מהם, ולכן מוצגים הנתונים הקודמים. זו תקלה "
+                             "בשרת, ונדב צריך לבדוק אותה."]
+    # and an answer with no reading at all is still "not read yet", with its refresh
+    assert "הנתונים עוד לא נקראו" in drive(answer(None), [], monday=world())["first"]
 
 
 def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
@@ -768,6 +1307,25 @@ def test_every_value_an_answer_or_monday_gives_is_escaped_into_the_page():
         assert "<img" not in html and "onerror=\"" not in html
         assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
     assert len(got["sent"]) >= 3                                                 # the ID, the bank account, the ח.פ
+
+
+def test_an_id_that_is_not_digits_is_escaped_in_a_retry_key_and_in_an_items_link():
+    """The adversarial review of 62fd993: liveFailed's retry key goes into an attribute (escaped already, and pinned now);
+    the same review's question asked of every id in an attribute found one more - the item's link in `href`, now escaped.
+    The ids are monday's digits today, so this is defensive."""
+    bad = '3101"><img src=x onerror="alert(1)">'
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3101":
+            r["id"] = bad
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {bad: True}}}}],
+                monday=world(answers=[{"noBoard": True}]))
+    html = got["steps"][0]["html"]
+    assert "<img" not in html and 'onerror="' not in html
+    safe = "3101&quot;&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
+    assert ('<span class="fin-badtext">אין לך גישה ללוח הלידים במאנדיי</span> <button type="button" class="fin-linkbtn" '
+            'data-id-retry="%s">לנסות שוב</button>' % safe) in html
+    assert html.count('href="https://analiza-college-group.monday.com/boards/5093448677/pulses/%s"' % safe) == 3
 
 
 # --- the glue (desk.js) --------------------------------------------------------------------------------------------------

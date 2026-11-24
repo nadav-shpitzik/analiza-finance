@@ -484,10 +484,10 @@ def test_a_company_without_terms_is_marked_beside_its_due_dates_name_and_arrears
         {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}},
         {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "A1", "open": {}}}], [sc(1)], rows, accounts=accounts)
     # round 3, slice 3: beside a due date and in the aging the chip is a way to the company's ledger, where its billing
-    # details show (read only since D2, so its title no longer promises an edit); in the ledger itself it is a mark, and
-    # the ledger's "פרטי חיוב" says it too
-    link = ('<button type="button" class="fin-chip fin-chiplink" data-terms="A1" title="פתיחת הכרטסת של החברה">'
-            'אין תנאי תשלום</button>')
+    # details show - and, since D2 brought their edit back from the browser (ADR-0188), its title promises the edit again
+    # to one who may write; in the ledger itself it is a mark, and the ledger's "פרטי חיוב" says it too
+    link = ('<button type="button" class="fin-chip fin-chiplink" data-terms="A1" title="פתיחת הכרטסת של החברה, לעריכת '
+            'תנאי תשלום">אין תנאי תשלום</button>')
     assert '<td class="k-due">31.10.26 %s</td>' % link in overdue
     assert '<td class="k-due">30.10.26 <bdi class="fin-subtle">שוטף+30</bdi></td>' in overdue
     assert "(מזה <bdi>200,000 ₪</bdi> בחברות בלי תנאי תשלום)" in overdue
@@ -773,13 +773,16 @@ def test_the_aging_files_headers_are_the_pages_for_the_same_companies(desk, monk
     assert 'שולם חלקית: סכום לחיוב (ללא מע"מ), סכום ששולם (כולל מע"מ) לא הוקלד' in every
 
 
-# --- 16.11 (Chava, through Nadav): "לחפש בכל השיבוצים" read as the desk's jargon ------------------------------------------
+# --- D2, 1.2 (the desk move plan §1b, 24.11): a search looks at every row of its tab ------------------------------------
+# It replaces 16.11's "חיפוש ללא סינון" (Chava, through Nadav: "לחפש בכל השיבוצים" read as the desk's jargon), which a
+# search now does by itself: that test held the button, and its words, which are gone (2.1).
 
-def test_a_search_narrowed_by_a_filter_offers_the_same_search_without_it_in_plain_words():
-    """The button under an empty search said "לחפש בכל השיבוצים" ("להציג בכל השיבוצים" on the companies), and the list's
-    head "בשאר השיבוצים": the desk's own word, in plural. It also let go of the state only, so a search inside one month,
-    or inside one company's ledger, found nothing again. "חיפוש ללא סינון" keeps the search and drops every filter - the
-    state and the period, or the state and the company - and the head counts what it finds the same way."""
+def test_a_search_looks_at_every_row_of_its_tab_and_a_row_outside_the_open_list_shows_its_tile():
+    """Chava's four searches of 17-23.11 found nothing in the list that was open, and three would have found rows without
+    its filters. A search looks at every row of the tab, whatever tile, period or company is open; a row outside the open
+    list carries its own tile under its name; the head says the search went over every row and names the open list. The
+    rows are the server's filter with no tile, period or company, in its order, so the totals and the Excel file of the
+    search (asked so, tests/test_desk_page.py) hold what the screen shows. "השיבוצים" stays out of every word."""
     import re
     rows_sc = [sc(1, created="2026-10-02T09:00:00Z"), sc(2, receipt="0", created="2026-09-03T09:00:00Z"),
                dict(sc(3, created="2026-09-04T09:00:00Z"), name="דנה כהן")]
@@ -788,46 +791,78 @@ def test_a_search_narrowed_by_a_filter_offers_the_same_search_without_it_in_plai
     body = json_safe({"view": view, "taken_at": "2026-11-09T20:00:00+00:00", "age_seconds": 0, "refreshing": False,
                       "stale": False, "last_attempt": None})
     cases = [
-        # a task list inside October: nothing; without its filters two payments, of September and of October
+        # the tasks of October: the payments of September and October both, each outside the open list
         {"tab": "b2c", "query": "תלמיד", "sc": {"state": "tasks", "period": "2026-10", "open": {}}},
-        # every state, but one month: a filter too, so the button is there (it was not)
-        {"tab": "b2c", "query": "תלמיד/ה 1", "sc": {"state": "", "period": "2026-09", "open": {}}},
-        # nothing narrows the search: no button
-        {"tab": "b2c", "query": "zzz", "sc": {"state": "", "period": "", "open": {}}},
-        # one company's tasks, no search: that company's every charge, said so
-        {"tab": "b2b", "query": "", "b2": {"state": "tasks", "view": "list", "customer": "A1", "open": {}}},
-        # one company's ledger and a search that finds a charge of another company
+        # every tile, the whole span: the open list is every payment, so nothing is outside it
+        {"tab": "b2c", "query": "תלמיד/ה 1", "sc": {"state": "", "period": "", "open": {}}},
+        # the open tile holds one of the two it finds
+        {"tab": "b2c", "query": "תלמיד", "sc": {"state": "receipt_pending", "period": "", "open": {}}},
+        {"tab": "b2c", "query": "zzz", "sc": {"state": "tasks", "period": "2026-10", "open": {}}},
+        # one company's ledger and a search that finds a charge of another company, in another tile
         {"tab": "b2b", "query": "לקוח A2", "b2": {"state": "", "view": "list", "customer": "A1", "open": {}}},
+        # no search, one company in one state: its ledger's way, unchanged
+        {"tab": "b2b", "query": "", "b2": {"state": "tasks", "view": "list", "customer": "A1", "open": {}}},
     ]
-    script = LOAD + """
-const out = input.cases.map(c => {
-  const html = F._render(input.body, c);
-  const st = F._unfilter();
-  return { html: html, st: st, after: F._render(input.body, {}) };
-});
-console.log(JSON.stringify(out));
-"""
-    got = node(script, {"body": body, "cases": cases})
-    for g in got:
-        assert "השיבוצים" not in g["html"] and "השיבוצים" not in g["after"]
-    month, month_all, nothing, ledger, other = got
-    button = '<button class="fin-linkbtn" type="button" data-unfilter="1">חיפוש ללא סינון</button>'
-    assert button in month["html"] and "אין תקבולים שמתאימים לחיפוש." in month["html"]
-    # the head counts across every state AND the whole span: two payments, the September one in a task among them
-    assert '<button class="fin-linkbtn" type="button" data-unfilter="1">עוד 2 תוצאות בחיפוש ללא סינון</button>' in month["html"]
-    assert month["st"]["sc"]["state"] == "" and month["st"]["sc"]["period"] == "" and month["st"]["query"] == "תלמיד"
-    shown = re.findall(r'data-row="(\d+)"', month["after"])
-    assert sorted(shown) == ["1", "2"] and "data-unfilter" not in month["after"]
-    assert button in month_all["html"]
-    assert re.findall(r'data-row="(\d+)"', month_all["after"]) == ["1"]
-    assert "data-unfilter" not in nothing["html"] and "אין תקבולים שמתאימים לחיפוש." in nothing["html"]
-    # no search: no "חיפוש" button, but the company's own ledger, by its plain name
-    assert "data-unfilter" not in ledger["html"]
-    assert '<button class="fin-linkbtn" type="button" data-b2state="">כל החיובים של החברה</button>' in ledger["html"]
-    # a search inside one company's ledger: the button lets go of the company too (it kept it, and found nothing again)
-    assert button in other["html"] and "אין חיובים שמתאימים לחיפוש." in other["html"]
-    assert '<button class="fin-linkbtn" type="button" data-unfilter="1">עוד תוצאה אחת בחיפוש ללא סינון</button>' in other["html"]
-    assert other["st"]["b2"]["customer"] == "" and other["st"]["b2"]["state"] == "" and other["st"]["query"] == "לקוח A2"
-    assert re.findall(r'data-row="(\d+)"', other["after"]) == ["2"]
+    got = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+               {"body": body, "cases": cases})
+    for html in got:
+        assert "השיבוצים" not in html and "data-unfilter" not in html and "חיפוש ללא סינון" not in html
+    tasks_oct, everything, one_tile, nothing, ledger, no_search = got
+    shown = lambda html: re.findall(r'data-row="(\d+)"', html)                       # noqa: E731
+    # the page's rows are the server's filter with no tile, period or company, in its order (the file's and the totals')
+    for html, q in ((tasks_oct, "תלמיד"), (everything, "תלמיד/ה 1"), (one_tile, "תלמיד")):
+        assert shown(html) == [r["id"] for r in fd.filter_b2c(view["b2c"], "", "", q)]
+    assert shown(ledger) == [r["id"] for r in fd.filter_b2b(view["b2b"], "", "", "לקוח A2")] == ["2"]
+    assert shown(tasks_oct) == ["1", "2"]
+    assert "<h2>חיפוש בכל התקבולים</h2>" in tasks_oct
+    assert "2 תקבולים · חיפוש: תלמיד · 2 מהם מחוץ לרשימה הפתוחה" in tasks_oct
+    assert ("החיפוש עובר על כל התקבולים, לא רק על הרשימה הפתוחה (לטיפול · אוקטובר 2026). ליד שורה מחוץ לה כתוב השיבוץ "
+            "שלה.") in tasks_oct
+    where = re.findall(r'<span class="fin-where" title="מחוץ לרשימה הפתוחה"><span class="fin-statechip" [^>]*>([^<]+)</span>',
+                       tasks_oct)
+    assert where == [fd.B2C_STATES["done"]["label"], fd.B2C_STATES["receipt_pending"]["label"]]
+    assert "fin-where" not in everything and "מהם מחוץ לרשימה הפתוחה" not in everything
+    assert "תקבול אחד · חיפוש: תלמיד/ה 1</div>" in everything
+    # the tile open holds the receipt to send; the payment done is outside it, and only it is marked
+    assert "2 תקבולים · חיפוש: תלמיד · אחד מהם מחוץ לרשימה הפתוחה" in one_tile and one_tile.count('class="fin-where"') == 1
+    assert "אין תקבולים שמתאימים לחיפוש." in nothing and "<button" not in nothing.split("fin-empty")[1].split("</div>")[0]
+    # the ledger of A1, searched: every company's charges as the list of every charge, the other company's marked
+    assert "<h2>חיפוש בכל החיובים</h2>" in ledger and "(כל החיובים · לקוח A1)" in ledger
+    assert "חיוב אחד · חיפוש: לקוח A2 · אחד מהם מחוץ לרשימה הפתוחה" in ledger
+    assert '<th class="k-account">חברה</th>' in ledger and '<th class="k-ledger n">' not in ledger
+    assert '<button class="fin-linkbtn" type="button" data-b2state="">כל החיובים של החברה</button>' in no_search
     source = re.sub(r"/\*.*?\*/", "", PAGE.read_text(encoding="utf-8"), flags=re.S)      # a comment may tell the history
     assert "בכל השיבוצים" not in source and "בשאר השיבוצים" not in source
+
+
+# --- D2, 1.1 (the desk move plan §1b): two actions on the row itself --------------------------------------------------
+
+def test_the_rows_own_buttons_and_boxes_sit_exactly_on_the_rows_the_server_offers_them():
+    """"שליחת קבלה: "יצאה"" and "סימון "תשלום הוחזר"" sit on the row itself, with the box that picks it for a batch - on
+    exactly the rows whose actions (the server's b2c_actions) hold receipt_sent or refund_done, each with the server's own
+    button, and on no other row (a refunded row's reference, an invoice's, a partial refund stay in its details)."""
+    import html as h
+    import re
+    rows_sc = [sc(1, credit_approved="1000", planned="2026-11-20", enr=["E1"]), sc(2, receipt="0"), sc(3, receipt="0"),
+               sc(4, st="4", refund="4000", refund_date="2026-11-02"), sc(5), sc(6, st="2", credit_approved="1000"),
+               sc(7, st="0")]
+    view = fd.build_view(snap(rows_sc, enrollments=[enrollment("E1", asked="2026-11-01")]), TODAY)
+    body = json_safe({"view": view, "taken_at": "2026-11-09T20:00:00+00:00", "age_seconds": 0, "refreshing": False,
+                      "stale": False, "last_attempt": None})
+    html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+                 {"body": body, "cases": [{"tab": "b2c", "query": "", "sc": {"state": "", "period": "", "open": {}}}]})
+    offered = sorted("sc:%s:%s" % (r["id"], k) for r in view["b2c"]["rows"] for k in r["actions"]
+                     if k in ("receipt_sent", "refund_done"))
+    assert offered == ["sc:1:refund_done", "sc:2:receipt_sent", "sc:3:receipt_sent"]
+    assert sorted(re.findall(r'data-row-act="([^"]+)"', html)) == offered
+    assert sorted(re.findall(r'data-pick="(sc:\d+)"', html)) == ["sc:1", "sc:2", "sc:3"]
+    buttons = {a["key"]: a["button"] for a in view["b2c"]["actions"]["list"]}
+    for x in offered:
+        assert 'data-row-act="%s">%s</button>' % (x, h.escape(buttons[x.split(":")[2]])) in html
+    # the companies' list carries neither: its actions stay in a charge's details
+    b2_view = fd.build_view(snap([sc(9)], [b2(1, billing="0", payment="2", due="2026-11-20"), b2(2, payment="2")]), TODAY)
+    body = json_safe({"view": b2_view, "taken_at": "2026-11-09T20:00:00+00:00", "age_seconds": 0, "refreshing": False,
+                      "stale": False, "last_attempt": None})
+    html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+                 {"body": body, "cases": [{"tab": "b2b", "query": "", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}]})
+    assert "data-row-act" not in html and "data-pick" not in html
