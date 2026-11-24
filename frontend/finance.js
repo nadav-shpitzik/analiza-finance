@@ -1838,7 +1838,8 @@
         unfiltered: b2Filter(ROWS.b2, VIEW.b2b, "", "", q).length };
     }
     if (!VIEW.b2c) { return { results: 0, unfiltered: 0 }; }
-    return { results: scRows().length, unfiltered: scFilter(ROWS.sc, VIEW.b2c, "", "", q).length };
+    return { results: scFilter(ROWS.sc, VIEW.b2c, state.sc.state, state.sc.period, q).length,
+      unfiltered: scFilter(ROWS.sc, VIEW.b2c, "", "", q).length };
   }
   /* a search is counted once it settles (USE_SEARCH_MS without a key), not per key pressed */
   function searchSettling() {

@@ -96,9 +96,10 @@ def test_a_page_left_open_for_weeks_keeps_its_age_capped():
 
 # --- the page against the vocabulary (static; the page driven in node is tests/test_desk_page.py) ----------------------
 
-# The one kind the server keeps and the ported page no longer sends: the billing details are read only on the page until
-# their edit comes back from the browser (finance.js, its change 4).
-NOT_SENT = {"bill"}
+# The kinds the server keeps and the page no longer sends: the two buttons the D2 list retired (the desk move plan §1b, 2.1
+# "חיפוש ללא סינון" and 2.2 "חסר כאן משהו?"). They stay in the vocabulary: analiza-metrics' history holds them, and D5
+# imports it into this table. The billing edit is back from the browser (ADR-0188), so `bill` is sent again.
+NOT_SENT = {"unfilter", "ask"}
 
 
 def _object_body(code: str, start: int) -> str:
@@ -147,7 +148,7 @@ def page_events(code: str) -> list:
     return out
 
 
-def test_the_page_sends_only_the_kinds_the_server_keeps_and_the_server_keeps_none_the_page_never_sends_but_bill():
+def test_the_page_sends_only_the_kinds_the_server_keeps_and_the_server_keeps_none_the_page_never_sends_but_the_retired():
     code = page_code()
     sent = set(re.findall(r'\buse\("([a-z_]+)"', code))
     # the ID number's two outcomes when it was read are named in one expression (e.value ? "id_shown" : "id_empty")

@@ -1244,8 +1244,7 @@ def test_the_page_sends_its_usage_in_closed_words_and_never_a_name_an_amount_a_s
              {"type": "דנה כהן", "wait": 400},                    # settles after the page's 250ms and the usage's 60ms
              {"type": "000000018", "wait": 400},                  # an ID number typed into the search
              {"type": "4321.50", "wait": 400},
-             {"click": [{"unfilter": "1"}]},
-             {"show": {"sc": {"open": {"3101": True}}}},          # the details read the ID number
+             {"show": {"sc": {"open": {"3101": True}}}},          # the details read the ID number ("חיפוש ללא סינון" retired, 2.1)
              {"click": [{"idCopy": "3101"}]},
              {"click": [{"legend": "1"}]},
              {"click": [{"open": "3101"}, ["fin-name"]]},
@@ -1259,7 +1258,7 @@ def test_the_page_sends_its_usage_in_closed_words_and_never_a_name_an_amount_a_s
     events = [e for b in batches for e in b["body"]["events"]]
     assert {b["body"]["desk"] for b in batches} == {"finance"} and len({b["body"]["session"] for b in batches}) == 1
     kinds = [e["k"] for e in events]
-    for k in ("open", "state", "row", "search", "unfilter", "id_shown", "id_copied", "legend", "open_item", "export",
+    for k in ("open", "state", "row", "search", "id_shown", "id_copied", "legend", "open_item", "export",
               "period", "tab", "hide"):
         assert k in kinds, (k, kinds)
     # every event as the server checks it: none refused, each kept as it was sent
