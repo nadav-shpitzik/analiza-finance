@@ -49,6 +49,9 @@
  * QA 1 Ticking a row's box moved the table about 58 pixels down - the bar of picked rows came in above it - so the click
  *      aimed at the next row's box unticked the first. The bar now holds its place wherever the list offers a box, at one
  *      height (its buttons the row's own size), quiet while nothing is picked and saying what the box is for.
+ * QA 2 "ייצוא לאקסל" said nothing on the page. When the file's link opens, the page says the file is on its way and how
+ *      many rows it holds: the rows of the list exported, counted as the screen shows them (exportedCount; the companies'
+ *      list is one function, b2Rows, for the screen and the count). The file's name is the server's and is not said.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -718,9 +721,21 @@
     OUTSIDE = null;
     return figures + statesHtml(p) + panel(head + batchHtml(rows) + list);
   }
+  /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
+     count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
+  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"] };
+  function exportedCount(tab) {
+    return tab === "b2b_customers" ? customersShown(VIEW.b2b).length : tab === "b2b" ? b2Rows().length : scRows().length;
+  }
+  function exportSaid(tab, n) {
+    var what = EXPORT_WHAT[tab] || EXPORT_WHAT.b2c;
+    return "קובץ האקסל יורד: " + plural(n, what[0], what[1]) + ".";
+  }
   function exportList(tab) {
+    var count = 0;
     /* a newer reading on its way is waited for first, so the file is built from the list the reader then sees */
     return Promise.resolve(pending).then(function () {
+      count = exportedCount(tab);
       var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
       /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
       var all = searching() && tab !== "b2b_customers";
@@ -730,11 +745,14 @@
       return deps.post("/api/desk/export-link", body);
     }).then(function (res) {
       var url = new URL(res.url, window.location.href).href;
+      var said = function () { flash(exportSaid(tab, count)); };
       /* monday may sandbox the view against downloads: a new tab escapes it, and the file names itself */
       if (deps.monday) {
-        return Promise.resolve(deps.monday.execute("openLinkInTab", { url: url })).catch(function () { window.open(url, "_blank", "noopener"); });
+        return Promise.resolve(deps.monday.execute("openLinkInTab", { url: url })).catch(function () { window.open(url, "_blank", "noopener"); })
+          .then(said);
       }
       var a = document.createElement("a"); a.href = url; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove();
+      said();
     }).catch(function (e) { flash(errorText(e)); });
   }
 
@@ -760,6 +778,11 @@
     if (customer && !st) { return sortRows(out, "ledger_key"); }   /* one customer, every state: the ledger, oldest first */
     var key = st === "tasks" ? "_" : st;
     return sortRows(out, Object.prototype.hasOwnProperty.call(B2_SORT, key) ? B2_SORT[key] : "demand");
+  }
+  /* the companies' list on the screen: a search over every charge (1.2), or the tile and the company chosen */
+  function b2Rows() {
+    var b = VIEW.b2b, f = state.b2;
+    return searching() ? b2Filter(ROWS.b2, b, "", "", state.query) : b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
   }
   function b2Situation(r) {
     var terms = r.account_terms ? " · <bdi>" + esc(r.account_terms) + "</bdi>" : r.flags.indexOf("terms_missing") !== -1 ? " · " + noTerms(r.account_id) : "";
@@ -892,7 +915,7 @@
     var b = VIEW.b2b, f = state.b2;
     var who = f.customer ? (b.rows.filter(function (x) { return x.account_id === f.customer; })[0] || {}).account : "";
     var q = searching();
-    var rows = q ? b2Filter(ROWS.b2, b, "", "", state.query) : b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
+    var rows = b2Rows();
     var key = f.state === "tasks" ? "" : f.state;
     var what = f.state === "tasks" ? "לטיפול" : f.state ? stateLabel(b.states, f.state) : "כל החיובים";
     var views = "<div class=\"fin-seg\" role=\"group\" aria-label=\"תצוגה\">" +

@@ -326,6 +326,35 @@ def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_compan
     assert {"tab": "b2b", "state": "overdue", "customer": "7701", "q": ""} in totals
 
 
+def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
+    """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
+    link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of
+    the list it exported: a tile, a search over every row, a company's list, the companies by customer."""
+    def exported(monday):
+        return drive(answer(), [
+            {"show": {"tab": "b2c", "query": "", "sc": {"state": "tasks", "period": "", "open": {}}}},
+            {"click": [{"export": "b2c"}]},
+            {"show": {"tab": "b2c", "query": "תלמיד", "sc": {"state": "done", "period": "2026-11", "open": {}}}},
+            {"click": [{"export": "b2c"}]},
+            {"show": {"tab": "b2b", "query": "", "b2": {"state": "overdue", "view": "list", "customer": "", "open": {}}}},
+            {"click": [{"export": "b2b"}]},
+            {"show": {"tab": "b2b", "query": "", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+            {"click": [{"export": "b2b_customers"}]}],
+            monday=monday, answers={"GET /api/desk": [{"body": answer()}],
+                                    "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?x=1"}}] * 4})
+    said = ["קובץ האקסל יורד: 3 תקבולים.", "קובץ האקסל יורד: 5 תקבולים.", "קובץ האקסל יורד: חיוב אחד.",
+            "קובץ האקסל יורד: 3 חברות."]
+    inside = exported(world())
+    assert inside["toasts"] == said and len(inside["executed"]) == 4
+    outside = exported({"absent": True})
+    assert outside["toasts"] == said and outside["executed"] == []
+    # a link that was refused says why, and never that a file is on its way
+    got = drive(answer(), [{"click": [{"export": "b2c"}]}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/export-link": [{"reject": {"error": "not_a_board_member"}}]})
+    assert got["toasts"] == ["התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם."]
+
+
 def test_every_monday_request_of_the_page_goes_through_the_one_door():
     """finance.js calls monday.api in one place (mondayCall) and composes each of its two mutations in one place - the
     columns in mondayWrite, and since D2 (ADR-0188) a billing edit's Update in mondayUpdate; every read - a row before a
