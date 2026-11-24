@@ -63,12 +63,16 @@ class DeskStoreError(Exception):
 
 @contextmanager
 def _guard() -> Iterator[None]:
+    """psycopg's errors by their SQLSTATE, and a text that cannot be encoded to send (a lone surrogate: review of a32395f)
+    by its class: a store failure either way, never a crash past the store."""
     import psycopg
 
     try:
         yield
     except psycopg.Error as exc:
         raise DeskStoreError(getattr(exc, "sqlstate", None) or type(exc).__name__) from None
+    except UnicodeError as exc:
+        raise DeskStoreError(type(exc).__name__) from None
 
 
 def refuse_unsafe(text: str) -> None:

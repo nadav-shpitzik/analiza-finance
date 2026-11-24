@@ -178,10 +178,16 @@ def classify_graphql_errors(errors: list) -> tuple:
     return code, "; ".join(messages)[:200], reset_in
 
 
+# half of a surrogate pair: json.loads gives one for an escape whose other half is missing (an emoji cut in two)
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
 def _text(value) -> str:
-    """A cell's text, without NUL: Postgres jsonb refuses \\u0000, and one such cell would fail every save while it
-    stays (review 22.11). It never means anything in monday's text."""
-    return str(value or "").replace("\x00", "")
+    """A cell's text, without NUL and without a lone surrogate: Postgres jsonb refuses \\u0000, and one such cell would fail
+    every save while it stays (review 22.11); a lone surrogate cannot even be encoded, so one in a name failed every save
+    of the desk's stored reading and made every answer of the desk a 500 (review of a32395f) - it is the replacement
+    character instead. Neither ever means anything in monday's text."""
+    return _SURROGATE.sub("�", str(value or "").replace("\x00", ""))
 
 
 def flatten(item: dict, keep: Optional[Iterable[str]] = None) -> dict:
@@ -233,7 +239,7 @@ class MondayReader:
         self.client.close()
 
     def _redact(self, text: str) -> str:
-        text = str(text or "")
+        text = _SURROGATE.sub("�", str(text or ""))  # monday's message reaches an answer too (`last_attempt.detail`)
         if self._token:
             text = text.replace(self._token, "[token]")
         return text[:DETAIL_MAX]

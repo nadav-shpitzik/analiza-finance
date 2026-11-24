@@ -7,21 +7,27 @@ replacement at a time, run against tests/test_desk*.py).
 2. The usage events' alphabets let an ID number through: a session id of digits, a word with a digit run behind a letter,
    a period of any digits. Now the session is letters only (the page makes sixteen), a word carries no number, and a
    period is one the page can name (app/desk/usage.py).
+3. Half of an emoji in a name (a lone surrogate) stopped every save of the stored reading and made /api/desk a 500. Now
+   the reader's `_text` replaces it, as it removes a NUL (app/monday/client.py), and the store's guard says an encoding
+   error as its own failure (app/desk/store.py).
 """
 from __future__ import annotations
 
 import re
 
+import httpx
 import psycopg
 import pytest
 
-from app import migrate
+from app import main, migrate
 from app.desk import reading as rd
+from app.desk import store as ds
 from app.desk import usage
 from app.desk import usage_store
 from app.monday import client as monday
 from tests.conftest import TEST_DATABASE_URL, drop_all, needs_pg
-from tests.test_desk import OTHER_BOARD, SC, reader_of, rel, session_token, status, world
+from app.monday.client import MondayReader
+from tests.test_desk import OTHER_BOARD, SC, TOKEN, desk, reader_of, rel, session_token, status, world  # noqa: F401
 from tests.test_desk_mirror import MemoryStore, desk_of, holder
 from tests.test_desk_usage import batch, ev, use  # noqa: F401 - `use` is the fixture
 
@@ -184,3 +190,87 @@ def test_an_id_number_sent_as_the_session_or_in_a_word_never_reaches_desk_events
         assert not any(ID_NUMBER in s or ID_NUMBER in d for s, _k, d in got), got
     finally:
         drop_all(TEST_DATABASE_URL)
+
+
+# --- 3. a lone surrogate in monday's text -------------------------------------------------------------------------------
+
+MARK = "@@LONE@@"
+
+
+def lone_transport(w) -> httpx.MockTransport:
+    """The World's monday, whose JSON carries `\\ud800` where a name holds MARK: half of a surrogate pair, as monday's
+    JSON may carry an emoji cut in two (json.loads makes it a lone surrogate)."""
+    def handler(request):
+        resp = w.handler(request)
+        body = resp.read().replace(MARK.encode(), b"\\ud800")
+        return httpx.Response(resp.status_code, content=body, headers={"content-type": "application/json"})
+    return httpx.MockTransport(handler)
+
+
+@pytest.fixture
+def pg():
+    if not TEST_DATABASE_URL:
+        pytest.skip("TEST_DATABASE_URL not set")
+    drop_all(TEST_DATABASE_URL)
+    migrate.apply_migrations(TEST_DATABASE_URL)
+    yield TEST_DATABASE_URL
+    drop_all(TEST_DATABASE_URL)
+
+
+def test_a_name_with_half_an_emoji_does_not_stop_every_save_of_the_stored_reading(pg):
+    """flatten's `_text` drops NUL because jsonb refuses it and 'one such cell would fail every save while it stays'
+    (review 22.11). A lone surrogate did the same: the text could not even be encoded to send, DeskStore.save raised
+    UnicodeEncodeError (not even its own DeskStoreError), and the stored copy froze while the cell stayed. Ported with
+    one change: the review's first assert held the surrogate in the reading (true before the fix); the reader replaces it
+    now, so the reading holds the replacement character and nothing that cannot be encoded."""
+    w = world()
+    w.items["301"]["name"] = "ליד-אלף " + MARK
+    make = lambda: MondayReader(TOKEN, client=httpx.Client(transport=lone_transport(w)), sleep=lambda s: None)  # noqa
+    h = rd.HeldReading(make, store=ds.DeskStore(pg), ttl_s=0)
+    kept, last = h.get()
+    assert last["error"] is None and kept["lead_names"]["301"] == "ליד-אלף \ufffd"
+    assert "store_saved" in h.health()["last_codes"], h.health()["last_codes"]
+    assert ds.DeskStore(pg).load()["lead_names"]["301"] == "ליד-אלף \ufffd"
+
+
+def test_the_desk_answer_survives_a_lone_surrogate_in_a_name(desk):  # noqa: F811
+    """The same cell reached /api/desk: JSONResponse encodes with ensure_ascii=False, so every open of the desk was a 500
+    while the cell stayed (the root cause was the reader's, app/monday/client.py `_text`)."""
+    desk.w.items["101"]["name"] = "תלמידה-אלף " + MARK
+    main.app.state.monday_transport = lone_transport(desk.w)
+    client = type(desk.client)(main.app, raise_server_exceptions=False)
+    r = client.get("/api/desk", headers={"Authorization": "Bearer " + session_token(1)})
+    assert r.status_code == 200, r.status_code
+    assert next(x for x in r.json()["view"]["b2c"]["rows"] if x["id"] == "101")["name"] == "תלמידה-אלף \ufffd"
+
+
+def test_every_text_the_reader_gives_is_encodable_a_status_label_a_cell_and_monday_s_own_error():
+    """`_text` is every text of a row (a name, a cell, a status label, a mirror's display); monday's error message reaches
+    an answer as `last_attempt.detail`, so the reader's redaction replaces a lone surrogate too."""
+    from app.monday.client import flatten
+
+    row = flatten({"id": 1, "name": "a\ud800", "board": {"id": "9"}, "column_values": [
+        {"id": "text_x", "text": "b\udfff"}, {"id": "color_x", "index": 1, "label": "c\ud83d", "text": ""},
+        {"id": "lookup_x", "display_value": "\x00d\udc00"}]})
+    assert [row[k] for k in ("name", "text_x", "color_x", "lookup_x")] == ["a\ufffd", "b\ufffd", "c\ufffd", "d\ufffd"]
+    assert flatten({"id": 2, "name": "😀 שלם", "column_values": []})["name"] == "😀 שלם"   # a whole pair is kept
+    reader = MondayReader(TOKEN, client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, content=b'{"errors": [{"message": "bad \\ud800 value"}]}'))))
+    with pytest.raises(monday.MondayError) as err:
+        reader.post("query { me { id } }", {})
+    assert "\ufffd" in err.value.detail and "\ud800" not in err.value.detail
+    err.value.detail.encode("utf-8")
+
+
+@needs_pg
+def test_a_text_the_store_cannot_encode_is_its_own_failure_never_a_crash(pg):
+    """Were a lone surrogate to reach the store another way, its save is a DeskStoreError by its class, said in /health as
+    store_save_failed_UnicodeEncodeError, and the desk goes on with its reading."""
+    w = world()
+    store = ds.DeskStore(pg)
+    kept, _ = holder(w, store).get()
+    bad = dict(kept, read_at=rd._now_iso(), lead_names=dict(kept["lead_names"], **{"301": "x\ud800"}))
+    with pytest.raises(ds.DeskStoreError) as err:
+        store.save(bad)
+    assert err.value.detail == "UnicodeEncodeError"
+    assert store.load()["read_at"] == kept["read_at"]                   # the stored reading stays as it was
