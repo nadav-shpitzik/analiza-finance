@@ -84,7 +84,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   D2; the reader refuses every `NEVER_READ` column for every caller (an ID number, a bank account, an account's business
   number, and every mirror of one: three, read live 24.11), keeps only the cells it asked for, and a linked row answered
   from another board is a stranger, counted and dropped. An ID number typed into a name or a free-text cell is masked as
-  the desk reads it (`mask_ids`: 8+ digits, judged whole by the books' cleaning, become `#`; shorter references stay), so
+  the desk reads it (`mask_ids`: 8+ digits, judged whole by the books' cleaning, become `#`; shorter references stay, and a whole date or month is cut out first, QA 24.11), so
   memory, `desk_readings`, the page and the Excel file agree (Nadav 24.11). The SDK is analiza-metrics' copy (its sha256 is pinned by a test). uvicorn's access line never carries a query string (`NoQueryInAccessLog`: a sessionToken, a search, a signed link).
 - **The desk's page (D2):** `frontend/finance.js` and `finance.css` are analiza-metrics' (da671b2), ported faithfully (what
   changed is listed at the top of `finance.js`); `frontend/desk.js` mounts them (the SDK, the sessionToken, `monday` whenever

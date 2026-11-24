@@ -573,13 +573,55 @@ def test_a_reading_kept_before_the_mask_is_never_laid_under_a_refresh_or_shown()
     w = world()
     store = MemoryStore()
     rd.HeldReading(lambda: reader_of(w), store=store).get()
-    store.row["body_schema"] = "1:" + rd.BODY_SCHEMA.split(":", 1)[1]
-    assert rd.BODY_SCHEMA.startswith("2:")
-    cold = rd.HeldReading(lambda: reader_of(w), store=store)
-    shown, _last, _refreshing = cold.answer(stale_ok=True)
-    assert shown["kind"] == "full" and cold.seeded is False
-    assert cold.health()["last_codes"][:2] == ["store_other_schema", "full_first"]
-    assert store.row["body_schema"] == rd.BODY_SCHEMA
+    version, shape = rd.BODY_SCHEMA.split(":", 1)
+    assert int(version) >= 3  # 2 with the mask, 3 with whole dates kept (QA 24.11)
+    for older in range(1, int(version)):
+        store.row["body_schema"] = "%d:%s" % (older, shape)
+        cold = rd.HeldReading(lambda: reader_of(w), store=store)
+        shown, _last, _refreshing = cold.answer(stale_ok=True)
+        assert shown["kind"] == "full" and cold.seeded is False
+        assert cold.health()["last_codes"][:2] == ["store_other_schema", "full_first"]
+        assert store.row["body_schema"] == rd.BODY_SCHEMA
+
+
+# --- QA 24.11: a whole date is never joined to the number beside it -----------------------------------------------------
+
+DATED = [
+    "A669 | קורס-אלף 01/12/2026 | 12.26 | חברה-בית - לפי מסיימי קורס",  # the shape of a B2B charge's name (read live)
+    "קורס 1.12.26-31.12.26", "קורס 12.26 · 01/12/2026", "A669 קורס 01/12/2026 12.26", "קורס 01/12/2026, 12.26",
+    "מחזור 2610 01/12/2026", "תשלום 3/12 01/12/2026", "A12 | 01.12.2026", "01.2026-06.2026", "11.26-01.27",
+    "2026-12-01 2026-12-31",
+]
+
+
+def test_a_whole_date_or_month_beside_another_number_is_kept_as_typed():
+    """The QA saw "...גברים חרדים # · משרד העבודה...": the books' cleaning joins digits across " | ", so a charge's date
+    and month read as one number of twelve digits and were masked. Every whole date and month is now cut out first."""
+    for text in DATED:
+        assert rd.mask_ids(text) == text, text
+
+
+def test_an_id_number_beside_a_date_is_still_masked():
+    for text, want in {"01/12/2026 039482716": "01/12/2026 #", "ליד 039 482 716 01/12/2026": "ליד # 01/12/2026",
+                       "01/12/2026-039482716": "01/12/2026-#", "ת.ז 03-9482716": "ת.ז #",
+                       "ת.ז 039-482-716 | 12.26": "ת.ז # | 12.26", "שם 39482716 1.12.26": "שם # 1.12.26"}.items():
+        assert rd.mask_ids(text) == want.replace("#", rd.ID_MARK), text
+    # what only looks like a date (a day or a month out of range, or digits run on) is no date: judged with its neighbours
+    for text in ("13/13/2026 12345678", "32.12.2026 1", "01/12/2026039482716"):
+        masked = rd.mask_ids(text)
+        assert rd.ID_MARK in masked and "039482716" not in masked and "12345678" not in masked, text
+    # a date is cut out only where no digit touches it: one carved out of a longer run would leave the rest of an ID
+    # number short enough to show ("01/12/2003" out of "01/12/2003948271" leaves 948271)
+    for text, inner in (("01/12/2003948271", "948271"), ("39482701/12/2026", "394827")):
+        masked = rd.mask_ids(text)
+        assert rd.ID_MARK in masked and inner not in masked, (text, masked)
+
+
+def test_a_charge_name_with_its_dates_reaches_the_desk_as_typed():
+    w = world()
+    w.items["501"]["name"] = DATED[0]
+    r = rd.read_desk(reader_of(w))
+    assert next(x for x in r["b2b_charge"]["rows"] if x["id"] == "501")["name"] == DATED[0]
 
 
 # --- 7. the token before the body ---------------------------------------------------------------------------------------

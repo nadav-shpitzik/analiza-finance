@@ -156,8 +156,9 @@ BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked")
 # the body's shape: a version and the columns each board's rows hold, so a reading kept under another shape (an older
 # deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA).
 # 2 since its text is masked (`masked`, D2's review): a reading kept before is never laid under a refresh, so no row it
-# holds unmasked outlives the first full reading after the deploy
-BODY_SCHEMA = "2:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
+# holds unmasked outlives the first full reading after the deploy. 3 since a whole date is kept (QA 24.11): a name the
+# mask of 2 hid ("... 01/12/2026 | 12.26") is read again whole
+BODY_SCHEMA = "3:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
 # a full reading at least this often: a change no refresh can see (a deleted enrollment, a renamed lead that decides
 # nothing) lives at most this long
 FULL_AFTER = timedelta(hours=36)
@@ -229,8 +230,49 @@ def keep_only(rows: list, ids: list) -> list:
 
 
 # ---------------------------------------------------------------- no ID number in what a reading holds (D2's review, #6)
+# A date or a month written whole, cut out before a text is judged (QA 24.11): the books' cleaning joins digits across a
+# mark or two, so a charge's name "A669 | ... 01/12/2026 | 12.26 | ..." read as one number of twelve digits and was masked,
+# and so did "1.12.26-31.12.26" or "מחזור 2610 01/12/2026". Each token must be valid (a day 1-31, a month 1-12, a year of
+# 19xx or 20xx where it has four digits) and stand apart from any other digit, so no run of an ID number's digits is ever
+# one (039482716, 039-482-716 and 03-9482716 are judged as before).
+_DATE_TOKEN = re.compile(
+    r"(?<![0-9])(?:"
+    r"(?P<d>[0-9]{1,2})(?P<s>[./-])(?P<m>[0-9]{1,2})(?P=s)(?:(?:19|20)[0-9]{2}|[0-9]{2})"  # 01/12/2026, 1.12.26
+    r"|(?:19|20)[0-9]{2}(?P<s2>[./-])(?P<m2>[0-9]{1,2})(?P=s2)(?P<d2>[0-9]{1,2})"  # 2026-12-01
+    r"|(?P<m3>[0-9]{1,2})[./-](?:19|20)[0-9]{2}"  # 12/2026
+    r"|(?:19|20)[0-9]{2}[./-](?P<m4>[0-9]{1,2})"  # 2026-12
+    r"|(?P<m5>[0-9]{1,2})[./][0-9]{2}"  # 12.26
+    r")(?![0-9])")
+
+
+def _date_token(m: "re.Match") -> bool:
+    """Whether a match of _DATE_TOKEN is a real date or month (its day and month in range)."""
+    day = m.group("d") or m.group("d2")
+    month = next(g for g in (m.group("m"), m.group("m2"), m.group("m3"), m.group("m4"), m.group("m5")) if g)
+    return 1 <= int(month) <= 12 and (day is None or 1 <= int(day) <= 31)
+
+
 def mask_ids(text: Any) -> Any:
-    """A text with every ID-like number replaced by ID_MARK; any other value as it is. A number is what the books' cleaning
+    """A text with every ID-like number replaced by ID_MARK; any other value as it is. Every whole date and month in it
+    (_DATE_TOKEN) is kept as typed and cut out first, so it is never joined to a number beside it; each piece between
+    them is judged by `_mask_piece`. A text with nothing to mask comes back unchanged."""
+    if not isinstance(text, str) or sum(map(str.isdigit, unicodedata.normalize("NFKC", text))) < ID_DIGITS:
+        return text
+    out, last, hit = [], 0, False
+    for m in _DATE_TOKEN.finditer(text):
+        if not _date_token(m):
+            continue
+        piece = _mask_piece(text[last:m.start()])
+        hit = hit or piece != text[last:m.start()]
+        out += [piece, m.group(0)]
+        last = m.end()
+    piece = _mask_piece(text[last:])
+    hit = hit or piece != text[last:]
+    return "".join(out) + piece if hit else text
+
+
+def _mask_piece(text: str) -> str:
+    """A piece of text with every ID-like number replaced by ID_MARK. A number is what the books' cleaning
     judges one (app/books/clean.py, reused as is): its digits joined by spaces, dashes and the like, read after NFKC (a
     digit of any script, invisible characters dropped), and kept when its shape says what it is - a date, a month, a span
     of years, a document number, a list or a range of them, an amount. The desk masks it when it has ID_DIGITS digits or
@@ -240,7 +282,7 @@ def mask_ids(text: Any) -> Any:
     one cell read as one number (1234, 5678 or 123456, 50348) are masked from eight digits, unless each is a document
     number (five digits, not 0-led: 50347, 50348 stays). A text with nothing to mask comes back unchanged; one with
     something to mask comes back normalised as the books read it, the mask in its place."""
-    if not isinstance(text, str) or sum(map(str.isdigit, unicodedata.normalize("NFKC", text))) < ID_DIGITS:
+    if sum(map(str.isdigit, unicodedata.normalize("NFKC", text))) < ID_DIGITS:
         return text
     norm = normalize(text)
     cleaned = _process(norm, None)[0]  # norm with every number the books would mask as "#", the rest as it is
