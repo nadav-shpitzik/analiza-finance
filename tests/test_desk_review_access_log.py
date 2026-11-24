@@ -22,7 +22,7 @@ from urllib.parse import quote, urlencode
 from app import main  # noqa: E402,F401 - installs the access-log filter
 from app.desk import routes as dr  # noqa: E402
 
-REPO = Path("/home/user/analiza-finance")
+REPO = Path(__file__).resolve().parents[1]   # the checkout, wherever it is (CI's runner is not this container)
 NAME = "ישראלה ישראלי"          # what she types to find a student
 SECRET = "review-secret"
 
