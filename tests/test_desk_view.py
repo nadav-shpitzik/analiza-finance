@@ -959,3 +959,20 @@ def test_the_desks_reading_builds_a_whole_view():
     assert v["b2b"]["by_customer"]["701"]["billing"] == {"vat_id": None, "hash_key": "77001",
                                                          "invoice_name": "חשבונית-על-שם", "terms": "שוטף+30"}
     assert not any(value in str(v) for value in ("012345678", "512345678", "998877665"))
+
+
+# --- QA of D2 (24.11) --------------------------------------------------------------------------------------------------
+
+def test_a_rows_reasons_are_its_chips_every_one_in_order_and_each_chip_has_one_place_in_it():
+    """The Excel files' "מה לבדוק" (view.row_reasons): the page's chips of the row, all of them, in FLAG_ORDER, which holds
+    every chip of the legend once - a new chip with no place in it would be left out of the files."""
+    assert len(fd.FLAG_ORDER) == len(set(fd.FLAG_ORDER))
+    assert set(fd.FLAG_ORDER) == {k for tab in fd.LEGEND_FLAGS.values() for k, _t, _x in tab}
+    v = view([sc(1, st="", credit_approved="100", refund="5"), sc(2, receipt="0", invoice="", lead=["L1"]),
+              sc(3, credit_approved="100", lead=["L1"], enr=["E3"])],
+             leads=[lead("L1")], enrollments=[enrollment("E3", asked="2026-11-05")])
+    assert fd.row_reasons("b2c", row_of(v, 1)) == ["סכום לזיכוי בסטטוס ריק", "סכום החזר בסטטוס ריק",
+                                                   fd.LAST_DAY_LABEL + " לא ידוע", "בלי הרשמה ובלי ליד מקור"]
+    assert fd.row_reasons("b2c", row_of(v, 2)) == ["חסרה אסמכתת חשבונית", "שליחת קבלה: טרם"]
+    # a flag that names the row's state ("החזר לביצוע") is no reason, as it is no chip on the page
+    assert row_of(v, 3)["state"] == "refund_to_execute" and fd.row_reasons("b2c", row_of(v, 3)) == []

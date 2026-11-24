@@ -60,8 +60,10 @@ def test_the_files_head_mondays_columns_by_their_monday_names():
                  "תאריך החזר", "סטטוס תשלום", "ערוץ תשלום", "סוג חיוב", "תאריך בקשת ביטול", fd.PLANNED_LABEL,
                  'סטטוס שובר משה"ע'):
         assert name in b2c, name
-    # analiza-metrics' file had "ת.ז" among them, read live for it; this service never reads one
-    assert "ת.ז" not in b2c and len(b2c) == 24
+    # analiza-metrics' file had "ת.ז" among them, read live for it; this service never reads one. QA 24.11 added two:
+    # "מה לבדוק", and the counted refund under the page's word for it, beside monday's "סכום החזר"
+    assert "ת.ז" not in b2c and len(b2c) == 26
+    assert {"מה לבדוק", fd.REFUNDED_WORD} <= set(b2c) and "מה לבדוק" in b2b
     for name in ("מועד דרישת תשלום", "חברה", "עסקה", "קוד קורס", 'סכום לחיוב (ללא מע"מ)', "מצב חיוב", "סטטוס תשלום",
                  "תנאי תשלום", "אסמכתת חשבונית", 'סכום ששולם (כולל מע"מ)'):
         assert name in b2b, name
@@ -101,8 +103,8 @@ def test_the_file_is_the_list_as_filtered_right_to_left_with_types_and_a_total_t
     ws = wb["תקבולים"]
     heads = [x.value for x in ws[1]]
     col = {h: i for i, h in enumerate(heads)}
-    # one column fewer than analiza-metrics' ("ת.ז" is gone): A to X, not A to Y
-    assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:X3"
+    # analiza-metrics' 25 columns but "ת.ז", and "מה לבדוק" and "הוחזרו" since QA 24.11: A to Z
+    assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:Z3"
     # monday's "תאריך תקבול", its source beside it (QA 2.5); the name and "נציג מכירות" side by side, as on Student Charge
     assert heads[:6] == ["תאריך תקבול", "מקור התאריך", "אסמכתת חשבונית", "סטודנט/ית", "נציג מכירות", "סכום ששולם"]
     data = {ws.cell(row=i, column=4).value: [x.value for x in ws[i]] for i in (2, 3)}
@@ -423,3 +425,66 @@ def test_the_files_line_names_the_reader_and_never_a_value(desk, monkeypatch, ca
     assert any("user=1 endpoint=desk-export-file outcome=file results=3" in x for x in lines)
     assert any("user=2 endpoint=desk-export-file outcome=link_expired" in x for x in lines)
     assert not any("תלמיד" in x or "sig=" in x or SECRET in x for x in lines)
+
+
+# --- QA of D2 (24.11): what the file says of a row, and its totals ---------------------------------------------------
+
+def book(desk, body: dict, user: int = 1):  # noqa: F811
+    return openpyxl.load_workbook(io.BytesIO(desk.client.get(export_link(desk, user, **body).json()["url"]).content))
+
+
+def total_row(ws) -> dict:
+    """The row under the list that totals what Excel's filter shows: {header: its formula}, for each column that has one."""
+    heads = [x.value for x in ws[1]]
+    i = next(i for i in range(2, ws.max_row + 1) if ws.cell(row=i, column=2).value == 'סה"כ לפי הסינון')
+    return {h: ws.cell(row=i, column=c).value for c, h in enumerate(heads, start=1)
+            if str(ws.cell(row=i, column=c).value or "").startswith("=SUBTOTAL")}
+
+
+def test_a_row_says_what_to_check_and_its_refund_as_monday_holds_it_beside_the_one_counted(desk, monkeypatch):  # noqa: F811
+    """QA 24.11, 2945713395: 5,000 paid and 6,000 typed as its refund, in "חריג" for "סכום החזר גדול מסכום ששולם". Its file
+    said 5,000 under "סכום החזר" - the counted refund under monday's name - and nothing said what was wrong with it. Now
+    "סכום החזר" is monday's, the refund the page counts is "הוחזרו" beside it, and "מה לבדוק" says on every row that has
+    something what the page's chips say there: all of them, in their order."""
+    linked = {"lead": ["L1"]}
+    served(monkeypatch, snap([sc(1, st="4", paid="5000", refund="6000", **linked), sc(2, invoice="", receipt="0", **linked),
+                              sc(3, st="2", paid="4000", credit_approved="1000", refund="300", refund_date="2026-11-02",
+                                 planned="2026-11-01"),
+                              sc(4, **linked), sc(5, st="4", paid="3000", **linked), sc(6, st="5", paid="0", refund="0", **linked)],
+                             [b2(1, billing="0", payment="1"), b2(2)], leads=[lead("L1")]))
+    heads, rows, info = sheet(desk, {"tab": "b2c", "state": ""}, "תקבולים")
+    one = rows["1"]
+    assert (one["סכום ששולם"], one["סכום החזר"], one[fd.REFUNDED_WORD]) == (5000, 6000, 5000)
+    assert one["שיבוץ"] == "חריג, לבדיקה" and one["מה לבדוק"] == "סכום החזר גדול מסכום ששולם"
+    assert heads.index("מה לבדוק") == heads.index("שיבוץ") + 1
+    assert heads.index(fd.REFUNDED_WORD) == heads.index("סכום החזר") + 1
+    # not only in "חריג": a payment waiting for its receipt says so, as the page's chips do
+    assert rows["2"]["שיבוץ"] == "שולם, שליחת קבלה: טרם" and rows["2"]["מה לבדוק"] == "חסרה אסמכתת חשבונית · שליחת קבלה: טרם"
+    # every chip, where the page shows five and "ועוד 1"; the row's own status in quotes, as on the page
+    assert rows["3"]["מה לבדוק"] == " · ".join([
+        'סכום לזיכוי בסטטוס "יש בעיה"', 'סכום החזר בסטטוס "יש בעיה"', 'תאריך החזר בסטטוס "יש בעיה"',
+        fd.PLANNED_LABEL + " עבר", fd.LAST_DAY_LABEL + " לא ידוע", "בלי הרשמה ובלי ליד מקור"])
+    assert rows["4"]["מה לבדוק"] is None
+    # a full refund with no amount typed: monday holds none, the page counts all that was paid
+    assert (rows["5"]["סכום החזר"], rows["5"][fd.REFUNDED_WORD]) == (None, 3000)
+    # a 0 typed is 0 (QA 24.11, 2829373007: the page says "סכום החזר 0", the file's cell was empty), and counts nothing
+    assert (rows["6"]["סכום החזר"], rows["6"][fd.REFUNDED_WORD]) == (0, None)
+    # the second sheet says what each of the three is
+    assert "כפי שהוא במאנדיי" in info["סכום החזר"] and "כמו במסך" in info[fd.REFUNDED_WORD]
+    assert 'לא רק ב"חריג, לבדיקה"' in info["מה לבדוק"]
+    # the companies' file says it too
+    _h, charges, about = sheet(desk, {"tab": "b2b", "state": ""}, "חיובים")
+    assert charges["1"]["מה לבדוק"] == 'מועד דרישת התשלום עבר · אין תנאי תשלום · "שולם" לפני "חויב"'
+    assert charges["2"]["מה לבדוק"] is None and "מה לבדוק" in about
+
+
+def test_the_students_file_totals_what_the_page_counts_and_never_mondays_refund_as_typed(desk, monkeypatch):  # noqa: F811
+    s = snap([sc(1, st="4", paid="5000", refund="6000"), sc(2, st="4", paid="3000"), sc(3, credit_approved="700"), sc(4)],
+             [b2(1)])
+    served(monkeypatch, s)
+    wb = book(desk, {"tab": "b2c", "state": ""})
+    # a total under each amount the page totals (fd.B2C_TOTALS), and none under monday's refund as typed
+    assert set(total_row(wb["תקבולים"])) == {"סכום ששולם", fd.REFUNDED_WORD, "סכום לזיכוי"}
+    info = {r[0].value: r[1].value for r in wb["פרטים"].iter_rows()}
+    page = fd.list_totals("b2c", fd.filter_b2c(fd.build_view(s, TODAY)["b2c"], "", "", ""))
+    assert (info['סה"כ סכום ששולם'], info['סה"כ ' + fd.REFUNDED_WORD]) == (page["money_in"], page["refunded"]) == (16000, 8000)

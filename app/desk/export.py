@@ -24,6 +24,12 @@ NAMES (round 3, 11.11, the one-name norm): a column that holds a monday column i
 name, exactly; only what the desk computes keeps its own word ("שיבוץ", "מועד פירעון", "מועד אחרון להחזר", the aging
 bands), the same word as on the page and in its legend. A refund row carries its two dates side by side:
 "מועד אחרון להחזר" (the legal day) and "מועד העברה מתוכנן" (the transfer round).
+
+WHAT IS WRONG WITH A ROW (QA 24.11): the column "מה לבדוק", on every row that has something and not only in "חריג",
+says it in the page's chips (view.row_reasons: their words, their order, all of them where the page shows five).
+"סכום החזר" is monday's own, as typed (a 6,000 refund on a 5,000 payment is 6,000: that is why its row is in "חריג");
+the refund the desk counts, capped and with a full refund's amount where none was typed, is beside it under the
+page's own word for it, "הוחזרו", and the totals count that one, as the page does.
 """
 from __future__ import annotations
 
@@ -39,8 +45,9 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, PLANNED_LABEL,
-                   REFUND_DUE_DAYS, aging_columns, aging_file_header, aging_value, day, is_refund_row)
+from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, P_PART, P_REFUNDED,
+                   PAY, PLANNED_LABEL, REFUND_DUE_DAYS, REFUNDED_WORD, aging_columns, aging_file_header, aging_value, day,
+                   is_refund_row, row_reasons)
 
 MONEY_FMT = "#,##0.00"
 DATE_FMT = "dd/mm/yyyy"
@@ -66,7 +73,20 @@ def _counted_paid(r: dict) -> Decimal | None:
     return r["money_in"] if r["status_idx"] in MONEY_IN and r["paid_typed"] is not None else None
 
 
-# (header, value of a row, kind, width) - in the order of her ledger card in Hashavshevet: date, reference, who, amount
+def _reasons(tab: str) -> Callable[[dict], str]:
+    """The row's "מה לבדוק": every chip the page would show on it, in its order, one after the other."""
+    return lambda r: " · ".join(row_reasons(tab, r))
+
+
+def _what_to_check(word: str, states: dict) -> tuple[str, str]:
+    """The second sheet's line on "מה לבדוק" (`word`: a payment, a charge; `states`: its tab's)."""
+    return ("מה לבדוק", "מה המסך מצא ב%s, באותן מילים ובאותו סדר כמו בעמודה \"מה לבדוק\" במסך, ובכל שורה שיש בה משהו, "
+                        "לא רק ב\"%s\". במסך מוצגים עד חמישה, וכאן כולם." % (word, states["exception"]["label"]))
+
+
+# (header, value of a row, kind, width) - in the order of her ledger card in Hashavshevet: date, reference, who, amount.
+# A kind: "money" is an amount with a total under the rows; "amount" an amount without one (monday's own value, where
+# the total is of what the desk counts, in a column of its own); "date", "int", "text".
 B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # monday's "תאריך תקבול", as on the page: where it was not typed, the day the row was created, and the next column
     # says so in the page's word for it ("יום היצירה", QA 11.11, 2.5: "תאריך" held two things under one name)
@@ -85,9 +105,13 @@ B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # the cohort's "Registration Flow", by the name the same field carries on the Deals board (17.11, view.FLOW_LABEL)
     (FLOW_LABEL, lambda r: r["flow"], "text", 18),
     ("שיבוץ", lambda r: B2C_STATES[r["state"]]["label"], "text", 28),
+    ("מה לבדוק", _reasons("b2c"), "text", 40),
     ("סטטוס תשלום", lambda r: r["status"], "text", 13),
     ("שליחת קבלה", lambda r: r["receipt"], "text", 11),
-    ("סכום החזר", lambda r: _money_or_blank(r["refunded"]), "money", 13),
+    # monday's "סכום החזר" as typed, 0 too (QA 24.11: the file wrote the counted refund under monday's name); what the
+    # desk counts of it is the next column, under the page's word for it, and the total is that one's
+    ("סכום החזר", lambda r: r["refund_typed"], "amount", 13),
+    (REFUNDED_WORD, lambda r: _money_or_blank(r["refunded"]), "money", 13),
     ("תאריך החזר", lambda r: day(r["refund_date"]), "date", 12),
     ("אופן החזר", lambda r: r["refund_method"], "text", 12),
     ("אסמכתת זיכוי", lambda r: r["credit_ref"], "text", 14),
@@ -110,6 +134,7 @@ B2B_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # a cancelled charge's amount, or one never typed, is not money: blank, so no total counts it (review 10.11)
     ("סכום לחיוב (ללא מע\"מ)", lambda r: r["amount"] if r["amount_known"] and r["state"] != "cancelled" else None, "money", 15),
     ("שיבוץ", lambda r: B2B_STATES[r["state"]]["label"], "text", 22),
+    ("מה לבדוק", _reasons("b2b"), "text", 40),
     ("מצב חיוב", lambda r: r["billing"], "text", 18),
     ("סטטוס תשלום", lambda r: r["payment"], "text", 13),
     ("מועד פירעון", lambda r: day(r["due"]), "date", 12),
@@ -160,7 +185,7 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
     says that the file carries no ID number."""
     return _workbook("תקבולים", B2C_COLUMNS, rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
                      [("סה\"כ סכום ששולם", sum((r["money_in"] for r in rows), ZERO)),
-                      ("סה\"כ סכום החזר", sum((r["refunded"] for r in rows), ZERO)),
+                      ("סה\"כ %s" % REFUNDED_WORD, sum((r["refunded"] for r in rows), ZERO)),
                       ("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
                       ("תאריך תקבול", "כפי שהוקלד בלוח; כשלא הוקלד, היום שבו נוצרה השורה במאנדיי, ואז במקור "
                                       "התאריך כתוב \"יום היצירה\""),
@@ -169,8 +194,13 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
                                       "שמכר"),
                       ("סכום ששולם", "בתקבולים שנכנס בהם כסף בלבד; בסטטוס תשלום \"לא שולם\", \"יש בעיה\" או "
                                      "\"מלגת אנליזה\" התא ריק ולא נספר"),
-                      ("סכום החזר", "כפי שהוקלד; ב\"תשלום הוחזר\" בלי סכום החזר, כל סכום ששולם. לעולם לא יותר "
-                                    "מסכום ששולם"),
+                      ("סכום החזר", "כפי שהוא במאנדיי: גם 0, וגם כשהוא גדול מסכום ששולם או בסטטוס תשלום שלא אומר "
+                                    "שהוחזר. אין לו סה\"כ: את ההחזר שהמסך סופר סוכמת העמודה \"%s\"" % REFUNDED_WORD),
+                      (REFUNDED_WORD, "ההחזר כפי שהמסך סופר אותו ב\"%s\": רק בסטטוס תשלום \"%s\" או \"%s\"; ב\"%s\" "
+                                      "בלי סכום החזר או עם 0, כל סכום ששולם; ולעולם לא יותר מסכום ששולם. ממנה סה\"כ "
+                                      "ההחזרים, כמו במסך"
+                       % (REFUNDED_WORD, PAY[P_REFUNDED], PAY[P_PART], PAY[P_REFUNDED])),
+                      _what_to_check("תקבול", B2C_STATES),
                       (LAST_DAY_LABEL, "תאריך בקשת ביטול בהרשמה ועוד %d יום, בשורות של החזר בלבד, ליד %s"
                        % (REFUND_DUE_DAYS, PLANNED_LABEL))], head_lines=[("ת.ז", ID_NUMBERS_NOT_IN_FILE)])
 
@@ -181,7 +211,7 @@ def b2b_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
                      [("סה\"כ סכום לחיוב (ללא מע\"מ)", sum((r["amount"] for r in rows if r["state"] != "cancelled"), ZERO)),
                       ("הסכומים", "סכום לחיוב (ללא מע\"מ), כמו בלוח B2B Charge; סכום ששולם (כולל מע\"מ) ויתרה "
                                   "לגבייה כולל מע\"מ (היתרה מניחה מע\"מ 18%)"),
-                      ("מועד פירעון", DUE_RULE)])
+                      ("מועד פירעון", DUE_RULE), _what_to_check("חיוב", B2B_STATES)])
 
 
 def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any], what: str, totals: list,
@@ -206,7 +236,7 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
                 _text(cell, v)
                 continue
             cell.value = v
-            cell.number_format = {"money": MONEY_FMT, "date": DATE_FMT, "int": "0"}[kind]
+            cell.number_format = {"money": MONEY_FMT, "amount": MONEY_FMT, "date": DATE_FMT, "int": "0"}[kind]
     last = len(rows) + 1
     last_col = get_column_letter(len(columns))
     ws.freeze_panes = "A2"

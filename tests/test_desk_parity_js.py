@@ -866,3 +866,42 @@ def test_the_rows_own_buttons_and_boxes_sit_exactly_on_the_rows_the_server_offer
     html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
                  {"body": body, "cases": [{"tab": "b2b", "query": "", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}]})
     assert "data-row-act" not in html and "data-pick" not in html
+
+
+# --- QA of D2 (24.11): the Excel files' "מה לבדוק" is the page's column -------------------------------------------------
+
+def page_flag_order() -> list[str]:
+    import re
+    return json.loads(re.search(r"var FLAG_ORDER = (\[.*?\]);", PAGE.read_text(encoding="utf-8"), flags=re.S).group(1))
+
+
+def test_the_server_lists_a_rows_chips_in_the_pages_order():
+    """view.FLAG_ORDER is the page's FLAG_ORDER: the Excel files list a row's reasons in it (view.row_reasons)."""
+    assert page_flag_order() == fd.FLAG_ORDER
+
+
+def test_the_files_what_to_check_says_what_the_pages_column_says():
+    """QA 24.11: a row of "חריג" carried no reason in the Excel file. The file's "מה לבדוק" (view.row_reasons) is the page's
+    column on the same row: the same chips, in the same words and order - five and "ועוד N" on the page, all in the file."""
+    import html as h
+    import re
+    rows_sc = [sc(1, st="2", paid="4000", credit_approved="1000", refund="300", refund_date="2026-11-02", planned="2026-11-01"),
+               sc(2, st="4", paid="5000", refund="6000", lead=["L1"]), sc(3, st="77", lead=["L1"]),
+               sc(4, st="5", paid="10", lead=["L1"]), sc(5, paid="", invoice="", lead=["L1"])]
+    rows_b2 = [b2(1, billing="0", payment="1"), b2(2, payment="31"), b2(3, payment="2", due="2026-11-30", invoice=""),
+               b2(4, billing="1", payment="2", amount="", due="2026-11-20", account="A2")]
+    kw = dict(leads=[lead("L1")], accounts=[acct("A1"), acct("A2", "שוטף+30")],
+              deals=[deal("D1", stage=fd.STAGE_NO_CONTRACT, value="500")])
+    view = fd.build_view(snap(rows_sc, rows_b2, **kw), TODAY)
+    pages = render([{"tab": "b2c", "sc": {"state": "exception", "open": {}}},
+                    {"tab": "b2b", "b2": {"state": "exception", "view": "list", "customer": "", "open": {}}}],
+                   rows_sc, rows_b2, **kw)
+    for tab, html in zip(("b2c", "b2b"), pages):
+        cells = re.findall(r'<tr class="fin-rowbtn[^"]*" data-row="([^"]+)".*?<td class="k-notes">(.*?)</td>', html, flags=re.S)
+        shown = {i: [h.unescape(c) for c in re.findall(r'<span class="fin-chip[^"]*">(.*?)</span>', cell)] for i, cell in cells}
+        rows = [x for x in view[tab]["rows"] if x["state"] == "exception"]
+        assert len(rows) == (5 if tab == "b2c" else 4) and sorted(shown) == sorted(x["id"] for x in rows)
+        for x in rows:
+            said = fd.row_reasons(tab, x)
+            assert said and shown[x["id"]] == said[:5] + (["ועוד %d" % (len(said) - 5)] if len(said) > 5 else []), (tab, x["id"])
+    assert len(fd.row_reasons("b2c", next(x for x in view["b2c"]["rows"] if x["id"] == "1"))) == 6   # the page: five, "ועוד 1"

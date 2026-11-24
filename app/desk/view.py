@@ -274,6 +274,9 @@ TASKS_ABOUT = {
            "התשלום הישן לחדש." % _quoted([B2B_STATES[k]["label"] for k in B2B_TASK_STATES], "ו"),
 }
 _NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]])
+# the students' two money figures, the desk's own words for what it counts (the legend says how): what came in, and how
+# much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
+RECEIVED_WORD, REFUNDED_WORD = "התקבלו", "הוחזרו"
 _RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפרטים: היום, או כמה ימים נותרו עד אליו, או כמה ימים עברו מאז.")
 _UNNAMED_WORD = ("תווית בלי שם", "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
                                  "נראה כמו תא ריק. פותחים את השורה במאנדיי ובוחרים תווית.")
@@ -301,9 +304,10 @@ LEGEND = {
         ("החזר", "בפרטים של תקבול שיש בו החזר (ביקש החזר, אושר, בוצע, או שהוקלד בו סכום החזר או תאריך החזר): %s, %s "
                  "והעמודות של ההחזר בשורה. ב%s גם פרטי חשבון." % (LAST_DAY_LABEL, PLANNED_LABEL, _q("החזר לביצוע"))),
         _RELATIVE_DAYS,
-        ("התקבלו · הוחזרו", "סכום ששולם בתקבולים שנכנס בהם כסף (סטטוס תשלום %s), וסכום החזר מתוכם. %s בלי סכום "
-                            "החזר, או עם 0, נספר כהחזר של כל סכום ששולם, והחזר לא נספר מעבר לסכום ששולם."
-                            % (_quoted([PAY[k] for k in (P_PAID, P_ASKED, P_REFUNDED, P_PART)]), _q(PAY[P_REFUNDED]))),
+        ("%s · %s" % (RECEIVED_WORD, REFUNDED_WORD),
+         "סכום ששולם בתקבולים שנכנס בהם כסף (סטטוס תשלום %s), וסכום החזר מתוכם. %s בלי סכום "
+         "החזר, או עם 0, נספר כהחזר של כל סכום ששולם, והחזר לא נספר מעבר לסכום ששולם."
+         % (_quoted([PAY[k] for k in (P_PAID, P_ASKED, P_REFUNDED, P_PART)]), _q(PAY[P_REFUNDED]))),
         ("מחזור", "המחזור שההרשמה מקושרת אליו; כשבהרשמה אין מחזור, המחזור של הליד מקור. יותר ממחזור אחד, או אף "
                   "אחד: בלי מחזור, ופרטי התקבול אומרים למה."),
         ("פרטי חשבון", "ארבע עמודות הבנק בלוח Student Charge (שם בעל החשבון, בנק, סניף ומספר חשבון), שאינה מקלידה "
@@ -490,6 +494,29 @@ WHAT_TO_CHECK = {
 def flag_legend_term(text: str) -> str:
     """A chip as the legend names it: the row's own status is shown as "...", since it changes from row to row."""
     return text.replace("{status}", "\"...\"")
+
+
+# The order the page lists a row's chips in its "מה לבדוק" column (frontend/finance.js FLAG_ORDER, held to this by
+# tests/test_desk_parity_js.py): contradictions and deadlines first, then what is missing, then the rest. Every chip of
+# LEGEND_FLAGS is in it once. The Excel files list a row's reasons in this order and in the chips' words (`row_reasons`).
+FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
+              "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
+              "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
+              "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
+              "partial_amount_unknown", "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"]
+
+
+def status_word(row: dict) -> str:
+    """A payment's "סטטוס תשלום" inside a chip: in quotes, as monday spells it, or "ריק" (finance.js statusWord)."""
+    return _q(row["status"]) if row.get("status") else "ריק"
+
+
+def row_reasons(tab: str, row: dict) -> list[str]:
+    """What the page's column "מה לבדוק" says of a row (finance.js rowChips): each of its chips, in FLAG_ORDER, in the
+    chip's own words - "{status}" the row's own status (`status_word`). The page shows five and "ועוד N"; this is all of
+    them, for the Excel files, which carry the column on every row (QA 24.11: a row in "חריג" said nothing there)."""
+    texts = {k: t for k, t, _x in LEGEND_FLAGS[tab]}
+    return [texts[k].replace("{status}", status_word(row)) for k in FLAG_ORDER if k in row["flags"] and k in texts]
 
 
 # ---------------------------------------------------------------- actions from the desk (round 3, slice 3, 11.11)
