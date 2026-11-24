@@ -60,6 +60,12 @@
  * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
  *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
  *      as a decision: it came with analiza-metrics' first import, 10.11).
+ * QA 10 The page's words: a refresh on its way is "מתעדכן" on the button pressed as beside the reading's time (it was
+ *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" - in the list's cell finance.css draws "(לפי" and
+ *       ")" around the legend's term, whose markup tests/test_desk_parity_js.py holds, and the details and the row's
+ *       situation write it (CREATED_BY); an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
+ *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
+ *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -262,16 +268,17 @@
       if (!r.planned) { return NOT_SET; }
       return d(r.planned) + (r.flags.indexOf("refund_overdue") !== -1 ? " <span class=\"fin-badtext\">עבר</span>" : "");
     } },
-    refund_date: { h: "תאריך החזר", c: function (r) { return d(r.refund_date); } },
+    /* QA 10 (24.11): an empty value is "-" in every column, as monday shows it - "תאריך החזר" was an empty cell */
+    refund_date: { h: "תאריך החזר", c: function (r) { return r.refund_date ? d(r.refund_date) : NOT_SET; } },
     /* "סכום החזר"; a full refund without it counts what was paid, said by the asterisk under the list */
     refunded: { h: "סכום החזר", n: 1, t: "refunded", c: function (r) {
       return refundGuessed(r) ? "<span class=\"fin-subtle\" title=\"סכום החזר ריק או 0: מוצג כל סכום ששולם\">" + money2(r.refunded) + "*</span>"
         : money2(r.refunded);
     } },
-    account: { h: "חברה", c: function (r) { return esc(r.ctx.account); } },
-    deal: { h: "עסקה", xs: 1, c: function (r) { return esc(r.ctx.deal); } },
+    account: { h: "חברה", c: function (r) { return r.ctx.account ? esc(r.ctx.account) : NOT_SET; } },
+    deal: { h: "עסקה", xs: 1, c: function (r) { return r.ctx.deal ? esc(r.ctx.deal) : NOT_SET; } },
     charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
-    course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course); } },
+    course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course) || NOT_SET; } },
     amount: { h: "סכום לחיוב (ללא מע\"מ)", n: 1, t: "amount", c: function (r) {
       if (!num(r.amount)) { return "-"; }
       return r.state === "cancelled" ? "<s class=\"fin-subtle\" title=\"בוטל: לא נספר\">" + money2(r.amount) + "</s>" : money2(r.amount);
@@ -285,13 +292,13 @@
     } },
     /* the due date and how it was counted: the company's terms beside it, or that it has none */
     due: { h: "מועד פירעון", c: function (r) {
-      if (!r.due) { return ""; }
+      if (!r.due) { return NOT_SET; }
       return d(r.due) + (r.flags.indexOf("terms_missing") !== -1 ? " " + noTerms(r.account_id) : r.account_terms ? " <bdi class=\"fin-subtle\">" + esc(r.account_terms) + "</bdi>" : "");
     } },
     b2state: { h: "שיבוץ", c: function (r) { return stateChip(r.state, VIEW.b2b.states, B2_COLOR); } },
     paid_so_far: { h: "סכום ששולם (כולל מע\"מ)", n: 1, t: "paid_so_far", c: function (r) { return r.paid_so_far != null ? money2(r.paid_so_far) : "<span class=\"fin-badtext\">לא הוקלד</span>"; } },
     balance: { h: "יתרה לגבייה (כולל מע\"מ)", n: 1, t: "balance", c: function (r) { return r.balance != null ? money2(r.balance) : "-"; } },
-    late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : ""; } },
+    late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : NOT_SET; } },
     notes: { h: "מה לבדוק", c: function (r) { return rowChips(r); } },
     open: { h: "פתיחה במאנדיי", c: function (r) { return openLink(r); } },
     /* 1.1 (D2): the box that picks a row for a batch, under a box that picks every row it can, and the row's own button -
@@ -359,8 +366,15 @@
   }
   /* "תאריך תקבול" as typed; where it was not, the day the row was created, marked so in the cell (QA 2.5) */
   var CREATED_WORD = "יום היצירה";
+  /* QA 10 (24.11): "יום היצירה" alone beside a date did not read without the legend, so it is said "(לפי יום היצירה)". In
+     the list's cell the markup stays the legend's term alone - tests/test_desk_parity_js.py holds it - and finance.css
+     draws "(לפי" and ")" around it, on a line of its own; the details and the row's situation say it in full */
+  var CREATED_BY = "(לפי " + CREATED_WORD + ")";
   function paidDate(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_WORD + "</span>";
+  }
+  function paidDateSaid(r) {
+    return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
   }
   function billedNoDue(r) { return r.flags.indexOf("billed_no_due") !== -1; }
   function cls(k) { return " class=\"k-" + k + (COLS[k].n ? " n" : "") + (COLS[k].xs ? " hide-xs" : "") + "\""; }
@@ -680,7 +694,7 @@
   var NONE = "<span class=\"fin-subtle\">טרם נרשמה</span>";
 
   function scSituation(r) {
-    var paid = "שולם " + money2(r.money_in) + " ב-" + d(r.date) + (r.date_from === "paid" ? "" : " (" + CREATED_WORD + ")") +
+    var paid = "שולם " + money2(r.money_in) + " ב-" + d(r.date) + (r.date_from === "paid" ? "" : " " + CREATED_BY) +
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>";
@@ -722,7 +736,7 @@
       (r.state === "refund_to_execute" ? "<div class=\"fin-dx-box\"><span class=\"fin-subtle\">פרטי חשבון</span> " + bankCell(r) + "</div>" : "") : "";
     var payment = block("", "", [
       ["סטטוס תשלום", lbl(r, "status")], ["שליחת קבלה", lbl(r, "receipt")],
-      ["סכום ששולם", COLS.received.c(r)], ["תאריך תקבול", paidDate(r)],
+      ["סכום ששולם", COLS.received.c(r)], ["תאריך תקבול", paidDateSaid(r)],
       ["סוג חיוב", lbl(r, "type")], ["ערוץ תשלום", lbl(r, "channel")],
       ["אסמכתת חשבונית", ltr(r.invoice) || NONE],
       /* the lead's ID number, read live as the person when the details open (16.11): idCell; then the lead's Owner (17.11).
@@ -879,7 +893,9 @@
     var tasks = b.states.filter(function (s) { return s.task; }), rest = b.states.filter(function (s) { return !s.task; });
     var open = tasks.reduce(function (a, s) { return a + N[s.key].count; }, 0);
     function t(s) {
-      var x = N[s.key], m = s.key === "cancelled" ? null : money(x.money);
+      /* "בוטל" is counted in no sum; "ממתין לנתונים" sums a typed amount (app/desk/view.py B2B_STATES), and with none typed
+         its 0 said "nothing to bill" of charges whose amount is not known yet (QA 10, 24.11): no amount then */
+      var x = N[s.key], m = s.key === "cancelled" || (s.key === "pending" && !num(x.money)) ? null : money(x.money);
       if (s.key === "partial" && x.count) {
         m += " <small>סכום לחיוב (ללא מע\"מ)</small>" + (x.balance_unknown ? "<br><span class=\"fin-badtext\">סכום ששולם (כולל מע\"מ) לא הוקלד " +
           (x.balance_unknown === 1 ? "בחיוב אחד" : "ב-" + NF.format(x.balance_unknown) + " חיובים") + "</span>"
@@ -2549,11 +2565,14 @@
       if (caret && back.setSelectionRange) { try { back.setSelectionRange(caret[0], caret[1]); } catch (e) { /* not a text box */ } }
     }
   }
+  /* a newer reading on its way: one word on the refresh button pressed and beside the reading's time (QA 10, 24.11: the
+     button said "מרענן" and the header "מתעדכן" of the same thing) */
+  var REFRESHING = "מתעדכן";
   var SEARCH_ICON = "<svg class=\"fin-searchicon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\">" +
     "<circle cx=\"7\" cy=\"7\" r=\"4.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M10.5 10.5 13.5 13.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
   function paint() {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1><span class=\"fin-asof\">נכון ל-" + esc(asOf()) +
-      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">מתעדכן</span>" : "") + "</span>" +
+      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>" : "") + "</span>" +
       "<span class=\"fin-spacer\"></span><span class=\"fin-searchbox\">" + SEARCH_ICON +
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
@@ -2844,7 +2863,7 @@
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
     /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,
        a ח.פ) */
-    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = "מרענן..."; load(true); return; }
+    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return; }
     render();
     /* on a wide screen the app scrolls #content, not the window */
     var scroller = document.getElementById("content");

@@ -123,9 +123,11 @@ const deps = { api: (p) => answer("GET " + p),
   },
   monday: monday, board: input.board === undefined ? "5093448677" : input.board, later: (fn) => fn(), today: () => "2026-11-24",
   useFlushMs: input.useFlushMs, useSearchMs: input.useSearchMs, mondayWaitMs: input.mondayWaitMs };
+let clicked = null;
 function click(ds, cls) {
   const el = { dataset: ds, classList: { contains: (c) => (cls || []).indexOf(c) !== -1 }, closest: () => null,
     getAttribute: () => "", disabled: false, textContent: "" };
+  clicked = el;
   handlers.click({ target: { closest: (sel) => sel.indexOf("[data-") !== -1 ? el : null }, preventDefault() {} });
 }
 const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 0)); } };
@@ -160,7 +162,9 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.wait) { await new Promise((r) => setTimeout(r, step.wait)); }
     await settle();
     const act = F._actState(), b = F._batchState();
-    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error,
+    /* the element a step clicked, as the click left it (a button that says it is busy) */
+    const pressed = step.click && clicked ? { text: clicked.textContent, disabled: clicked.disabled } : null;
+    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error, pressed: pressed,
       refused: refused, can: F._can(), sent: sent.length,
       plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
       /* 1.1: the batch on the screen, row by row */
@@ -421,6 +425,63 @@ def test_an_empty_state_keeps_its_pill_with_its_0_as_an_empty_tile_keeps_its_til
     assert tile_of(b2c, "data-bstate", "done").startswith("fin-state dot | 1 הושלם")
     assert re.findall(r'data-bstate="([^"]*)"', b2c)[-5:] == ["refund_asked", "done", "refunded", "no_money", ""]
     assert "אין כאן תקבולים." in pressed and 'aria-pressed="true" data-bstate="refund_asked"' in pressed
+
+
+def test_a_refresh_on_its_way_has_one_word_on_the_button_and_beside_the_readings_time():
+    """QA 10 (24.11): the refresh button said "מרענן…" and the header "מתעדכן" of the same thing; "מתעדכן" is kept."""
+    assert "מרענן" not in code_of(PAGE)
+    got = drive(steps=[{"click": [{"refresh": "1"}]}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer(refreshing=True)}]})
+    assert got["steps"][0]["pressed"] == {"text": "מתעדכן...", "disabled": True}
+    assert '<span class="fin-refreshing">מתעדכן</span>' in got["first"]
+
+
+def test_a_date_that_was_not_typed_says_by_what_it_is_dated_and_an_empty_value_is_a_dash():
+    """QA 10 (24.11): "יום היצירה" beside a payment date did not read without the legend - it says "(לפי יום היצירה)": in
+    the details and the row's situation as text, in the list's cell drawn around the legend's term by finance.css (the
+    cell's markup is held by tests/test_desk_parity_js.py). And in "החזר בוצע" an empty "תאריך החזר" was an empty cell
+    while every other empty value is "-": so is it now, and every column's empty value."""
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3101":
+            r["date_from"] = "created"
+        if r["id"] == "3105":
+            r["refund_date"] = ""
+    for r in v["b2b"]["rows"]:
+        if r["id"] == "9902":
+            r.update(course="", ctx={"account": "חברה ג", "deal": ""})
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}},
+                            {"show": {"tab": "b2c", "sc": {"state": "refunded", "period": "", "open": {}}}},
+                            {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}}],
+                monday=world())
+    every, refunded, b2_all = [s["html"] for s in got["steps"]]
+    said = '03.11.26 <span class="fin-subtle">(לפי יום היצירה)</span>'
+    assert fact(detail_of(every, "3101"), "תאריך תקבול") == said
+    assert "שולם <bdi>4,000.00 ₪</bdi> ב-03.11.26 (לפי יום היצירה)" in detail_of(every, "3101")
+    assert cells_of(every, "3101")["date"] == '03.11.26 <span class="fin-subtle">יום היצירה</span>'
+    css = (FRONT / "finance.css").read_text(encoding="utf-8")
+    assert 'table.fin-t tbody td.k-date > .fin-subtle::before { content: "(לפי "; }' in css
+    assert 'table.fin-t tbody td.k-date > .fin-subtle::after { content: ")"; }' in css
+    dash = '<span class="fin-subtle">-</span>'
+    assert cells_of(refunded, "3105")["refund_date"] == dash
+    assert cells_of(b2_all, "9902")["due"] == dash and cells_of(b2_all, "9902")["deal"] == dash
+    # no cell of a row is empty: a value, or "-" (the row's box and its button are no values)
+    for page, rid in ((every, "3101"), (refunded, "3105"), (b2_all, "9902")):
+        empty = [k for k, x in cells_of(page, rid).items() if not x.strip() and k not in ("pick", "rowact", "notes")]
+        assert not empty, (rid, empty)
+
+
+def test_a_pending_tile_says_no_amount_while_none_is_typed():
+    """QA 10 (24.11): "ממתין לנתונים ₪0" said there was nothing to bill of charges whose amount is not known yet. With no
+    amount typed the tile says none; a typed amount is summed and said (app/desk/view.py B2B_STATES: "a typed amount may
+    sit here, and the tile sums it")."""
+    def pending(amount):
+        v = view()
+        v["b2b"]["numbers"]["pending"] = {"count": 2, "money": amount}
+        return drive(answer(v), [{"show": {"tab": "b2b", "b2": {"state": "tasks", "view": "list", "customer": "",
+                                                                 "open": {}}}}], monday=world())["steps"][0]["html"]
+    assert tile_of(pending("0"), "data-b2state", "pending") == "fin-state dot | 2 ממתין לנתונים"
+    assert tile_of(pending("1500"), "data-b2state", "pending") == "fin-state dot | 2 ממתין לנתונים 1,500 ₪"
 
 
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
