@@ -525,8 +525,9 @@ def test_one_reading_serves_every_open_within_a_minute():
     assert again is first and len(w.queries) == 10
     clock.t += 2
     newer, last = held.get()
-    # since D2 the reading after the minute is a refresh over the one held: one request, nothing having changed
-    assert newer is not first and len(w.queries) == 11 and last["complete"] is True and newer["kind"] == "delta"
+    # since D2 the reading after the minute is a refresh over the one held, nothing having changed: its one request and
+    # the two charge boards' ids (D2's review)
+    assert newer is not first and len(w.queries) == 13 and last["complete"] is True and newer["kind"] == "delta"
 
 
 def test_a_failed_reading_keeps_the_one_before_and_is_tried_again_only_after_the_gap():

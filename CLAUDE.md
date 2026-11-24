@@ -102,8 +102,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   a `NEVER_READ` column, and the store refuses a text that names one). A plain `GET /api/desk` past the span answers the
   held reading, or on a cold instance the stored one, at once with `refreshing: true`; `?fresh=1` and `POST /api/desk/refresh`
   read a refresh (`read_delta`: each board's items updated since the held reading, read again by id; the deciding leads every
-  time), whole instead with nothing held, after `FULL_AFTER` (36 h), on a count mismatch or a failed refresh (at most once
-  per `FALLBACK_GAP`, never on `NO_FALLBACK` or a rate limit). A request, never a thread. `/health`: `desk.last_reading.kind`,
+  time; the two charge boards' ids paged, so a charge that left unseen is dropped and one that came unseen is read by id),
+  whole instead with nothing held, after `FULL_AFTER` (36 h), on ids that cannot be reconciled or a failed refresh (at most
+  once per `FALLBACK_GAP`, never on `NO_FALLBACK` or a rate limit). A request, never a thread. `/health`: `desk.last_reading.kind`,
   `desk.refresh` (codes), with a database `desk.stored` (its age); never a count of rows. Tests: `tests/test_desk_mirror.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`

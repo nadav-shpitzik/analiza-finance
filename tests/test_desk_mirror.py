@@ -7,8 +7,10 @@ Each rule, against a monday that can answer a never-read column unasked:
 1. a reading is kept in Postgres and read back without a column of NEVER_READ - and a text that names one is never written;
 2. an instance that woke from zero answers from the stored reading at once, marked refreshing, and the page's own request
    reads the next;
-3. a refresh reads only what changed and lays it over the held reading by id (replaced, new, newly linked), and a charge
-   that left its board unseen (archived, deleted) makes the next reading whole, by the count;
+3. a refresh reads only what changed and lays it over the held reading by id (replaced, new, newly linked); a charge that
+   left its board unseen (archived, deleted, moved) is dropped and one that came unseen is read by id, by the board's ids
+   paged in every refresh (D2's review of a32395f: an equal count hid both), and a board whose ids cannot be reconciled
+   makes the next reading whole;
 4. after FULL_AFTER since the last full reading, a full reading;
 5. a refresh monday refuses, or whose answer has another shape, falls back to a full reading and says so in /health - at
    most once per FALLBACK_GAP, and never for an error a full reading would meet the same way;
@@ -405,8 +407,8 @@ def test_a_refresh_reads_only_what_changed_and_lays_it_over_the_held_reading_by_
     before, reads = len(w.queries), len(w.by_id_reads())
     got = rd.read_delta(reader, held)
     # the six boards' windows with the deciding leads (302: its enrollment names no cohort; 303: no enrollment) in one
-    # request, and the two changed rows packed into one more
-    assert len(w.queries) - before == 2 and got["calls"] == 2
+    # request, the two charge boards' ids (one page each), and the two changed rows packed into one more
+    assert len(w.queries) - before == 4 and got["calls"] == 4 and got["id_pages"] == 2
     assert sorted(ids for _b, ids in w.by_id_reads()[reads:]) == [["102"], ["302", "303"], ["501"]]
     assert got["kind"] == "delta" and got["full_read_at"] == held["full_read_at"] and got["window_days"] == 2
     assert [r["id"] for r in got["student_charge"]["rows"]] == ["101", "102", "103"]       # in place
@@ -427,10 +429,12 @@ def test_a_new_charge_and_what_it_newly_links_to_are_read_by_id():
     w.add(rd.ACCOUNTS_BOARD, 703, "חברה-שלישית")
     w.add(rd.ACCOUNTS_BOARD, 704, "חברה-רביעית")
     w.touch(104, 204, 304, 404, 503, 603, 703, 704)
-    before = len(w.queries)
+    before, reads = len(w.queries), len(w.by_id_reads())
     got = rd.read_delta(reader, held)
-    # the windows with the deciding leads; the two new charges; what they link to; the cohort and the accounts those name
-    assert len(w.queries) - before == 4
+    # the windows with the deciding leads; the charge boards' ids; the two new charges (in their windows and new to their
+    # boards' ids: read once); what they link to; the cohort and the accounts those name
+    assert len(w.queries) - before == 6
+    assert [ids for b, ids in w.by_id_reads()[reads:] if b in (SC, B2)] == [["104"], ["503"]]
     # 304 decides (204 names no cohort) and joins the deciding leads; 301 is kept by name only (201 names 401)
     assert got["asked"]["enrollments"] == ["201", "202", "204"] and got["asked"]["leads"] == ["302", "303", "304"]
     assert got["lead_names"] == {"301": "ליד-אלף", "302": "ליד-בית", "303": "ליד-גימל", "304": "ליד-דלת"}
@@ -464,21 +468,54 @@ def test_a_link_a_payment_no_longer_has_leaves_the_reading_as_a_full_reading_wou
     assert desk_of(got) == desk_of(rd.read_desk(reader))
 
 
-def test_a_charge_that_left_its_board_unseen_makes_the_next_reading_whole():
+def test_a_charge_that_left_its_board_unseen_is_dropped_by_the_boards_ids_without_a_full_reading():
+    """No window shows a charge archived or deleted (its updated_at does not move): the charge boards' ids, paged in every
+    refresh, do (D2's review of a32395f: before, only the count did, and an equal count hid one that left as another
+    came)."""
     w = world()
     reader, held = held_full(w)
     w.leave(103, "archived")                                            # archiving moved no updated_at a window sees
-    with pytest.raises(rd.DeltaMismatch) as err:
-        rd.read_delta(reader, held)
-    assert err.value.key == "student_charge" and err.value.code == "count_mismatch"
-    # through the held reading: a full reading, which no longer holds it, and the reason in the trace
+    got = rd.read_delta(reader, held)
+    assert [r["id"] for r in got["student_charge"]["rows"]] == ["101", "102"] and got["complete"] is True
+    assert got["student_charge"]["items_count"] == 2 and desk_of(got) == desk_of(rd.read_desk(reader))
+    # through the held reading: a refresh, never a full reading for it
     h = holder(w, MemoryStore())
     h.get()
     w.leave(501, "deleted")
     kept, _ = h.get()
-    assert kept["kind"] == "full" and "full_count_b2b_charge" in h.health()["last_codes"]
+    assert kept["kind"] == "delta" and h.health()["last_codes"][0] == "delta"
     assert [r["id"] for r in kept["b2b_charge"]["rows"]] == ["502"]
     assert [r["id"] for r in kept["student_charge"]["rows"]] == ["101", "102"]
+
+
+def test_a_board_whose_ids_disagree_with_its_own_count_makes_the_next_reading_whole():
+    w = world()
+    reader, held = held_full(w)
+    w.count_off[SC] = 1                                                 # monday counts an item its pages never give
+    with pytest.raises(rd.DeltaMismatch) as err:
+        rd.read_delta(reader, held)
+    assert err.value.key == "student_charge" and err.value.code == "count_mismatch"
+    # through the held reading: a full reading, and the reason in the trace
+    h = holder(w, MemoryStore())
+    w.count_off[SC] = 0
+    h.get()
+    w.count_off[B2] = 1
+    kept, _ = h.get()
+    assert kept["kind"] == "full" and "full_count_b2b_charge" in h.health()["last_codes"]
+    assert kept["checks"]["b2b_charge"]["ok"] is False                 # and the full reading says it came short
+
+
+def test_a_charge_archived_between_its_boards_page_and_its_read_makes_the_next_reading_whole():
+    """An id the board's pages gave that comes back archived when read (archived in between) is no row of the board, and
+    a refresh cannot tell what else changed: it reads whole, never holding the archived charge as the board's."""
+    w = world()
+    w.window_states = ("active", "archived")
+    reader, held = held_full(w)
+    w.items["102"]["state"] = "archived"                               # still in the board's pages: archived after them
+    w.touch(102)
+    with pytest.raises(rd.DeltaMismatch) as err:
+        rd.read_delta(reader, held)
+    assert err.value.key == "student_charge"
 
 
 def test_a_charge_archived_inside_the_window_leaves_without_a_full_reading():
@@ -674,16 +711,22 @@ def test_a_refresh_that_keeps_failing_reads_whole_at_most_once_per_gap():
     assert "full_delta_error_graphql" in [c["code"] for c in h.health()["recent_codes"]]
     w.window_error = None                                               # monday answers the refresh again
     assert h.get(force=True)[0]["kind"] == "delta"
-    # a count that keeps disagreeing is held to the same gap
-    w.leave(103)
+    # a board whose ids keep disagreeing with its count is held to the same gap
+    w.count_off[SC] = 1
     clock["now"] += rd.FALLBACK_GAP
     assert h.get(force=True)[0]["kind"] == "full"
-    w.leave(102)
     clock["now"] += timedelta(seconds=5)
     _shown, last = h.get(force=True)
     assert last["error"] == "count_mismatch"
     clock["now"] += rd.FALLBACK_GAP
-    assert [r["id"] for r in h.get(force=True)[0]["student_charge"]["rows"]] == ["101"]
+    assert h.get(force=True)[0]["kind"] == "full"
+    # and once they agree again, a refresh: charges that left are dropped by the ids, never read whole for it
+    w.count_off[SC] = 0
+    w.leave(102)
+    w.leave(103)
+    clock["now"] += timedelta(seconds=5)
+    kept = h.get(force=True)[0]
+    assert kept["kind"] == "delta" and [r["id"] for r in kept["student_charge"]["rows"]] == ["101"]
 
 
 # --- 6. /health ---------------------------------------------------------------------------------------------------------
@@ -695,8 +738,9 @@ def test_health_says_how_the_desk_read_and_kept_its_reading_and_never_a_row(stor
     stored.client.post("/api/desk/refresh", headers=auth())
     h = stored.client.get("/health").json()["desk"]
     last, r = h["last_reading"], h["refresh"]
-    assert last["kind"] == "delta" and last["calls"] == 2 and last["seconds"] is not None and last["error"] is None
-    assert r["last_full"]["calls"] == 10 and r["last_delta"]["calls"] == 2 and r["last_delta"]["days"] == 2
+    assert last["kind"] == "delta" and last["calls"] == 4 and last["seconds"] is not None and last["error"] is None
+    assert r["last_full"]["calls"] == 10 and r["last_delta"]["calls"] == 4 and r["last_delta"]["days"] == 2
+    assert r["last_delta"]["id_pages"] == 2                             # of them, the charge boards' ids
     assert r["held"]["read_at"] == r["stored_read_at"] == r["last_delta"]["at"]
     assert r["held"]["full_read_at"] == r["last_full"]["at"] and r["full_after_hours"] == 36
     assert r["last_codes"] == ["delta", "store_saved"] and "stored" not in h   # no DATABASE_URL: nothing to glance at
@@ -854,15 +898,17 @@ def lead_ids_read(w: World, since: int) -> list:
     return sorted(i for b, ids in w.by_id_reads()[since:] if b == rd.LEADS_BOARD for i in ids)
 
 
-def test_a_refresh_never_asks_leads_for_a_window_and_a_quiet_one_is_one_request():
+def test_a_refresh_never_asks_leads_for_a_window_and_a_quiet_one_is_three_requests():
     w = world()
     h = holder(w)
     h.get()
     w.touch(301)                                                        # a lead edited lately, deciding nothing
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    # one request: the six boards' windows, Leads' columns, and the deciding leads by id - 301 is never read
-    assert kept["kind"] == "delta" and len(w.queries) - before == 1 and h.health()["last_delta"]["calls"] == 1
+    # one request: the six boards' windows, Leads' columns, and the deciding leads by id - 301 is never read; and the two
+    # charge boards' ids, a page each (D2's review)
+    assert kept["kind"] == "delta" and len(w.queries) - before == 3 and h.health()["last_delta"]["calls"] == 3
+    assert h.health()["last_delta"]["id_pages"] == 2 and len(w.queries_of("query_params")) == 1
     assert lead_ids_read(w, reads) == ["302", "303"] and rd.LEADS_BOARD not in w.windowed
     assert sorted(w.windowed[-6:]) == sorted(rd.BOARDS[k] for k in rd.DELTA_KEYS)
     q = monday.window_query(6, 1, 1, 2)
@@ -878,7 +924,7 @@ def test_deciding_leads_beyond_a_chunk_are_read_in_the_same_request_an_alias_per
     w.set(302, cohort=rel(401))                                         # a cohort the reading holds: nothing more to read
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    assert len(w.queries) - before == 1
+    assert len(w.queries) - before == 3                                 # the windows and the deciding leads; the ids
     assert [ids for b, ids in w.by_id_reads()[reads:] if b == rd.LEADS_BOARD] == [["302"], ["303"]]
     assert view_row(kept, 102)["cohort_code"] == "C1" and desk_of(kept) == desk_of(rd.read_desk(reader_of(w)))
 
@@ -967,8 +1013,9 @@ def test_a_lead_that_becomes_deciding_is_read_by_id_and_places_its_payment(how):
         w.set(201, cohort=rel())
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    # the windows with 302 and 303; the changed row; 301, which decides now (its cohort 402 is held already)
-    assert kept["kind"] == "delta" and len(w.queries) - before == 3
+    # the windows with 302 and 303; the charge boards' ids; the changed row; 301, which decides now (its cohort 402 is
+    # held already)
+    assert kept["kind"] == "delta" and len(w.queries) - before == 5
     assert lead_ids_read(w, reads) == ["301", "302", "303"] and kept["asked"]["leads"] == ["301", "302", "303"]
     assert view_row(kept, 101)["cohort_code"] == "C2" and desk_of(kept) == desk_of(rd.read_desk(reader_of(w)))
 
@@ -1062,7 +1109,7 @@ def test_a_row_a_refresh_reads_answered_from_another_board_is_a_stranger_dropped
     got = rd.read_delta(reader, held)
     assert got["checks"]["leads"]["strangers"] == 1 and got["lead_names"]["302"] is None
     assert "302" not in [x["id"] for x in got["leads"]] and desk_of(got) == desk_of(rd.read_desk(reader))
-    # a charge the window listed, answered by id from another board: dropped, counted, and the board is not whole
+    # a charge the window listed that its board's ids no longer give (moved away): dropped, never read
     w2 = world()
     reader2, held2 = held_full(w2)
     w2.items["102"]["board"] = OTHER_BOARD                               # it moved after the window listed it
@@ -1070,10 +1117,16 @@ def test_a_row_a_refresh_reads_answered_from_another_board_is_a_stranger_dropped
     listed = w2.window
     w2.window = lambda board, days: listed(board, days) + (
         [{"id": "102", "updated_at": datetime.now(timezone.utc).isoformat()}] if board == SC else [])
+    reads = len(w2.by_id_reads())
     got2 = rd.read_delta(reader2, held2)
-    c = got2["checks"]["student_charge"]
-    assert c["strangers"] == 1 and c["ok"] is False and got2["complete"] is False
-    assert [r["id"] for r in got2["student_charge"]["rows"]] == ["101", "103"]
+    assert [r["id"] for r in got2["student_charge"]["rows"]] == ["101", "103"] and got2["complete"] is True
+    assert "102" not in [i for _b, ids in w2.by_id_reads()[reads:] for i in ids]
+    # one its board's ids still give, answered by id from another board (moved after its page): dropped, and the board
+    # cannot be reconciled, so the next reading is whole
+    w2.order[SC].insert(1, "102")
+    with pytest.raises(rd.DeltaMismatch) as err:
+        rd.read_delta(reader2, held2)
+    assert err.value.key == "student_charge"
 
 
 def test_a_refresh_never_sends_a_request_after_its_deadline():
@@ -1167,9 +1220,10 @@ def random_world(rng: random.Random) -> World:
 
 def random_edits(w: World, rng: random.Random, held: dict) -> list:
     """The edits a round may make, each as monday makes it (an edited item's time moves; a lead's too, though Leads has
-    no window). Never: a charge archived or deleted (the count reads those whole), a linked item deleted that no refresh
-    reads, an archived item edited, or a rename of a lead deciding nothing - the things a refresh leaves to the next full
-    reading."""
+    no window). Since D2's review a charge also leaves its board unseen (archived, deleted, moved to another board) and
+    comes back unseen (restored, moved back), its time untouched: the boards' ids reconcile both. Never: a linked item
+    deleted that no refresh reads, an archived item edited, or a rename of a lead deciding nothing - the things a refresh
+    leaves to the next full reading."""
 
     def active(board):
         return sorted(int(i) for i, x in w.items.items() if x["board"] == board and x["state"] == "active")
@@ -1252,9 +1306,30 @@ def random_edits(w: World, rng: random.Random, held: dict) -> list:
         if d and a:
             w.set(d, payer=rel(a))
 
+    def charge_left():
+        board = rng.choice([SC, B2])
+        if len(active(board)) > 1:
+            i = str(rng.choice(active(board)))
+            how = rng.choice(["archived", "deleted", "moved"])
+            if how == "moved":                                          # monday's "move to board"
+                w.items[i]["home"] = board
+                w.items[i]["board"] = OTHER_BOARD
+                w.order[board].remove(i)
+            else:
+                w.leave(i, how)
+
+    def charge_came():
+        back = sorted(i for i, x in w.items.items()
+                      if x.get("home") or (x["state"] == "archived" and x["board"] in (SC, B2)))
+        if back:
+            i = rng.choice(back)
+            x = w.items[i]
+            x["board"], x["state"] = x.pop("home", None) or x["board"], "active"   # restored, or moved back
+            w.order[x["board"]].append(i)
+
     return [lambda: edit_link("enrollment", rd.ENROLLMENTS_BOARD), lambda: edit_link("lead", rd.LEADS_BOARD),
             charge_amount, new_charge, enrollment_cohort, lead_cohort, deciding_lead_renamed_or_deleted, cohort_code,
-            new_cohort_named, linked_item_archived, company]
+            new_cohort_named, linked_item_archived, company, charge_left, charge_came]
 
 
 def test_through_random_edits_every_refresh_holds_the_desk_and_the_leads_a_full_reading_holds(monkeypatch):
@@ -1268,7 +1343,8 @@ def test_through_random_edits_every_refresh_holds_the_desk_and_the_leads_a_full_
     store = MemoryStore()
     h = holder(w, store)
     h.get()
-    seen = {"added": 0, "removed": 0, "changed": 0, "named": 0, "rounds": 0}
+    seen = {"added": 0, "removed": 0, "changed": 0, "named": 0, "rounds": 0, "charge_left": 0, "charge_back": 0}
+    ever: set = set()
     for _ in range(160):
         held = h.reading
         for edit in rng.sample(random_edits(w, rng, held), rng.choice([1, 1, 2, 3])):
@@ -1298,6 +1374,12 @@ def test_through_random_edits_every_refresh_holds_the_desk_and_the_leads_a_full_
         seen["changed"] += any(x != y for x in held["leads"] for y in kept["leads"] if x["id"] == y["id"])
         seen["named"] += bool(set(kept["lead_names"]) - set(held["lead_names"]))
         seen["rounds"] += 1
+        # charges that left their board unseen, and charges that came back to it unseen (never by a full reading)
+        held_ids = {r["id"] for k in rd.CHARGE_KEYS for r in held[k]["rows"]}
+        kept_ids = {r["id"] for k in rd.CHARGE_KEYS for r in kept[k]["rows"]}
+        seen["charge_left"] += bool(held_ids - kept_ids)
+        seen["charge_back"] += bool((kept_ids - held_ids) & ever)
+        ever |= held_ids
     assert rd.LEADS_BOARD not in w.windowed
     # the rounds moved the lead set every way, not only its rows' cells
     assert all(n >= 5 for n in seen.values()), seen

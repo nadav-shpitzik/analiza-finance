@@ -31,6 +31,7 @@ slice 2 (`FinanceReader._delta` and `delta_query` at da671b2, live there since 1
 boards with a window their items_count and the ids and update times of their items updated lately, with some items by
 id beside them - under the same eight rules; and `read_items(..., pack=True)` sends the short tails of several jobs as one
 aliased request (analiza-metrics `items_query`), so a refresh that changed two payments and a deal costs one request.
+`board_ids` pages the two charge boards' ids for the refresh too, the query a whole reading starts with (D2's review).
 """
 
 from __future__ import annotations
@@ -507,13 +508,19 @@ class MondayReader:
             cursor = page.get("cursor")
         return items
 
+    def board_ids(self, boards: Iterable[str]) -> list:
+        """[(items_count, the ids of the board's items, paged)] for each board, side by side: the cheap query (ids only)
+        a whole reading starts with, which the desk's refresh pages too, to see which charges left a board or came to it
+        unseen (D2's review of a32395f)."""
+        boards = [str(b) for b in boards]
+        if len(boards) < 2:
+            return [self.item_ids(b) for b in boards]
+        with ThreadPoolExecutor(max_workers=min(len(boards), CHUNK_WORKERS), thread_name_prefix="monday-ids") as pool:
+            return list(pool.map(self.item_ids, boards))
+
     def read_boards(self, boards: list) -> list:
         """[(board_id, columns)] whole: the ids of every board side by side, then every row by id in one pool.
         -> [(items_count, the ids asked, rows)] in order."""
-        if len(boards) < 2:
-            counted = [self.item_ids(b) for b, _ in boards]
-        else:
-            with ThreadPoolExecutor(max_workers=min(len(boards), CHUNK_WORKERS), thread_name_prefix="monday-ids") as pool:
-                counted = list(pool.map(lambda bc: self.item_ids(bc[0]), boards))
+        counted = self.board_ids([b for b, _ in boards])
         rows = self.read_items([(ids, cols) for (_n, ids), (_b, cols) in zip(counted, boards)])
         return [(n, ids, r) for (n, ids), r in zip(counted, rows)]

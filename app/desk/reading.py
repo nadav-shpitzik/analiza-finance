@@ -36,14 +36,18 @@ app/finance_mirror.py at da671b2). A full reading costs about 9 s and 28 request
 the memory of one Autoscale instance only, so a cold open waited for one. Now:
 1. `read_delta` reads only what changed since the held reading started: each board with a window is asked which items
    were updated, only those are read again by id and laid over the held reading, and the deciding leads are read again
-   every time (Leads has no window). The same snapshot, `kind` "delta", with its counts.
+   every time (Leads has no window). The two charge boards' ids are paged too (ids only, the query a full reading starts
+   with): a charge no longer there is dropped and one that came unseen is read by id, since no window shows either and a
+   count stays equal when one leaves as another comes (review of a32395f). The same snapshot, `kind` "delta", with its
+   counts.
 2. `HeldReading` keeps the last reading in Postgres too (app/desk/store.py, `desk_readings`): an instance that holds none
    answers an open with it at once, marked `refreshing`, and the page's own next request (`?fresh=1`) reads the next.
    Never a thread after the answer (analiza-metrics ADR-0087): a request, every time.
 3. A full reading instead when nothing is held or stored, when the last full one is older than FULL_AFTER, when a charge
-   board's count disagrees with the rows (an archived or deleted charge never shows as updated), or when the refresh
-   failed in a way monday or its answer's shape allowed - at most once per FALLBACK_GAP; an error a full reading would
-   meet the same way (NO_FALLBACK) is the attempt's error as is. Each says why in /health (`HeldReading.health`).
+   board cannot be reconciled with its ids (pages that disagree with their own count, or an id paged that no read gave as
+   the board's active row), or when the refresh failed in a way monday or its answer's shape allowed - at most once per
+   FALLBACK_GAP; an error a full reading would meet the same way (NO_FALLBACK) is the attempt's error as is. Each says why
+   in /health (`HeldReading.health`).
 """
 
 from __future__ import annotations
@@ -328,8 +332,9 @@ def instant(stamp: Any) -> Optional[datetime]:
 
 
 class DeltaMismatch(MondayError):
-    """A charge board's `items_count` disagrees with the rows a refresh holds: an item was archived or deleted, which never
-    shows as updated. Only a full reading knows which, so HeldReading reads whole."""
+    """A charge board a refresh cannot reconcile with its ids: their pages disagree with their own `items_count` (the board
+    changed while it was paged), or an id paged has no active row of the board after the reads (gone, archived or moved
+    since its page). Only a full reading knows what the board holds, so HeldReading reads whole."""
 
     def __init__(self, key: str, count: Any, held: int):
         super().__init__("count_mismatch", "%s: items_count %s, rows %d" % (key, count, held))
@@ -424,16 +429,17 @@ def _read_new(reader: MondayReader, lists: dict, ids_read: dict, names: dict, re
             reps.update(reps_read(mine, new[k]))
 
 
-def _delta_checks(out: dict, counts: dict, strangers: Counter, linked: list, names: dict) -> dict:
+def _delta_checks(out: dict, paged: dict, strangers: Counter, linked: list, names: dict) -> dict:
     """The counts of a refresh, in the shapes a full reading gives (`check_board`, `by_id`), over what it holds now: a
-    charge board whole when its items_count, its rows and its distinct ids agree and no row of it was answered from another
-    board; a linked board by what it was asked for. The leads as a full reading counts them, every linked lead by its name;
-    which of them are archived a refresh does not know (the leads that decide nothing are not read again): None, never a
-    guess."""
+    charge board whole when its items_count, the ids its pages gave, its rows and its distinct ids agree and no row of it
+    was answered from another board; a linked board by what it was asked for. The leads as a full reading counts them,
+    every linked lead by its name; which of them are archived a refresh does not know (the leads that decide nothing are
+    not read again): None, never a guess."""
     checks: dict = {}
     for k in CHARGE_KEYS:
         rows = out[k]["rows"]
-        c = check_board(Board(k, BOARDS[k], tuple(ROW_COLUMNS[k])), counts[k], [r["id"] for r in rows], rows)
+        n, ids = paged[k]
+        c = check_board(Board(k, BOARDS[k], tuple(ROW_COLUMNS[k])), n, ids, rows)
         if strangers[k]:
             c.update(strangers=c["strangers"] + strangers[k], ok=False)
         checks[k] = c
@@ -450,9 +456,11 @@ def _delta_checks(out: dict, counts: dict, strangers: Counter, linked: list, nam
 
 def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = time.monotonic) -> dict:
     """The next reading from a held one: what changed on the six boards with a window since it started, and the deciding
-    leads again, laid over it - the same snapshot as `read_desk`, `kind` "delta", the held reading's `full_read_at`, and its
-    counts. Raises DeltaMismatch when a charge board's count says an item left it unseen, and MondayError for anything monday
-    or the shape of its answer did not allow: HeldReading then reads whole, or says why not."""
+    leads again, laid over it; the charge boards as their ids, paged, say they are now (a charge that left is dropped, one
+    that came is read by id) - the same snapshot as `read_desk`, `kind` "delta", the held reading's `full_read_at`, its
+    counts, and `id_pages`, the requests the ids took. Raises DeltaMismatch when a charge board cannot be reconciled with
+    its ids, and MondayError for anything monday or the shape of its answer did not allow: HeldReading then reads whole, or
+    says why not."""
     started = clock()
     calls0 = reader.calls
     now = datetime.now(timezone.utc)
@@ -471,27 +479,50 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
                                (held_deciding, ROW_COLUMNS["leads"]))
     counts = dict(zip(DELTA_KEYS, got["counts"]))
     windows = dict(zip(DELTA_KEYS, got["windows"]))
+    for k in CHARGE_KEYS:
+        if not isinstance(counts[k], int) or isinstance(counts[k], bool):
+            raise MondayError("delta_shape", f"{k}: no items_count")
+    # what each charge board holds now: its ids, paged as a full reading pages them (ids only, the two boards side by side).
+    # No window shows a charge that left its board (archived, deleted, moved away) or came to it (restored, moved in), and a
+    # count stays equal when one leaves as another comes (review of a32395f): the ids show both. Their cost is the trace's
+    # `id_pages` - two requests, and one more per PAGE_LIMIT ids beyond the first page of a board
+    before_ids = reader.calls
+    paged = dict(zip(CHARGE_KEYS, reader.board_ids([BOARDS[k] for k in CHARGE_KEYS])))
+    id_pages = reader.calls - before_ids
+    for k, (n, ids) in paged.items():
+        if n is None or n != len(ids) or len(set(ids)) != len(ids):
+            raise DeltaMismatch(k, n, len(ids))  # pages that disagree with their own count: only a full reading knows
+    on_board = {k: set(ids) for k, (_n, ids) in paged.items()}
     # the exact cut: what was updated after the held reading started (less the margin); an item whose time is missing or
     # unreadable is read, never skipped
     after = {k: _uniq(x["id"] for x in items if instant(x["updated_at"]) is None or instant(x["updated_at"]) > cut)
              for k, items in windows.items()}
     leads_got = own_rows("leads", got["rows"], held_deciding, strangers)
 
-    # read by id what changed: every changed charge, and the changed linked items the held reading asked for (the deciding
-    # leads were read above, whatever their time)
-    ids_read = {k: after[k] if k in CHARGE_KEYS else [i for i in after[k] if i in asked_set[k]] for k in DELTA_KEYS}
+    # read by id what changed: a changed charge still on its board, a charge that came to its board unseen, and the changed
+    # linked items the held reading asked for (the deciding leads were read above, whatever their time). A charge that left
+    # its board is dropped, never read
+    ids_read: dict = {}
+    for k in DELTA_KEYS:
+        if k in CHARGE_KEYS:
+            held_ids = {str(r["id"]) for r in base[k]["rows"]}
+            changed = [i for i in after[k] if i in on_board[k]]
+            came = [i for i in paged[k][1] if i not in held_ids and i not in set(changed)]
+            ids_read[k] = changed + came
+        else:
+            ids_read[k] = [i for i in after[k] if i in asked_set[k]]
     read = reader.read_items([(ids_read[k], ROW_COLUMNS[k]) for k in DELTA_KEYS], pack=True)
     got_rows = {k: own_rows(k, rows, ids_read[k], strangers) for k, rows in zip(DELTA_KEYS, read)}
     ids_read["leads"], got_rows["leads"] = list(held_deciding), leads_got
     names.update(names_read(leads_got, held_deciding))
     reps.update(reps_read(leads_got, held_deciding))
-    rows = {k: merge_rows(base[k]["rows"], got_rows[k], ids_read[k], charge=True) for k in CHARGE_KEYS}
+    rows = {k: [r for r in merge_rows(base[k]["rows"], got_rows[k], ids_read[k], charge=True) if str(r["id"]) in on_board[k]]
+            for k in CHARGE_KEYS}
     for k in CHARGE_KEYS:
-        n = counts[k]
-        if not isinstance(n, int) or isinstance(n, bool):
-            raise MondayError("delta_shape", f"{k}: no items_count")
-        if n != len(rows[k]):
-            raise DeltaMismatch(k, n, len(rows[k]))
+        if len(rows[k]) != len(on_board[k]):
+            # an id paged that no read gave as this board's active row (gone, archived or moved since its page, or answered
+            # from another board): only a full reading knows what the board holds now
+            raise DeltaMismatch(k, paged[k][0], len(rows[k]))
     lists = {k: merge_rows(base[k], got_rows[k], ids_read[k], charge=False) for k in LINKED_KEYS}
 
     # what the charges link to now that the held reading did not ask for: by id, by the same definitions as a full reading
@@ -516,19 +547,19 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
                                     + [a for d in deals for a in d.get(DL["payer"]) or []]))
     _read_new(reader, lists, ids_read, names, reps, strangers,
               {k: [i for i in need[k] if i not in asked_set[k]] for k in ("cohorts", "accounts")})
-    out = {"student_charge": {"items_count": counts["student_charge"], "rows": sc_rows},
-           "b2b_charge": {"items_count": counts["b2b_charge"], "rows": b2_rows},
+    out = {"student_charge": {"items_count": paged["student_charge"][0], "rows": sc_rows},
+           "b2b_charge": {"items_count": paged["b2b_charge"][0], "rows": b2_rows},
            **{k: keep_only(lists[k], need[k]) for k in LINKED_KEYS},
            # every linked lead's name: held, read again with the deciding leads, or read as newly linked; and its Owner
            "lead_names": {i: names[i] for i in linked},
            "lead_reps": {i: reps.get(i) for i in linked},
            "asked": {k: list(need[k]) for k in LINKED_KEYS}}
-    checks = _delta_checks(out, counts, strangers, linked, names)
+    checks = _delta_checks(out, paged, strangers, linked, names)
     out.update(read_at=now.isoformat(timespec="microseconds"), full_read_at=base["full_read_at"], kind="delta",
                complete=all(c["ok"] for c in checks.values()), error=None, detail=None, checks=checks,
-               calls=reader.calls - calls0, seconds=round(clock() - started, 1), window_days=days)
-    logger.info("desk refresh in %.1fs over %d days, %d calls: complete=%s, read by id %s", out["seconds"], days,
-                out["calls"], out["complete"], {k: len(v) for k, v in ids_read.items()})
+               calls=reader.calls - calls0, seconds=round(clock() - started, 1), window_days=days, id_pages=id_pages)
+    logger.info("desk refresh in %.1fs over %d days, %d calls (%d paging the charges' ids): complete=%s, read by id %s",
+                out["seconds"], days, out["calls"], id_pages, out["complete"], {k: len(v) for k, v in ids_read.items()})
     return out
 
 
@@ -592,9 +623,9 @@ class HeldReading:
       reading the same way (`seeded`: never fresh, however young, since this instance did not read it). The page asks for
       the next in a request of its own (`?fresh=1`, which is `get()`). A seed never replaces a reading that landed meanwhile.
     - a reading is a refresh over the reading held, or over the stored one when none is held (`read_delta`); a full reading
-      when there is neither, when the last full one is older than FULL_AFTER, when a charge board's count disagrees, or
-      when the refresh failed in a way a full reading may not (once per FALLBACK_GAP at most); an error a full reading would
-      meet the same way (NO_FALLBACK) is the attempt's own.
+      when there is neither, when the last full one is older than FULL_AFTER, when a charge board cannot be reconciled with
+      its ids (`full_count_<board>`), or when the refresh failed in a way a full reading may not (once per FALLBACK_GAP at
+      most); an error a full reading would meet the same way (NO_FALLBACK) is the attempt's own.
     - a reading without an error is kept in the store unless it holds what the store already holds; a reading older than
       the stored one never replaces it (another instance's). The store is best effort, with traces: a store that fails is
       said in /health and the desk reads monday.
@@ -758,7 +789,7 @@ class HeldReading:
             codes.append("delta")
             with self._state:
                 self.trace["last_delta"] = {"at": got["read_at"], "seconds": got.get("seconds"), "calls": got.get("calls"),
-                                            "days": got.get("window_days")}
+                                            "days": got.get("window_days"), "id_pages": got.get("id_pages")}
         self._keep(got, base, codes)
         return got
 
@@ -851,9 +882,9 @@ class HeldReading:
 
     def health(self) -> dict:
         """For /health: how this instance read and kept its reading - the last attempt's codes and the recent ones, the last
-        full reading and the last refresh (when, how long, how many requests to monday), the last refresh that failed (its
-        code), and the times of the reading held and of the stored one it knows. Never a row, a name, an amount or a count
-        of rows."""
+        full reading and the last refresh (when, how long, how many requests to monday, and of a refresh's how many paged the
+        charge boards' ids), the last refresh that failed (its code), and the times of the reading held and of the stored
+        one it knows. Never a row, a name, an amount or a count of rows."""
         with self._state:
             r = self.reading
             return {"last_codes": list(self.trace["last_codes"]), "recent_codes": list(self._recent),
