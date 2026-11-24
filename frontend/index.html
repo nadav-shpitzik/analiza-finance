@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>כספים - אנליזה</title>
+<link rel="stylesheet" href="/desk/desk.css">
+</head>
+<body data-theme="light">
+<!-- The desk's page (Analiza-Monday backlog 0301). D1 is the skeleton: the checks below prove, on a private board, that the
+     view loads inside monday with the SDK alive, that the server verifies the sessionToken and the boards' membership,
+     and that the desk's reading is whole. The page ships no data: everything comes from /api/desk. -->
+<main id="desk">
+  <header class="head">
+    <h1>כספים</h1>
+    <p class="sub">השלד של השולחן החדש, לבדיקה על לוח פרטי. הלשוניות, החיפוש, הפרטים, הפעולות והאקסל נבנים במנה הבאה.</p>
+  </header>
+  <ol id="checks" class="checks" aria-live="polite"></ol>
+  <section id="boards" class="boards" hidden>
+    <h2>הקריאה של השולחן, לפי לוח</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">לוח</th>
+            <th scope="col">בלוח / התבקשו</th>
+            <th scope="col">נקראו</th>
+            <th scope="col">חסרים</th>
+            <th scope="col">מלוח אחר</th>
+            <th scope="col">בארכיון</th>
+            <th scope="col">תקין</th>
+          </tr>
+        </thead>
+        <tbody id="board-rows"></tbody>
+      </table>
+    </div>
+    <p class="note">"חסרים": פריט מקושר שנמחק או שמאנדיי לא החזירה. "מלוח אחר": פריט שהקישור מוביל אליו נמצא בלוח אחר, ולכן לא נספר.</p>
+  </section>
+  <p id="foot" class="foot"></p>
+</main>
+<script src="/desk/vendor/monday-sdk.js"></script>
+<script src="/desk/desk.js"></script>
+</body>
+</html>

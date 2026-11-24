@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from ..monday.client import MondayError, MondayReader
+from ..monday.client import NEVER_READ, MondayError, MondayReader  # noqa: F401 - NEVER_READ is this module's too
 
 PROFILE_NAME = "recon"
 STUDENT_CHARGE = "5093448677"
@@ -52,12 +52,7 @@ DL = {"stage": "deal_stage", "value": "deal_value", "payer": "board_relation_mm1
 VC = {"status": "status", "number": "text_mm0k9kmh", "value": "numeric_mm0mehjw", "invoice": "text_mm0mgcj5",
       "submitted": "date4"}
 
-NEVER_READ = frozenset({
-    "text_mm8cxm9y", "text_mm8cv3v3", "text_mm8cgc0d", "text_mm8ckgh8",  # Student Charge: a refund's bank account
-    "text_mkzvem4",  # Leads: ת.ז
-    "text_mm0kgsx9",  # the vouchers board: ת.ז
-    "text_mm3y3gm7",  # Accounts: the business number, a sole proprietor's ID number
-})
+# NEVER_READ lives with the reader since D1 (24.11): the reader itself refuses to read one, for every caller.
 
 
 @dataclass(frozen=True)

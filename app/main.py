@@ -10,6 +10,9 @@ Today (slice S0 of backlog 0301) it proves the connection and keeps it:
                 answered, 503 otherwise, with the reason in a closed vocabulary.
 Neither endpoint returns a value from the books: names of companies, and for webhooks only the table
 and the receiving host. Neither returns the key, a session string or the database URL.
+
+Since D1 of backlog 0301 (24.11) it also serves Chava's finance desk as it moves here (app/desk/): the page /desk/ of the
+monday Board View "כספים", and /api/desk behind the monday sessionToken and the charge boards' membership.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import logging
 import re
 import threading
 import time
@@ -31,6 +35,8 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import config
+from .desk.routes import health_block as desk_health
+from .desk.routes import router as desk_router
 from .wizcloud import READ_PATHS, Session, WizClient, WizError
 
 SERVICE = "analiza-finance"
@@ -59,6 +65,38 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=SERVICE, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+
+class NoTokenInAccessLog(logging.Filter):
+    """uvicorn's access line carries the path with its query string, and monday may load the desk's page with the
+    sessionToken in it. The value is replaced before the line is written (rule 2 of CLAUDE.md, for this token too)."""
+
+    _RE = re.compile(r"((?:^|[?&])sessiontoken=)[^&\s]*", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str) and "sessiontoken=" in args[2].lower():
+            record.args = args[:2] + (self._RE.sub(r"\1[redacted]", args[2]),) + args[3:]
+        return True
+
+
+# uvicorn configures its loggers before it imports the app, so a filter added here stays
+logging.getLogger("uvicorn.access").addFilter(NoTokenInAccessLog())
+
+# frame-ancestors is what lets monday embed the desk's page at all, and it must be a real header (a <meta> tag is ignored
+# for it); the page loads no plugin and sets no base. An /api answer is one person's and is never kept by a cache.
+CSP = "frame-ancestors 'self' https://*.monday.com; object-src 'none'; base-uri 'none'"
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["Content-Security-Policy"] = CSP
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
 app.state.transport = None  # tests put an httpx.MockTransport here
 app.state.clock = time.time
 app.state.store_factory = None  # tests put a fake here; None is Postgres when DATABASE_URL is set
@@ -108,7 +146,7 @@ def get_client(state: Any, cfg: config.Config) -> WizClient:
 
 @app.get("/")
 def root() -> dict:
-    return {"service": SERVICE, "endpoints": ["/health", "/check"]}
+    return {"service": SERVICE, "endpoints": ["/health", "/check", "/desk/"]}
 
 
 @app.get("/health")
@@ -137,6 +175,7 @@ def health(request: Request) -> dict:
         "store": store,
         "books": {"sync_key": sync_key_state(cfg), **(books or {})},
         "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
+        "desk": desk_health(state, cfg),
         "last_check": None
         if last is None
         else {"ok": last["ok"], "checked_at": last["checked_at"], "error": last.get("error")},
@@ -834,3 +873,7 @@ def summarize_triggers(data: Any) -> dict:
         table = next((v for k, v in item.items() if str(k).lower() == "table" and isinstance(v, str)), None)
         found.append({"table": table, "host": urlparse(url).hostname if url else None})
     return {"ok": True, "count": len(items), "fields": _fields(items), "items": found}
+
+
+# ---- the finance desk (backlog 0301 D1): its page and /api/desk ------------------------------------------------------
+app.include_router(desk_router)

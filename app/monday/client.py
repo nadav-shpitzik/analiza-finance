@@ -20,6 +20,11 @@ The rules it keeps:
    answer ends at the deadline instead of whenever it finishes (review 22.11: httpx's timeout is per read, not per request).
 7. **Every row says which board it came from** (`board { id }`): an id read by id answers from any board, so a row is
    counted as the board's only when it is (review 22.11).
+8. **Some columns are never read at all** (`NEVER_READ`, moved here from app/recon/reading.py on 24.11, D1): the ID
+   numbers and a refund's bank account. `read_items` refuses a job that asks for one, before anything is sent, so no
+   caller (the reconciliation's profile, the desk's reading, a later one) can read one by mistake. A column's existence
+   is still checked (`require_columns` asks for its id, never its value). The desk shows the ID number read in the
+   browser, as the person (ADR-0173).
 """
 
 from __future__ import annotations
@@ -51,8 +56,19 @@ ITEMS_BY_ID_CHUNK = 100
 # requests in flight at once: far under monday's concurrency limits (analiza-metrics, measured live 2026-11-10: 476
 # items in 5 chunks took 7.0 s one after another and 1.35 s side by side)
 CHUNK_WORKERS = 6
-CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_column", "deadline", "too_many_pages")
+CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_column", "deadline", "too_many_pages",
+         "never_read")
 DETAIL_MAX = 200
+
+# What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the vouchers board's `ת.ז`, and Accounts' business number,
+# which for a sole proprietor is the person's ID number (ADR-0173 §1: an ID number is never stored server side) - and a
+# refund's bank account on Student Charge.
+NEVER_READ = frozenset({
+    "text_mm8cxm9y", "text_mm8cv3v3", "text_mm8cgc0d", "text_mm8ckgh8",  # Student Charge: a refund's bank account
+    "text_mkzvem4",  # Leads: ת.ז
+    "text_mm0kgsx9",  # the vouchers board: ת.ז
+    "text_mm3y3gm7",  # Accounts: the business number, a sole proprietor's ID number
+})
 
 _AUTH_RE = re.compile(r"unauthor|unauthenticated|not authenticated|invalid token", re.IGNORECASE)
 _RATE_RE = re.compile(r"complexity|rate.?limit", re.IGNORECASE)
@@ -70,6 +86,8 @@ ITEM_IDS_NEXT = "query ($c: String!, $limit: Int!) { next_items_page(cursor: $c,
 ITEMS_BY_ID = ("query ($ids: [ID!], $cols: [String!], $limit: Int!) {"
                " items(ids: $ids, limit: $limit) { id name state created_at board { id } column_values(ids: $cols) %s } }"
                % CV_FRAGMENT)
+# Who is on a board: the desk's gate (D1). analiza-metrics reads the same field for the same gate (`board_subscribers`).
+SUBSCRIBERS = "query ($b: [ID!]) { boards(ids: $b) { id subscribers { id } } }"
 
 
 class MondayError(Exception):
@@ -280,9 +298,27 @@ class MondayReader:
         count = boards[0].get("items_count")
         return (int(count) if isinstance(count, int) or str(count).isdigit() else None), ids
 
+    def board_subscribers(self, board_id: str) -> set:
+        """The ids of the users on a board (its `subscribers`), for the desk's gate. A board the token cannot see is
+        `not_visible`; a board that answers nobody is an error, not "nobody may read": a board always has a member, and
+        an empty list must never be kept as the answer (analiza-metrics `board_subscribers`, the same rule)."""
+        data = self.post(SUBSCRIBERS, {"b": [str(board_id)]})
+        boards = data.get("boards") or []
+        if not boards or not isinstance(boards[0], dict) or str(boards[0].get("id")) != str(board_id):
+            raise MondayError("not_visible", f"board {board_id}")
+        ids = {str(u["id"]) for u in boards[0].get("subscribers") or [] if isinstance(u, dict) and u.get("id")}
+        if not ids:
+            raise MondayError("graphql", f"board {board_id} answered no subscribers")
+        return ids
+
     def read_items(self, jobs: list) -> list:
         """Items by id for several (ids, columns) jobs at once: every chunk of every job in one pool, the rows per job in
-        order. A deleted item is dropped; an archived one is kept, its `state` saying so."""
+        order. A deleted item is dropped; an archived one is kept, its `state` saying so. A job that asks for a column
+        in NEVER_READ is refused before anything is sent (rule 8)."""
+        for _ids, cols in jobs:
+            asked = NEVER_READ.intersection(str(c) for c in cols)
+            if asked:
+                raise MondayError("never_read", f"columns that are never read were asked: {sorted(asked)}")
         pieces = [(j, ids[i:i + ITEMS_BY_ID_CHUNK], cols) for j, (ids, cols) in enumerate(jobs)
                   for i in range(0, len(ids), ITEMS_BY_ID_CHUNK)]
 

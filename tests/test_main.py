@@ -33,7 +33,7 @@ def test_health_never_calls_wizcloud_and_never_shows_the_key(app_client, fake):
 
 
 def test_the_service_answers_by_its_new_name(app_client):
-    assert app_client.get("/").json() == {"service": "analiza-finance", "endpoints": ["/health", "/check"]}
+    assert app_client.get("/").json() == {"service": "analiza-finance", "endpoints": ["/health", "/check", "/desk/"]}
     assert main.app.title == "analiza-finance"
 
 

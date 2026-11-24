@@ -1,0 +1,52 @@
+/* The finance desk's page, D1: the skeleton's checklist. Light and dark follow monday's theme (the page's context). */
+:root {
+  --bg: #ffffff;
+  --fg: #1f2533;
+  --muted: #5d6475;
+  --line: #e3e6ee;
+  --ok: #0f7b4f;
+  --no: #b42318;
+  --wait: #8a6d00;
+  --row-bad: #fdf1f0;
+}
+body[data-theme="dark"] {
+  --bg: #1c1f3b;
+  --fg: #e9ebf3;
+  --muted: #a9afc4;
+  --line: #3a3f63;
+  --ok: #4cc38a;
+  --no: #ff8a80;
+  --wait: #f0c94b;
+  --row-bad: #3b2333;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+#desk { max-width: 980px; padding: 16px 20px 24px; }
+.head h1 { margin: 0 0 2px; font-size: 20px; }
+.sub { margin: 0 0 14px; color: var(--muted); }
+.checks { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line); }
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+.check .mark { flex: 0 0 18px; font-weight: 700; text-align: center; }
+.check .body { display: flex; flex-direction: column; min-width: 0; }
+.check .label { font-weight: 600; }
+.check .detail { color: var(--muted); overflow-wrap: anywhere; }
+.check .detail .part { unicode-bidi: isolate; }
+.is-ok .mark { color: var(--ok); }
+.is-no .mark { color: var(--no); }
+.is-no .detail { color: var(--no); }
+.is-wait .mark { color: var(--wait); }
+.is-info .mark { color: var(--muted); }
+.boards h2 { font-size: 15px; margin: 0 0 6px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; min-width: 560px; }
+th, td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+thead th { color: var(--muted); font-weight: 600; }
+td.num { font-variant-numeric: tabular-nums; }
+td.mark-cell { text-align: center; }
+tr.bad { background: var(--row-bad); }
+.note, .foot { color: var(--muted); font-size: 12px; }

@@ -39,6 +39,11 @@ class Config:
     # monday's API token (a Replit Secret): the same monday user as analiza-metrics' token (the desk move plan §2). The
     # reader only reads (app/monday/client.py refuses a mutation); reported as set or not, never shown.
     monday_token: str = field(default="", repr=False)
+    # The monday app's Client Secret (a Replit Secret; Developer Center, Basic information, "Client Secret", not the
+    # "Signing Secret"): monday signs the board view's sessionToken with it (app/desk/auth.py). The desk's view is a second
+    # feature of analiza-metrics' app (the desk move plan §2, option A), so the value is the one analiza-metrics holds.
+    # Reported as set or not, never shown.
+    monday_client_secret: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -69,5 +74,7 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
         database_url=(env.get("DATABASE_URL") or "").strip(),
         books_sync_key=(env.get("BOOKS_SYNC_KEY") or "").strip(),
         monday_token=(env.get("MONDAY_TOKEN") or "").strip(),
+        # trimmed: a newline pasted with a secret is a 401 on every open with nothing on screen to say why
+        monday_client_secret=(env.get("MONDAY_CLIENT_SECRET") or "").strip(),
     )
 
