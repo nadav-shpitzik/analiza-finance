@@ -57,6 +57,9 @@
  *      is drawn with the general columns, on both tabs; with every row inside, the open list's own stay (1.4). And a row
  *      found by a field its list does not show says which, and what it holds there ("נמצא לפי סכום החזר: 976.19 ₪",
  *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
+ * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
+ *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
+ *      as a decision: it came with analiza-metrics' first import, 10.11).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -554,8 +557,10 @@
     return "<div class=\"fin-states\" role=\"group\" aria-label=\"שיבוץ התקבולים\"><div class=\"fin-stategroup\">" +
       tile("tasks", "לטיפול", open, null, true) +
       tasks.map(function (s) { var x = p.states[s.key]; return tile(s.key, s.label, x.count, money(x.money), true); }).join("") +
+      /* QA 5 (24.11): every state, an empty one with its 0 - as a task's tile is - so it is clear the state exists and
+         holds nothing ("ביקש החזר, טרם אושר" went missing when empty) */
       "</div><div class=\"fin-stategroup rest\">" +
-      rest.filter(function (s) { return p.states[s.key].count; }).map(function (s) {
+      rest.map(function (s) {
         var x = p.states[s.key]; return tile(s.key, s.label, x.count, s.key === "no_money" ? null : money(x.money), false);
       }).join("") + tile("", "הכל", p.count, null, false) + "</div></div>";
   }
@@ -884,7 +889,7 @@
     }
     return "<div class=\"fin-states\" role=\"group\" aria-label=\"שיבוץ החיובים\"><div class=\"fin-stategroup\">" +
       tile("tasks", "לטיפול", open, null, true, "data-b2state", cur, B2_COLOR) + tasks.map(t).join("") +
-      "</div><div class=\"fin-stategroup rest\">" + rest.filter(function (s) { return N[s.key].count; }).map(t).join("") +
+      "</div><div class=\"fin-stategroup rest\">" + rest.map(t).join("") +            /* an empty state too (QA 5) */
       tile("", "הכל", mine ? mine.count : b.count, null, false, "data-b2state", cur, B2_COLOR) + "</div></div>";
   }
   /* the aging by customer, narrowed by the search box: a customer's name holds the text (app/finance.py filter_customers) */

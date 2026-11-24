@@ -118,8 +118,10 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-stategroup.rest .fin-state.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: var(--c); flex: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
 #screen-finance .fin-stategroup:not(.rest) .fin-state.dot .l::before { margin-top: calc(.65em - 4px); }
-/* nothing in it, nothing to mark: an empty state's dot is grey */
-#screen-finance .fin-stategroup:not(.rest) .fin-state.zero.dot .l::before { background: var(--fin-pending); }
+/* nothing in it, nothing to mark: an empty state's dot is grey - a tile's, and since QA 5 (24.11) a pill's, which now stays
+   with its 0 */
+#screen-finance .fin-stategroup:not(.rest) .fin-state.zero.dot .l::before,
+#screen-finance .fin-stategroup.rest .fin-state.zero.dot::before { background: var(--fin-pending); }
 
 /* the list: one panel, its head inside it, then the table */
 #screen-finance .fin-panel { background: var(--fin-panel); border: 1px solid var(--fin-line); border-radius: 10px; overflow: hidden; }

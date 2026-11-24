@@ -398,6 +398,31 @@ def test_a_row_found_by_a_field_its_list_does_not_show_says_which_and_what_it_ho
     assert "fin-found" not in pages[6]
 
 
+def tile_of(html: str, attr: str, key: str) -> str:
+    """A state's tile or pill, as drawn: <div class="fin-state ..." ... data-<attr>="key" ...>...</div>."""
+    m = re.search(r'<div class="(fin-state[^"]*)"[^>]*%s="%s"[^>]*>(.*?)</div>' % (attr, key), html)
+    return (m.group(1) + " | " + re.sub(r"<[^>]+>", " ", m.group(2)).split()[0] + " " +
+            " ".join(re.sub(r"<[^>]+>", " ", m.group(2)).split()[1:])) if m else ""
+
+
+def test_an_empty_state_keeps_its_pill_with_its_0_as_an_empty_tile_keeps_its_tile():
+    """QA 5 (24.11): the pill "ביקש החזר, טרם אושר" disappeared when empty, while an empty task's tile stays with its ✓. Every
+    state stays, an empty one muted with its 0, on both tabs; pressed, its list says it is empty."""
+    got = drive(answer(), [{"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}},
+                           {"click": [{"bstate": "refund_asked"}]},
+                           {"show": {"tab": "b2b", "b2": {"state": "tasks", "view": "list", "customer": "", "open": {}}}}],
+                monday=world())
+    b2c, pressed, b2b = [s["html"] for s in got["steps"]]
+    for key, label in (("refund_asked", "ביקש החזר, טרם אושר"), ("no_money", "ללא תקבול")):
+        assert tile_of(b2c, "data-bstate", key).startswith("fin-state zero dot | 0 " + label), key
+    for key in ("open", "planned", "pending", "paid", "cancelled"):
+        assert tile_of(b2b, "data-b2state", key).startswith("fin-state zero dot | 0 "), key
+    # a state with rows is drawn as before, and "הכל" closes the row
+    assert tile_of(b2c, "data-bstate", "done").startswith("fin-state dot | 1 הושלם")
+    assert re.findall(r'data-bstate="([^"]*)"', b2c)[-5:] == ["refund_asked", "done", "refunded", "no_money", ""]
+    assert "אין כאן תקבולים." in pressed and 'aria-pressed="true" data-bstate="refund_asked"' in pressed
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of
