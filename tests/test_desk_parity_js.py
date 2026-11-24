@@ -484,10 +484,10 @@ def test_a_company_without_terms_is_marked_beside_its_due_dates_name_and_arrears
         {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}},
         {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "A1", "open": {}}}], [sc(1)], rows, accounts=accounts)
     # round 3, slice 3: beside a due date and in the aging the chip is a way to the company's ledger, where its billing
-    # details show (read only since D2, so its title no longer promises an edit); in the ledger itself it is a mark, and
-    # the ledger's "פרטי חיוב" says it too
-    link = ('<button type="button" class="fin-chip fin-chiplink" data-terms="A1" title="פתיחת הכרטסת של החברה">'
-            'אין תנאי תשלום</button>')
+    # details show - and, since D2 brought their edit back from the browser (ADR-0188), its title promises the edit again
+    # to one who may write; in the ledger itself it is a mark, and the ledger's "פרטי חיוב" says it too
+    link = ('<button type="button" class="fin-chip fin-chiplink" data-terms="A1" title="פתיחת הכרטסת של החברה, לעריכת '
+            'תנאי תשלום">אין תנאי תשלום</button>')
     assert '<td class="k-due">31.10.26 %s</td>' % link in overdue
     assert '<td class="k-due">30.10.26 <bdi class="fin-subtle">שוטף+30</bdi></td>' in overdue
     assert "(מזה <bdi>200,000 ₪</bdi> בחברות בלי תנאי תשלום)" in overdue

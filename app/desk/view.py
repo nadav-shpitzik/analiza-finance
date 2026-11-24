@@ -553,7 +553,12 @@ ACTION_BOARDS = {"sc": STUDENT_CHARGE, "b2": B2B_CHARGE}
 def desk_writes() -> dict[str, dict[str, Any]]:
     """Every (board, column) an action writes, with the kind of value - and for a status, instead of its kind, the indexes
     the actions set, in order (review 11.11: the page allowed a status column with every one of its labels): what the
-    page's allowlist must hold, and no more."""
+    page's allowlist must hold, and no more.
+
+    Since ADR-0188 (D2, the desk move plan §1b item 4), also a customer's four billing details on Accounts, which the page
+    writes as the person: each text by its own rule, named by its field (`vat_id` nine digits or empty, `hash_key` up to
+    15 letters, digits or "-" or empty, `invoice_name` up to INVOICE_NAME_MAX characters on one line - analiza-metrics
+    app/account_writer.py `clean` at da671b2), and "תנאי תשלום" as a dropdown by the ids the form offers, never cleared."""
     out: dict[str, dict[str, Any]] = {}
     for a in DESK_ACTIONS.values():
         for step in a["steps"]:
@@ -563,6 +568,8 @@ def desk_writes() -> dict[str, dict[str, Any]]:
                     cols[w["column"]] = sorted(set(cols.get(w["column"]) or []) | {int(w["index"])})
                 else:
                     cols[w["column"]] = w["kind"]
+    out[ACCOUNTS_BOARD] = {f["column"]: {"dropdown": sorted(int(i) for i in ACCOUNT_TERMS)} if f["kind"] == "dropdown" else key
+                           for key, f in ACCOUNT_FIELDS.items()}
     return out
 
 
@@ -609,7 +616,8 @@ def account_billing(accounts: list[dict]) -> dict[str, dict[str, str | None]]:
 # What the ledger draws a customer's four billing details with, and the form that edits them: analiza-metrics
 # app/account_writer.py `form_contract()` at da671b2, its values copied here, since that module is not ported - in this
 # service the server writes nothing to monday (ADR-0188). The edit is the person's own, in the browser through
-# monday.api(), like every action of the desk, and its Update (MON-41) too: nothing here checks or writes a value. The
+# monday.api(), like every action of the desk (its four columns are on desk_writes' allowlist, each by its rule), and so
+# is its Update (MON-41), written only when the app holds updates:write: nothing here checks or writes a value. The
 # business number's field is named by its column so the page can read it as the person; its value is never read here.
 ACCOUNT_FIELDS = OrderedDict([
     ("vat_id", {"column": AC["vat_id"], "title": "ח.פ", "kind": "text"}),

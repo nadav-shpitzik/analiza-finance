@@ -922,16 +922,28 @@
      at once, and asks the server for a refresh. A failure - a permission the app lacks among them - is said in words. */
   /* The page's allowlist: the ONE list of what it may write - (board, column), and the kind of value; for a status, the
      list of the indexes an action sets (review 11.11: a status column was allowed with every one of its labels, so a plan
-     naming another index went out). Held to app/finance.py desk_writes() by a test; a write outside it is refused here,
-     before anything is sent. */
+     naming another index went out). Held to app/desk/view.py desk_writes() by a test; a write outside it is refused here,
+     before anything is sent. Since D2 (ADR-0188, the desk move plan §1b item 4) also a customer's four billing details on
+     Accounts, written as the person: each text by its own rule (shapeOk), "תנאי תשלום" by the dropdown ids the form offers -
+     and only on an account the desk shows (ITEM_GUARD). */
   var WRITABLE = {
     "5093448677": { color_mm1kxpvt: [4, 5], numeric_mm62za1f: "number", text_mm8fjzfj: "text", text_mm6d6s97: "text",
       color_mm4cq1hw: [1] },
     "5097721228": { color_mm3zx2n7: [6], text_mm3y6snz: "text", date_mm4a6y8y: "date", color_mm4bhvta: [0, 1],
-      numeric_mm8zqhag: "number" }
+      numeric_mm8zqhag: "number" },
+    "5089697343": { text_mm3y3gm7: "vat_id", text_mm3yprqa: "hash_key", text_mm3yfrew: "invoice_name",
+      dropdown_mm3yd36d: { dropdown: [1, 2, 3, 4, 5] } }
   };
-  /* an allowlist entry's kind: a list of indexes is a status */
-  function kindOf(entry) { return Array.isArray(entry) ? "status" : entry; }
+  /* an allowlist entry's kind: a list of indexes is a status, { dropdown: ids } a dropdown, any other its own word */
+  function kindOf(entry) {
+    return Array.isArray(entry) ? "status" : entry && typeof entry === "object" && Array.isArray(entry.dropdown) ? "dropdown" : entry;
+  }
+  /* the billing details' rules (analiza-metrics app/account_writer.py `clean` at da671b2): a ח.פ is nine digits, the check
+     digit not enforced; a Hashavshevet key up to 15 letters, digits or "-"; a name on an invoice up to 120 characters on one
+     line. Each may be empty (a key typed in error is cleared, MON-43); "תנאי תשלום" never is */
+  var VAT_ID_RE = /^[0-9]{9}$/, HASH_KEY_RE = /^[0-9A-Za-z-]{1,15}$/, INVOICE_NAME_MAX = 120;
+  /* a board whose items the page writes only when the desk shows them: Accounts, a company with a charge on the desk */
+  var ITEM_GUARD = { "5089697343": function (id) { return deskShowsAccount(id); } };
   /* the API version the server's reader is pinned to (app/adapters/monday_board.py MONDAY_API_VERSION, held by a test) */
   var API_VERSION = "2026-07";
   var TEXT_MAX = 60;
@@ -946,6 +958,9 @@
     CELL + " } boards(ids: $b) { columns(ids: $c) { id type settings_str } } }";
   var WRITE_ROW = "mutation ($b: ID!, $i: ID!, $v: JSON!, $c: [String!]) { change_multiple_column_values(board_id: $b, " +
     "item_id: $i, column_values: $v, create_labels_if_missing: false) { id column_values(ids: $c) " + CELL + " } }";
+  /* the page's one other write (D2, ADR-0188): an Update on an item, a billing edit's before and after (MON-41) - sent by
+     mondayUpdate only */
+  var WRITE_UPDATE = "mutation ($i: ID!, $body: String!) { create_update(item_id: $i, body: $body) { id } }";
   /* a written column on the row the page shows: its label and index, or its value (the row is patched until a reading
      shows the same) */
   var ROW_FIELD = { color_mm1kxpvt: ["status", "status_idx"], color_mm4cq1hw: ["receipt", "receipt_idx"],
@@ -956,6 +971,9 @@
   /* whether this person may write from here: "yes", "no" (with why), or "unknown" - monday did not say, so the page tries
      and learns from the answer. From monday's context (permissions.approvedScopes, user.isViewOnly), read at mount. */
   var CAN = { state: "unknown", why: "" };
+  /* D2 (ADR-0188): whether monday's context says the app holds updates:write for this person - only then is a billing
+     edit's Update written - and the person's monday user id, for its words (the context has no name) */
+  var CAN_UPDATE = false, USER_ID = "";
   var ABILITY = {
     outside: "הפעולות נכתבות במאנדיי בשמך, ולכן הן זמינות רק כשהתצוגה פתוחה מתוך מאנדיי.",
     view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אין כאן פעולות.",
@@ -1038,6 +1056,15 @@
     if (kind === "date") { return keys.length === 1 && /^\d{4}-\d{2}-\d{2}$/.test(String(v.date)); }
     if (kind === "number") { return typeof v === "string" && /^[0-9]+(\.[0-9]{1,2})?$/.test(v); }
     if (kind === "text") { return typeof v === "string" && v.length <= TEXT_MAX && !CONTROL.test(v); }
+    if (kind === "vat_id") { return typeof v === "string" && (v === "" || VAT_ID_RE.test(v)); }
+    if (kind === "hash_key") { return typeof v === "string" && (v === "" || HASH_KEY_RE.test(v)); }
+    if (kind === "invoice_name") {
+      return typeof v === "string" && v.length <= INVOICE_NAME_MAX && !CONTROL.test(v) && v === v.trim();
+    }
+    if (kind === "dropdown") {
+      return keys.length === 1 && Array.isArray(v.ids) && v.ids.length === 1 && typeof v.ids[0] === "number" &&
+        entry.dropdown.indexOf(v.ids[0]) !== -1;
+    }
     return false;
   }
   /* the columns of a write that the allowlist refuses: another board, another column, or a value of another shape */
@@ -1057,12 +1084,27 @@
     return out;
   }
   function mondayWrite(boardId, itemId, values) {
-    var refused = refusedColumns(boardId, values);
-    if (refused.length || !/^[0-9]+$/.test(String(itemId))) {
+    var refused = refusedColumns(boardId, values), guard = ITEM_GUARD[String(boardId)];
+    if (refused.length || !/^[0-9]+$/.test(String(itemId)) || (guard && !guard(String(itemId)))) {
       return Promise.reject({ code: "write_refused", text: refused.join(", ") });
     }
     return mondayCall(WRITE_ROW, { b: String(boardId), i: String(itemId), v: JSON.stringify(values), c: Object.keys(values) })
       .then(function (data) { return cellsOf((data.change_multiple_column_values || {}).column_values); });
+  }
+  /* The Update door: an Update only on an item of a board listed here, only on an item the desk shows (ITEM_GUARD), and
+     only when monday's context says the app holds updates:write for this person (CAN_UPDATE) - otherwise it is never
+     tried, and no scope is ever asked for. Its body is HTML whose every value was escaped (billUpdateBody). */
+  var UPDATE_BOARDS = { "5089697343": true }, UPDATE_MAX = 2000;
+  function mondayUpdate(boardId, itemId, body) {
+    var guard = ITEM_GUARD[String(boardId)];
+    if (!UPDATE_BOARDS[String(boardId)] || !CAN_UPDATE || !/^[0-9]+$/.test(String(itemId)) || (guard && !guard(String(itemId))) ||
+        typeof body !== "string" || !body || body.length > UPDATE_MAX || CONTROL.test(body)) {
+      return Promise.reject({ code: "write_refused", text: "update" });
+    }
+    return mondayCall(WRITE_UPDATE, { i: String(itemId), body: body }).then(function (data) {
+      if (!(data.create_update && data.create_update.id)) { throw { code: "unverified", text: "update" }; }
+      return String(data.create_update.id);
+    });
   }
   /* rows as monday holds them now, read as the person, in one request: every column there on the board they should be
      on. {id: {name, cells, columns}} for the items monday answered from that board; an item it did not answer, or answered
@@ -1462,6 +1504,8 @@
         else if (Array.isArray(p.requiredScopes) && has(p.requiredScopes, "boards:write")) { CAN = { state: "no", why: "approve" }; }
         else { CAN = { state: "no", why: "no_scope" }; }
       } else { CAN = { state: "unknown", why: "" }; }
+      CAN_UPDATE = u.isViewOnly !== true && !!p && Array.isArray(p.approvedScopes) && has(p.approvedScopes, "updates:write");
+      USER_ID = String(u.id == null ? "" : u.id).replace(/[^0-9]/g, "").slice(0, 20);
     }, function () { CAN = { state: "unknown", why: "" }; }).then(function () { if (VIEW) { redraw(); } });
   }
 
@@ -1963,34 +2007,327 @@
     else { old(); }
   }
 
-  /* ---------- the customer's billing details, in the ledger (round 3, slice 3; D2) ----------
-     Four columns of Accounts, under the server's form contract (view.b2b.account_form): its fields and their monday
-     titles, in its order. In analiza-metrics the server also wrote them (its account route): this service has no
-     such route and never writes Accounts from the browser's request, so the details are shown READ ONLY here, with one
-     line saying their edit comes back - from the browser, as the person, like every other write of the page. The ח.פ is
-     read live as the person when the details show (vatCell): the server never reads it. */
-  var BILL_LATER = "עריכת פרטי החיוב תחזור בקרוב, מהדפדפן";
+  /* ---------- the customer's billing details, in the ledger (round 3, slice 3; D2, ADR-0188) ----------
+     Four columns of Accounts, under the server's form contract (view.b2b.account_form): its fields and their monday titles,
+     in its order. analiza-metrics' server wrote them (its account route), when Chava had no CRM seat; she has one since
+     16.11, and since ADR-0188 they are written FROM THE BROWSER, AS THE PERSON, like every other write of the page: monday's
+     own permissions apply, and the board's activity log keeps who wrote, what was there and what was written (MON-41). By
+     a member of B2B Charge (the companies' tab is answered only to one) who may write here (CAN: not view-only, inside
+     monday), and only for a company the desk shows (ITEM_GUARD). "עריכה" reads the four live first, as the person (the
+     ח.פ too: the server never reads it); "המשך" checks what changed by the old server's rules (analiza-metrics
+     app/account_writer.py `clean` at da671b2: shapeOk's rules, the terms never cleared) and shows before and after;
+     "שמירה" reads them again right before the write, writes only when monday still holds what was shown, through
+     mondayWrite (the four columns are on the allowlist), and checks monday's answer. The old app's Update on the company
+     ("עדכון פרטי חיוב מתוך שולחן הכספים", before and after) is written only when monday's context says the app holds
+     updates:write for this person (CAN_UPDATE); otherwise it is not tried, and the confirmation says the activity log keeps
+     the before and the after. One refresh of the reading after a write, as after one action: the terms move due dates.
+     The ח.פ read or written stays in this page's memory (VATS, BILL) and goes to monday only - never to the server, a
+     usage event or the console. */
+  var BILL = null;   /* { aid, phase: "reading" | "edit" | "confirm" | "saving" | "done" | "failed", live: { name, values,
+                        drift }, draft, touched, error, detail, plan, outcome, focus } */
+  var ACCOUNT_ERRORS = {
+    bad_vat_id: "ח.פ: 9 ספרות בדיוק, בלי מקפים ובלי רווחים.",
+    bad_hash_key: "מפתח חשבשבת: עד 15 אותיות באנגלית או ספרות.",
+    bad_invoice_name: "חשבונית על שם: עד 120 תווים, בשורה אחת.",
+    bad_terms: "תנאי תשלום: לבחור אחד מהרשימה.",
+    nothing: "אין שינוי: כל הפרטים כבר כך.",
+    changed_since_read: "בינתיים פרטי החברה השתנו במאנדיי. הערכים שמוצגים עכשיו הם העדכניים: לבדוק, ולשמור שוב.",
+    labels_drift: "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נכתב כלום. נדב צריך לבדוק."
+  };
+  /* why a company's details cannot be edited from here, by CAN's reason */
+  var BILL_WHY = {
+    outside: "עריכת פרטי החיוב נכתבת במאנדיי בשמך, ולכן היא זמינה רק כשהתצוגה פתוחה מתוך מאנדיי.",
+    view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אי אפשר לערוך מכאן.",
+    approve: ABILITY.approve.replace("עד אז אין כאן פעולות.", "עד אז אין כאן עריכה."),
+    no_scope: "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אי אפשר לערוך מכאן."
+  };
+  /* a read or a write of the details that failed, in words: what monday refused, by mondayErr's code */
+  var BILL_ERRORS = {
+    denied: "מאנדיי לא מרשה לך לכתוב בלוח החברות", no_scope: "לאפליקציה אין הרשאה לכתוב בלוח החברות",
+    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", not_found: "החברה לא נמצאה בלוח החברות (אולי נמחקה)",
+    columns_changed: "עמודה של פרטי החיוב לא נמצאה בלוח החברות; נדב צריך לבדוק", timeout: "מאנדיי לא ענתה בזמן",
+    write_refused: "הכתיבה הזאת מחוץ לעמודות שהמסך רשאי לכתוב, ולכן לא נשלחה", monday: "מאנדיי לא קיבלה את הכתיבה"
+  };
+  var BILL_READ_ERRORS = { denied: "אין לך גישה ללוח החברות במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח החברות",
+    monday: "פרטי החברה לא נקראו ממאנדיי" };
+  var CONTROL_ALL = new RegExp(CONTROL.source, "g");
   function billForm() { return (VIEW.b2b && VIEW.b2b.account_form) || null; }
+  function termsLabel(id) { var t = (billForm().terms || []).filter(function (x) { return x.id === id; })[0]; return t ? t.label : ""; }
+  function termsId(label) { var t = (billForm().terms || []).filter(function (x) { return x.label === label; })[0]; return t ? t.id : ""; }
+  /* a company the desk shows: one with a charge on B2B Charge, whose billing details the reading carries (never "none",
+     the charges linked to no account) */
+  function deskShowsAccount(id) {
+    var mine = VIEW && VIEW.b2b && VIEW.b2b.by_customer ? VIEW.b2b.by_customer[String(id)] : null;
+    return String(id) !== "none" && !!(mine && mine.billing);
+  }
+  function canBill() { return CAN.state !== "no"; }
+  /* a dropdown's labels by id, as monday holds them now ({"2": "שוטף+30"}); a status' shape is read too */
+  function dropdownLabels(column) {
+    var out = {};
+    try {
+      var l = (JSON.parse((column && column.settings_str) || "{}") || {}).labels;
+      if (Array.isArray(l)) { l.forEach(function (x) { if (x && x.id != null) { out[String(x.id)] = String(x.name == null ? "" : x.name); } }); }
+      else if (l && typeof l === "object") { Object.keys(l).forEach(function (k) { out[k] = String(l[k] == null ? "" : l[k]); }); }
+    } catch (e) { return {}; }
+    return out;
+  }
+  /* the four as monday holds them now, read as the person: the terms as their label's text, and the terms' ids whose label
+     is no longer the form's (`drift`: an id would then write another label) */
+  function readBilling(aid) {
+    var form = billForm();
+    return readRow(ACCOUNTS_BOARD, aid, form.fields.map(function (f) { return f.column; })).then(function (live) {
+      var values = {}, terms = form.fields.filter(function (f) { return f.key === "terms"; })[0];
+      form.fields.forEach(function (f) { values[f.key] = (live.cells[f.column] || {}).text || ""; });
+      var labels = terms ? dropdownLabels(live.columns[terms.column]) : {};
+      return { name: live.name, values: values,
+        drift: form.terms.filter(function (t) { return labels[t.id] !== t.label; }).map(function (t) { return t.id; }) };
+    });
+  }
+  function startBill(aid, focus) {
+    var mine = VIEW.b2b && VIEW.b2b.by_customer[aid];
+    if (!mine || !billForm() || !canBill() || !deskShowsAccount(aid) || (BILL && (BILL.phase === "saving" || BILL.phase === "reading"))) {
+      return;
+    }
+    var bill = BILL = { aid: aid, phase: "reading", error: "", focus: focus || "vat_id", touched: {}, draft: {} };
+    use("bill", { phase: "edit" });
+    redraw();
+    readBilling(aid).then(function (live) {
+      if (BILL !== bill) { return; }
+      bill.live = live;
+      VATS[aid] = { phase: "ok", value: live.values.vat_id };     /* the ח.פ just read, as the details show it */
+      bill.phase = "edit";
+      redraw();
+      var box = document.getElementById("fin-bill-" + bill.focus);
+      if (box && box.focus) { box.focus(); }
+    }, function (e) {
+      if (BILL !== bill) { return; }
+      bill.phase = "failed";
+      bill.error = "פרטי החברה לא נקראו ממאנדיי: " + (BILL_READ_ERRORS[e && e.code] || BILL_ERRORS[e && e.code] || BILL_READ_ERRORS.monday) +
+        ". לא נכתב כלום.";
+      bill.detail = (e && e.text) || "";
+      use("bill", { phase: "failed", code: useWord(e && e.code) || "monday" });
+      redraw();
+    });
+  }
+  /* a box's value: what she typed, or - a box she did not touch - what monday holds now (review 11.11: an untouched box
+     that kept the value it opened with wrote it back over a newer one after "changed since read") */
+  function billDraft(b, key) {
+    if (b.touched[key]) { return b.draft[key]; }
+    return key === "terms" ? termsId(b.live.values.terms) : b.live.values[key];
+  }
+  function billTyped(key, value) {
+    if (!BILL || BILL.phase !== "edit") { return; }
+    BILL.draft[key] = value;
+    BILL.touched[key] = true;
+  }
+  /* a typed detail the rules refuse, in their words; "" when it may be written */
+  function billError(key, v) {
+    var kind = kindOf(WRITABLE[ACCOUNTS_BOARD][(billForm().fields.filter(function (f) { return f.key === key; })[0] || {}).column]);
+    if (key === "terms") { return termsLabel(v) ? "" : ACCOUNT_ERRORS.bad_terms; }
+    if (kind === "vat_id" || kind === "hash_key" || kind === "invoice_name") {
+      return shapeOk(kind, v) ? "" : ACCOUNT_ERRORS["bad_" + kind];
+    }
+    return ACCOUNT_ERRORS.bad_terms;
+  }
+  function quotedOrEmpty(t) { return t ? "\"" + t + "\"" : "ריק"; }
+  /* what differs from what monday holds, by the rules: { fields: { key: { value, to, now, column, title } }, lines } or
+     { error } */
+  function billPlan(b) {
+    var fields = {}, lines = [], error = "";
+    billForm().fields.forEach(function (f) {
+      var raw = String(billDraft(b, f.key) == null ? "" : billDraft(b, f.key)), v = f.key === "terms" ? raw : raw.trim();
+      var now = b.live.values[f.key] || "", to = f.key === "terms" ? termsLabel(v) : v;
+      if (f.key === "terms" && !v) { return; }            /* the terms are never cleared from here */
+      if (to === now) { return; }
+      /* only a detail that changes is checked: a value monday holds that the rules would not take typed (a ח.פ with
+         dashes, a name with a mark) never blocks setting the terms beside it (review 11.11) */
+      error = error || billError(f.key, v);
+      fields[f.key] = { value: v, to: to, now: now, column: f.column, title: f.title };
+      lines.push("<li><b>" + esc(f.title) + "</b>: עכשיו " + esc(quotedOrEmpty(now)) + ", ייכתב " + esc(quotedOrEmpty(to)) + "</li>");
+    });
+    if (!error && fields.terms && b.live.drift.length) { error = ACCOUNT_ERRORS.labels_drift; }
+    return error ? { error: error } : { fields: fields, lines: lines };
+  }
+  function billGo() {
+    var b = BILL;
+    if (!b || b.phase !== "edit") { return; }
+    var plan = billPlan(b);
+    if (plan.error) { use("bill", { phase: "invalid" }); b.error = plan.error; redraw(); return; }
+    if (!plan.lines.length) { use("bill", { phase: "nothing" }); b.error = ACCOUNT_ERRORS.nothing; redraw(); return; }
+    b.plan = plan;
+    b.error = "";
+    b.phase = "confirm";
+    use("bill", { phase: "confirm", fields: Object.keys(plan.fields).length });
+    redraw();
+    var box = root && root.querySelector ? root.querySelector(".fin-billing .fin-act-plan") : null;
+    if (box && box.focus) { box.focus(); }
+  }
+  /* MON-41: the old app's Update on the company, in its words - who (the update is the person's own: monday shows them as
+     its writer; the context gives their id, not their name), and each detail with what was there and what was written.
+     HTML: every value escaped, and stripped of the marks the rules refuse */
+  function billUpdateBody(plan) {
+    var clean = function (t) { return esc(quotedOrEmpty(String(t || "").replace(CONTROL_ALL, ""))); };
+    return ["עדכון פרטי חיוב מתוך שולחן הכספים, בשם מי שכתב את העדכון הזה" + (USER_ID ? " (משתמש " + USER_ID + ")" : "") + "."]
+      .concat(Object.keys(plan.fields).map(function (k) {
+        var x = plan.fields[k];
+        return esc(x.title) + ": היה " + clean(x.now) + ", נכתב " + clean(x.to) + ".";
+      }), ["הכתיבה נעשתה מהדפדפן בשם מי שכתב, ויומן הפעילות של לוח החברות רושם אותה גם הוא."]).join("<br>");
+  }
+  /* what the write answered, in the page's memory: the details the ledger shows, the company's terms, its ח.פ (VATS) */
+  function rememberBilling(aid, plan, after) {
+    var mine = VIEW.b2b && VIEW.b2b.by_customer[aid];
+    Object.keys(plan.fields).forEach(function (k) {
+      var x = plan.fields[k], text = (after[x.column] || { text: x.to }).text;
+      if (k === "vat_id") { VATS[aid] = { phase: "ok", value: text }; return; }
+      if (mine && mine.billing) { mine.billing[k] = text; }
+      if (k === "terms" && mine) { mine.terms = text; mine.terms_missing = !text; }
+    });
+  }
+  function billSave() {
+    var b = BILL;
+    if (!b || b.phase !== "confirm") { return; }
+    b.phase = "saving";
+    b.error = ""; b.detail = "";
+    redraw();
+    var sent = false;
+    /* the company again, as the person, right before the write: written only when monday still holds what was shown */
+    readBilling(b.aid).then(function (live) {
+      if (BILL !== b) { return "gone"; }
+      var moved = Object.keys(b.plan.fields).filter(function (k) { return (live.values[k] || "") !== b.plan.fields[k].now; });
+      if (moved.length) {
+        b.live = live;
+        VATS[b.aid] = { phase: "ok", value: live.values.vat_id };
+        return "moved";
+      }
+      if (b.plan.fields.terms && live.drift.length) { throw { code: "labels_drift" }; }
+      var payload = {};
+      Object.keys(b.plan.fields).forEach(function (k) {
+        var x = b.plan.fields[k];
+        payload[x.column] = k === "terms" ? { ids: [Number(x.value)] } : x.value;
+      });
+      sent = true;
+      return mondayWrite(ACCOUNTS_BOARD, b.aid, payload).then(function (after) {
+        rememberBilling(b.aid, b.plan, after);
+        /* monday may take a write and keep another value: read back from its own answer */
+        var wrong = Object.keys(b.plan.fields).filter(function (k) {
+          var x = b.plan.fields[k];
+          return ((after[x.column] || {}).text || "") !== x.to;
+        });
+        if (wrong.length) { throw { code: "unverified", text: wrong.map(function (k) { return b.plan.fields[k].column; }).join(", ") }; }
+        if (!CAN_UPDATE) { return "no_update"; }
+        return mondayUpdate(ACCOUNTS_BOARD, b.aid, billUpdateBody(b.plan)).then(function () { return "posted"; },
+          function (e) { b.detail = (e && e.text) || ""; return "update_failed"; });
+      });
+    }).then(function (outcome) {
+      if (outcome === "gone") { return; }
+      if (outcome === "moved") {
+        b.phase = "edit";
+        b.error = ACCOUNT_ERRORS.changed_since_read;
+        use("bill", { phase: "failed", code: "changed_since_read" });
+        redraw();
+        return;
+      }
+      b.phase = "done";
+      b.outcome = outcome;
+      use("bill", { phase: "done", fields: Math.min(Object.keys(b.plan.fields).length, 10), code: outcome === "posted" ? "" : outcome });
+      redraw();
+      flash(outcome === "posted" ? "פרטי החיוב נכתבו בלוח החברות, ועל החברה נכתב עדכון."
+        : outcome === "update_failed" ? "פרטי החיוב נכתבו בלוח החברות, אבל העדכון על החברה לא נכתב."
+          : "פרטי החיוב נכתבו בלוח החברות בשמך.");
+      refreshAfterWrite(0);
+    }, function (e) {
+      e = e || {};
+      if (BILL !== b) { return; }
+      if (e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; }
+      b.phase = "failed";
+      /* a write monday answered with another value, or did not answer in time: something may be in monday, so never
+         "nothing was written" (review 11.11), and what it holds is read again */
+      var maybe = e.code === "unverified" || (sent && e.code === "timeout");
+      b.error = e.code === "labels_drift" ? ACCOUNT_ERRORS.labels_drift
+        : e.code === "unverified" ? "מאנדיי ענתה, אבל הערך שנשמר אינו מה שנשלח. לבדוק את החברה במאנדיי."
+          : maybe ? "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב."
+            : (BILL_ERRORS[e.code] || BILL_ERRORS.monday) + ". לא נכתב כלום.";
+      b.detail = e.text || "";
+      use("bill", { phase: "failed", code: useWord(e.code) || "monday" });
+      redraw();
+      flash(b.error);
+      if (maybe) { refreshAfterWrite(0); }
+    });
+  }
+  function billStatus(b, mine) {
+    var close = "<button type=\"button\" class=\"fin-linkbtn\" data-bill-close=\"1\">סגירה</button>";
+    if (b.phase === "reading") { return "<p class=\"fin-act-msg\" role=\"status\">קורא את פרטי החברה במאנדיי...</p>"; }
+    if (b.phase === "confirm") {
+      return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\"><p>ייכתב בלוח החברות, בחברה " +
+        esc("\"" + (b.live.name || mine.name || "") + "\"") + ", בשמך:</p><ul>" + b.plan.lines.join("") + "</ul><p class=\"fin-subtle\">" +
+        esc(CAN_UPDATE ? "על החברה ייכתב גם עדכון בשמך: מה היה ומה נכתב."
+          : "יומן הפעילות של לוח החברות שומר מי כתב, מה היה ומה נכתב. עדכון על החברה לא ייכתב: לאפליקציה אין הרשאה לכתוב עדכונים.") +
+        "</p><div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-bill-save=\"1\">שמירה</button>" +
+        "<button type=\"button\" class=\"fin-btn\" data-bill-back=\"1\">חזרה לעריכה</button></div></div>";
+    }
+    if (b.phase === "saving") { return "<p class=\"fin-act-msg\" role=\"status\">שומר בלוח החברות...</p>"; }
+    if (b.phase === "done") {
+      var ok = b.outcome !== "update_failed";
+      return "<p class=\"fin-act-msg " + (ok ? "ok\" role=\"status\">" : "bad\" role=\"alert\">") + esc(
+        b.outcome === "posted" ? "נכתב בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב."
+          : b.outcome === "update_failed" ? "נכתב בלוח החברות בשמך, אבל העדכון על החברה לא נכתב. יומן הפעילות של הלוח שומר מה היה ומה נכתב."
+            : "נכתב בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב.") + " " + close + "</p>" +
+        (!ok && b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "");
+    }
+    if (b.phase === "failed") {
+      return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + " " + close + "</p>" +
+        (b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "");
+    }
+    if (b.phase === "edit" && b.error) { return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + "</p>"; }
+    return "";
+  }
   function billingPanel(aid, mine) {
     var form = billForm();
     if (!form || !mine || !mine.billing) { return ""; }
-    var cur = mine.billing;
-    var head = "<div class=\"fin-billing-head\"><h2>פרטי חיוב</h2><span class=\"fin-subtle\">של החברה, בלוח החברות</span></div>";
-    var body = facts(form.fields.map(function (f) {
-      var v = cur[f.key];
-      /* whatever the answer carries under this key, the ח.פ shown is the one monday gives the person now */
-      if (f.key === "vat_id") { return [f.title, vatCell(aid)]; }
-      if (f.key === "terms") { return [f.title, v ? "<bdi>" + esc(v) + "</bdi>" : mine.terms_missing ? NO_TERMS : NOT_SET]; }
-      return [f.title, v ? (f.key === "invoice_name" ? esc(v) : ltr(v)) : NOT_SET];
-    })) + "<p class=\"fin-act-why\">" + esc(BILL_LATER) + "</p>";
-    return "<section class=\"fin-panel fin-billing\" aria-label=\"פרטי חיוב\">" + head + body + "</section>";
+    var cur = mine.billing, b = BILL && BILL.aid === aid ? BILL : null;
+    var editing = !!b && (b.phase === "edit" || b.phase === "confirm" || b.phase === "saving");
+    var can = canBill() && deskShowsAccount(aid);
+    var head = "<div class=\"fin-billing-head\"><h2>פרטי חיוב</h2><span class=\"fin-subtle\">של החברה, בלוח החברות</span>" +
+      (editing || !can || (b && b.phase === "reading") ? "" : "<button type=\"button\" class=\"fin-btn\" data-bill-edit=\"" + esc(aid) +
+        "\">עריכה</button>") + "</div>";
+    var body;
+    if (!editing) {
+      body = facts(form.fields.map(function (f) {
+        var v = cur[f.key];
+        /* whatever the answer carries under this key, the ח.פ shown is the one monday gives the person now */
+        if (f.key === "vat_id") { return [f.title, vatCell(aid)]; }
+        if (f.key === "terms") { return [f.title, v ? "<bdi>" + esc(v) + "</bdi>" : mine.terms_missing ? NO_TERMS : NOT_SET]; }
+        return [f.title, v ? (f.key === "invoice_name" ? esc(v) : ltr(v)) : NOT_SET];
+      })) + (canBill() ? "" : "<p class=\"fin-act-why\">" + esc(BILL_WHY[CAN.why] || BILL_WHY.no_scope) + "</p>");
+    } else {
+      var off = b.phase !== "edit" ? " disabled" : "";
+      body = "<div class=\"fin-billing-form\">" + form.fields.map(function (f) {
+        var id = "fin-bill-" + f.key, v = billDraft(b, f.key) == null ? "" : billDraft(b, f.key), held = b.live.values[f.key];
+        var control = f.key === "terms"
+          ? "<select id=\"" + id + "\" class=\"fin-select\" data-bill=\"terms\"" + off + "><option value=\"\"" + (v ? "" : " selected") + ">" +
+            esc(held && !termsId(held) ? "\"" + held + "\" (לא ברשימה)" : "בחירה") + "</option>" + form.terms.map(function (t) {
+              return "<option value=\"" + esc(t.id) + "\"" + (t.id === v ? " selected" : "") + ">" + esc(t.label) + "</option>";
+            }).join("") + "</select>"
+          : "<input id=\"" + id + "\" class=\"fin-input\" type=\"text\" data-bill=\"" + esc(f.key) + "\" dir=\"" + (f.key === "invoice_name" ? "auto" : "ltr") + "\"" +
+            (f.key === "vat_id" ? " inputmode=\"numeric\" maxlength=\"9\"" : f.key === "hash_key" ? " maxlength=\"15\"" : " maxlength=\"" + INVOICE_NAME_MAX + "\"") +
+            " value=\"" + esc(v) + "\"" + off + ">";
+        /* what monday holds now, beside each box: after "changed since read" it is the new value, and she sees it */
+        var now = held ? (f.key === "invoice_name" || f.key === "terms" ? "<bdi>" + esc(held) + "</bdi>" : ltr(held)) : "ריק";
+        return "<label class=\"fin-act-field\" for=\"" + id + "\"><span>" + esc(f.title) + "</span>" + control +
+          "<small class=\"fin-subtle\">במאנדיי עכשיו: " + now + (f.hint ? " · " + esc(f.hint) : "") + "</small>" +
+          (f.key === "hash_key" && form.mon43 ? "<small class=\"fin-billing-note\">" + esc(form.mon43) + "</small>" : "") + "</label>";
+      }).join("") + "</div>" + (b.phase === "edit" ? "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-bill-go=\"1\">המשך</button>" +
+        "<button type=\"button\" class=\"fin-btn\" data-bill-close=\"1\">ביטול</button></div>" : "");
+    }
+    return "<section class=\"fin-panel fin-billing\" aria-label=\"פרטי חיוב\">" + head + body + (b ? billStatus(b, mine) : "") + "</section>";
   }
-  /* "אין תנאי תשלום" beside a company that has an account: a way to its ledger, where its billing details show */
+  /* "אין תנאי תשלום" beside a company that has an account: a way to its ledger, where its billing details show - and,
+     for one who may edit them, their form, on the terms */
   function noTerms(aid) {
     var mine = aid && VIEW.b2b && VIEW.b2b.by_customer[aid];
     if (!mine || !mine.billing || !billForm()) { return NO_TERMS; }
     return "<button type=\"button\" class=\"fin-chip fin-chiplink\" data-terms=\"" + esc(aid) + "\" title=\"" +
-      esc("פתיחת הכרטסת של החברה") + "\">" + esc(FLAG.terms_missing) + "</button>";
+      esc(canBill() ? "פתיחת הכרטסת של החברה, לעריכת תנאי תשלום" : "פתיחת הכרטסת של החברה") + "\">" + esc(FLAG.terms_missing) + "</button>";
   }
 
   /* ---------- frame ---------- */
@@ -2047,7 +2384,8 @@
     return new Date(at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
   var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
-    "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose"];
+    "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
+    "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
   function focusKey() {
     var a = document.activeElement;
     if (!a || a === root || !root.contains(a) || !a.dataset) { return ""; }
@@ -2261,6 +2599,7 @@
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
+      "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
     /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "כתיבה", its close */
@@ -2311,11 +2650,25 @@
     if (el.dataset.idRetry) { delete IDS[el.dataset.idRetry]; redraw(); return; }
     if (el.dataset.bankRetry) { delete BANKS[el.dataset.bankRetry]; redraw(); return; }
     if (el.dataset.vatRetry) { delete VATS[el.dataset.vatRetry]; redraw(); return; }
+    /* a company's billing details (D2, ADR-0188): their edit, written as the person */
+    if (el.dataset.billEdit) { startBill(el.dataset.billEdit); return; }
+    if (el.dataset.billGo) { billGo(); return; }
+    if (el.dataset.billSave) { billSave(); return; }
+    if (el.dataset.billBack) { if (BILL && BILL.phase === "confirm") { BILL.phase = "edit"; redraw(); } return; }
+    if (el.dataset.billClose) {
+      if (BILL && BILL.phase !== "saving" && BILL.phase !== "reading") {
+        if (BILL.phase === "edit" || BILL.phase === "confirm") { use("bill", { phase: "cancel" }); }
+        BILL = null; redraw();
+      }
+      return;
+    }
     if (el.dataset.terms) {
-      /* "אין תנאי תשלום": the company's ledger, its billing details at the top (read only since D2) */
+      /* "אין תנאי תשלום": the company's ledger, its billing details at the top, and for one who may edit them, their form
+         on the terms (D2: read live first) */
       state.b2.customer = el.dataset.terms; state.b2.state = ""; state.b2.view = "list"; state.b2.open = {};
       use("customer", { from: "terms" });
       render();
+      if (canBill()) { startBill(el.dataset.terms, "terms"); }
       var top = document.getElementById("content");
       if (top) { top.scrollTop = 0; }
       window.scrollTo(0, 0);
@@ -2376,6 +2729,7 @@
   var typing = null;
   function onInput(ev) {
     if (ev.target.dataset && ev.target.dataset.actInput !== undefined) { DRAFT[ev.target.dataset.actInput] = ev.target.value; return; }
+    if (ev.target.dataset && ev.target.dataset.bill !== undefined) { billTyped(ev.target.dataset.bill, ev.target.value); return; }
     if (ev.target.id !== "fin-q") { return; }
     clearTimeout(typing);
     typing = setTimeout(function () {
@@ -2385,6 +2739,8 @@
     }, 250);
   }
   function onKey(ev) {
+    /* Enter in a billing detail's box: "המשך" */
+    if (ev.key === "Enter" && ev.target.dataset && ev.target.dataset.bill !== undefined) { ev.preventDefault(); billGo(); return; }
     /* Enter in an action's box presses its button */
     if (ev.key === "Enter" && ev.target.dataset && ev.target.dataset.actInput !== undefined) {
       ev.preventDefault();
@@ -2396,6 +2752,7 @@
     if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches("[data-bstate],[data-b2state],[data-row],[data-customer]")) { ev.preventDefault(); ev.target.click(); }
   }
   function onChange(ev) {
+    if (ev.target.dataset && ev.target.dataset.bill !== undefined) { billTyped(ev.target.dataset.bill, ev.target.value); return; }
     if (ev.target.id !== "fin-period") { return; }
     state.sc.period = ev.target.value; state.sc.open = {};
     use("period", { period: state.sc.period });
@@ -2449,6 +2806,9 @@
     _confirm: confirmAction, _actState: function () { return ACT; }, _can: function () { return CAN; },
     /* 1.1 (D2): a batch, and the rows picked for one */
     _batchState: function () { return BATCH; }, _picked: function () { return PICKED; }, _batchMax: BATCH_MAX,
+    /* D2 (ADR-0188): a company's billing edit, the Update's door and whether monday's context lets the app write one */
+    _billState: function () { return BILL; }, _canUpdate: function () { return CAN_UPDATE; },
+    _update: function (boardId, itemId, body) { return mondayUpdate(boardId, itemId, body); },
     _show: function (st) {
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];

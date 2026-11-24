@@ -3,8 +3,8 @@ hand-made view (tests/desk_page_view.py), monday a fake SDK. Chromium through Pl
 
 One visit, the way Chava works: the students tab opens on the view's board, a refund to execute is opened (its bank
 account and the ID number are read from monday as the person, then and only then), the companies tab, one company's
-ledger (its ח.פ read the same way, its billing details read only), the Excel link, a refresh; and /desk/?check=1 draws
-D1's six lines. Set DESK_SCREENSHOT=<path.png> to keep a screenshot of the refund's details."""
+ledger (its ח.פ read the same way, its billing details with their edit, ADR-0188), the Excel link, a refresh; and
+/desk/?check=1 draws D1's six lines. Set DESK_SCREENSHOT=<path.png> to keep a screenshot of the refund's details."""
 from __future__ import annotations
 
 import json
@@ -239,9 +239,10 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
     assert all(r["query"].startswith("query ") and "mutation" not in r["query"] and r["apiVersion"] == "2026-07" for r in reads)
     assert steps["refund"]["bank"] == "פרטי חשבון בנק 12 · סניף 345 · מספר חשבון 1234567 · בעל/ת החשבון"
 
-    # one company's ledger: its ח.פ read when its billing details show, the details read only, one line about the edit
+    # one company's ledger: its ח.פ read when its billing details show, and their edit (ADR-0188: from the browser, as the
+    # person) one press away - nothing more is read until it is pressed
     billing = steps["ledger"]["billing"]
-    assert "500000027" in billing and "עריכת פרטי החיוב תחזור בקרוב, מהדפדפן" in billing and steps["ledger"]["edit"] == 0
+    assert "500000027" in billing and "תחזור בקרוב" not in billing and steps["ledger"]["edit"] == 1
     assert steps["ledger"]["monday"] == 3
     # the Excel file: the link this service signs, opened in a new tab through monday
     assert steps["exported"] == [{"what": "openLinkInTab", "args": {"url": base + "/api/desk/export.xlsx?tab=b2b&exp=1&sig=stub"}}]

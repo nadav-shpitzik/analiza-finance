@@ -9,7 +9,8 @@ refused before monday.api() is called. Needs node; skipped without it.
 D2 (Analiza-Monday backlog 0301): analiza-metrics tests/test_finance_actions_js.py at da671b2, on this service's paths
 (/api/desk, /api/desk/refresh). Not ported, with what they tested: a customer's billing details edited in the ledger and
 saved by the server (POST /api/finance/account, the page's form and its hooks `_bill`, `_billSave`, `_billGo`,
-`_billState`) - ADR-0188: this server writes nothing to monday, and the ledger shows the details read only."""
+`_billState`) - ADR-0188: this server writes nothing to monday; since D2 the page edits them itself, from the browser as
+the person (tests/test_desk_page.py)."""
 from __future__ import annotations
 
 import json
@@ -196,9 +197,12 @@ def test_a_write_outside_the_allowlist_is_refused_before_monday_is_asked(board, 
 
 
 def test_the_page_composes_a_mutation_in_one_place_and_calls_monday_api_in_one():
+    """D2 (ADR-0188) replaced the one mutation of slice 3 on purpose: a billing edit's Update (MON-41) is the page's second,
+    composed once and sent by mondayUpdate only (tests/test_desk_page.py holds its gate)."""
     import re
     source = re.sub(r"/\*.*?\*/", "", PAGE.read_text(encoding="utf-8"), flags=re.S)
-    assert source.count('"mutation ') == 1 and source.count("monday.api(") == 1   # deps.api is this service, not monday
+    assert source.count('"mutation ') == 2 and source.count("monday.api(") == 1   # deps.api is this service, not monday
+    assert source.count("change_multiple_column_values(") == 1 and source.count("create_update(") == 1
     assert "change_simple_column_value" not in source and "create_labels_if_missing: false" in source
 
 
@@ -421,8 +425,8 @@ def test_the_plan_box_shows_what_will_be_written_in_mondays_words_and_the_house_
 
 
 # --- the ledger: a customer's billing details, as the server sends them ------------------------------------------------
-# D2: shown read only (ADR-0188: this server writes nothing to monday). Their form, its save through the server (POST
-# /api/finance/account) and the page's hooks for it are not ported, nor are the tests of them.
+# D2: their save through the server (POST /api/finance/account) is not ported, nor are its tests (ADR-0188: this server
+# writes nothing to monday). Their edit is the person's own, from the browser: tests/test_desk_page.py holds it.
 
 def ledger_body():
     # no ח.פ: the reading never holds one (NEVER_READ), and the page reads it in the browser, as the person
