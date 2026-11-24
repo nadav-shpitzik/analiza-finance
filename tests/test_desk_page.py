@@ -574,6 +574,49 @@ def test_the_way_back_from_a_company_returns_to_the_tile_the_view_and_the_place_
     assert "<h2>לחיוב החודש</h2>" in back["html"] and 'aria-pressed="true" data-b2state="to_bill"' in back["html"]
 
 
+def totals_call(**params) -> str:
+    """The page's request for a list's totals, as it asks it: its filter in its order, then the reading it shows."""
+    from urllib.parse import quote
+    from tests.desk_page_view import TAKEN
+    return "GET /api/desk/totals?" + "&".join("%s=%s" % (k, quote(v, safe="")) for k, v in list(params.items()) + [("taken", TAKEN)])
+
+
+def test_the_totals_say_the_count_of_tasks_by_customer_and_the_sum_of_every_row_where_the_server_made_it():
+    """QA 11 (24.11): the total row of "לפי לקוח" had nothing under "לטיפול" (a count): it says the companies' tasks now.
+    And the heading of "הכל" had no sum: on the students' tab it is the period's "התקבלו", a figure of the view; on the
+    companies' tab, where the view has none, the server's total of that very list once it lands (the table's last row says
+    the same) - never a sum made in the page, and none while it has not landed or failed."""
+    customers = {"count": 3, "sums": {"to_bill": "20000", "partial_balance": "11650", "partial_count": 1, "partial_unknown": 0,
+                                      "partial_unknown_amount": "0", "open": "22627.12", "overdue": "15000",
+                                      **{"aging_" + k: "0" for k in ("current", "d1_30", "d31_60", "d61_90", "d90", "no_due")}}}
+    every = {"count": 3, "sums": {"amount": "52500", "open_money": "22627.12", "paid_so_far": "9000", "balance": "11650",
+                                  "partial_unknown": 0}}
+    answers = {"GET /api/desk": [{"body": answer()}],
+               totals_call(tab="b2b_customers", q=""): [{"body": customers}],
+               totals_call(tab="b2b", state="", customer="", q=""): [{"body": every}],
+               totals_call(tab="b2b", state="overdue", customer="", q=""): [{"reject": {"error": "http_500"}}]}
+    got = drive(steps=[{"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2b", "b2": {"state": "overdue", "view": "list", "customer": "", "open": {}}}},
+                       {"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}},
+                       {"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}}],
+                monday=world(), answers=answers)
+    by_customer, b2_all, overdue, b2c_all, tasks = [s["html"] for s in got["steps"]]
+    foot = by_customer[by_customer.index("<tfoot>"):]
+    assert '<td><b>סה"כ</b> <span class="fin-subtle">3 חברות</span></td><td></td>' in foot
+    tasks_at = [c["key"] for c in view()["b2b"]["aging_columns"]].index("tasks")
+    assert re.findall(r"<td[^>]*>(.*?)</td>", foot)[tasks_at] == "3"
+    head = lambda html: re.search(r'<div class="fin-listhead"><div><h2>.*?</h2><div class="fin-subtle">(.*?)</div>', html).group(1)
+    assert head(b2_all) == '3 חיובים · <bdi>52,500 ₪</bdi> ללא מע"מ'
+    assert head(overdue) == 'חיוב אחד · <bdi>15,000 ₪</bdi> ללא מע"מ'          # a state's own, as before
+    assert head(b2c_all) == "5 תקבולים · <bdi>18,450 ₪</bdi>" and head(tasks) == "3 תקבולים"
+    # the companies' "הכל" before its totals land, or when they failed: its count alone
+    got = drive(steps=[{"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}}], monday=world(),
+                answers={"GET /api/desk": [{"body": answer()}],
+                         totals_call(tab="b2b", state="", customer="", q=""): [{"reject": {"error": "http_500"}}]})
+    assert head(got["steps"][0]["html"]) == "3 חיובים"
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of

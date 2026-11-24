@@ -82,6 +82,9 @@
  * QA 8 "כל החברות" went to "הכל" and "רשימה", whatever she came from ("לטיפול" and "לפי לקוח"). A company opened from a
  *      list or from "לפי לקוח" keeps where she was - the tile, the view, the page's height (state.b2.back) - and the way
  *      back returns there; a company opens at its top, where its name is.
+ * QA 11 The totals: the total row of "לפי לקוח" has the count of "לטיפול" (the companies' counts shown, added: a count, no
+ *       money). The heading of "הכל" has its sum where the server made one: on the students' tab the period's "התקבלו"
+ *       (the view's), on the companies' tab - the view has none - the server's total of that very list, once it lands.
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
@@ -811,7 +814,9 @@
     var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
     var cols = withRowActions(SC_COLS[outside ? "" : one] || SC_COLS[""]);
     var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
-    var sum = one && !q ? " · " + money(p.states[one].money) : "";
+    /* a state's own money beside its count; QA 11 (24.11): "הכל" too, its period's "התקבלו" - a sum of the view, never
+       one made here. "לטיפול" mixes money in and refunds to make, so it has none */
+    var sum = q ? "" : one ? " · " + money(p.states[one].money) : !key ? " · " + money(p.money_in) : "";
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
@@ -1004,7 +1009,9 @@
     var foot = t && !t.failed && !t.other_reading && t.sums && exportable() ? "<tfoot><tr class=\"fin-total\">" + cols.map(function (col, i) {
       var k = col.key;
       if (k === "name") { return "<td><b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, "חברה אחת", "חברות") + "</span></td>"; }
-      if (k === "terms" || k === "tasks") { return "<td></td>"; }
+      if (k === "terms") { return "<td></td>"; }
+      /* QA 11 (24.11): "לטיפול" is a count, so its total is the companies' counts, shown, added - no money */
+      if (k === "tasks") { return "<td class=\"n\">" + NF.format(shown.reduce(function (a, c) { return a + num(c.tasks); }, 0)) + "</td>"; }
       if (k === "partial_balance") { return numCell(t.sums.partial_count - t.sums.partial_unknown ? t.sums.partial_balance : 0, false, i); }
       return numCell(t.sums[k], k === "open", i);
     }).join("") + "</tr></tfoot>" : "";
@@ -1058,10 +1065,18 @@
       OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
     }
     var found = q ? searchHead(rows, ["חיוב אחד", "חיובים", "החיובים"], what + (who ? " · " + who : "")) : null;
+    var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
+      q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
+    /* a state's own money beside its count (the view's); QA 11 (24.11): "הכל" too - the view has no sum of every charge,
+       so it is the server's total of this very list (GET /api/desk/totals, its "סכום לחיוב (ללא מע"מ)" in the table's last
+       row), said once it lands, of this reading only. Never a sum made here */
+    var all = btot.body && !btot.body.failed && !btot.body.other_reading && btot.body.sums ? btot.body.sums.amount : null;
+    var sum = f.customer ? "" : f.state && f.state !== "tasks" && f.state !== "cancelled" ? money(b.numbers[f.state].money)
+      : !f.state && all != null ? money(all) : "";
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + (who ? " <span class=\"fin-subtle\">· " + esc(who) + "</span>" +
       (mine && (mine.terms || mine.terms_missing) ? termsMark(mine.terms) : "") : "")) + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "חיוב אחד", "חיובים") +
-      (f.state && f.state !== "tasks" && !f.customer && f.state !== "cancelled" ? " · " + money(b.numbers[f.state].money) + " ללא מע\"מ" : "")) +
+      (sum ? " · " + sum + " ללא מע\"מ" : "")) +
       (who ? " · <button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button>" : "") + "</div>" +
       (found ? found.about : aboutHtml("b2b", f.state)) + "</div><div class=\"fin-actions\">" + views +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2b\"" + (rows.length && VIEW.checks.b2b_ok && exportable() ? "" : " disabled") +
@@ -1073,8 +1088,6 @@
     var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
     var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"]
       : (B2_COLS[outside ? "" : key] || B2_COLS[""]);
-    var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
-      q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
     var list = rows.length ? table(rows, bcols, b2Detail, state.b2.open, exportable() ? btot : null)
       : empty(q ? "אין חיובים שמתאימים לחיפוש." : f.state === "tasks" && !f.customer ? "אין חיובים לטיפול." : "אין כאן חיובים.",
         /* no search, one company in one state: that company's every charge, its ledger */
