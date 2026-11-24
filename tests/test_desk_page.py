@@ -257,6 +257,34 @@ def test_the_page_never_calls_a_path_under_api_finance():
     assert not [p for p in paths if p.startswith("/api/finance")]
 
 
+def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_company():
+    """D2, 1.2: a search looks at every row of its tab, so its Excel file and its totals are asked with no tile, period or
+    company - the server's filter then picks exactly the rows on the screen (tests/test_desk_parity_js.py). Without a
+    search, the open list's filters go as before."""
+    from urllib.parse import parse_qs
+    got = drive(answer(), [
+        {"show": {"tab": "b2c", "query": "תלמיד/ה", "sc": {"state": "receipt_pending", "period": "2026-11", "open": {}}}},
+        {"click": [{"export": "b2c"}]},
+        {"show": {"tab": "b2b", "query": "חיוב", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}},
+        {"click": [{"export": "b2b"}]},
+        {"show": {"tab": "b2c", "query": "", "sc": {"state": "receipt_pending", "period": "2026-11", "open": {}}}},
+        {"click": [{"export": "b2c"}]},
+        {"show": {"tab": "b2b", "query": "", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}},
+        {"click": [{"export": "b2b"}]}],
+        monday=world(), answers={"GET /api/desk": [{"body": answer()}],
+                                 "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?x=1"}}] * 4})
+    links = [p[1] for p in got["posts"] if p[0] == "/api/desk/export-link"]
+    assert [(x["tab"], x["state"], x["period"], x["customer"], x["q"]) for x in links] == [
+        ("b2c", "", "", "", "תלמיד/ה"), ("b2b", "", "", "", "חיוב"),
+        ("b2c", "receipt_pending", "2026-11", "", ""), ("b2b", "overdue", "", "7701", "")]
+    totals = [{k: v[0] for k, v in parse_qs(c.split("?", 1)[1], keep_blank_values=True).items() if k != "taken"}
+              for c in got["calls"] if c.startswith("GET /api/desk/totals")]
+    assert {"tab": "b2c", "state": "", "period": "", "q": "תלמיד/ה"} in totals
+    assert {"tab": "b2b", "state": "", "customer": "", "q": "חיוב"} in totals
+    assert {"tab": "b2c", "state": "receipt_pending", "period": "2026-11", "q": ""} in totals
+    assert {"tab": "b2b", "state": "overdue", "customer": "7701", "q": ""} in totals
+
+
 def test_every_monday_request_of_the_page_goes_through_the_one_door():
     """finance.js calls monday.api in one place (mondayCall) and composes its one mutation in one place (mondayWrite); every
     read - a row before a write, the ID number, a bank account, a ח.פ - goes through it at the pinned API version. The

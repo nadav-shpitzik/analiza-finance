@@ -190,7 +190,7 @@
   function termsMark(terms) { return terms ? " <bdi class=\"fin-subtle\">" + esc(terms) + "</bdi>" : " " + NO_TERMS; }
   var COLS = {
     date: { h: "תאריך תקבול", c: function (r) { return paidDate(r); } },
-    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r); } },
+    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r); } },
     /* Student Charge's "נציג מכירות" (17.11): the Owner of the payment's lead, read with the lead (app/finance.py lead_rep) */
     rep: { h: "נציג מכירות", xs: 1, c: function (r) { return r.rep ? esc(r.rep) : NOT_SET; } },
     cohort: { h: "מחזור", xs: 1, c: function (r) { return r.cohort_code ? "<span title=\"" + esc(r.cohort_title) + "\">" + ltr(r.cohort_code) + "</span>" : "<span class=\"fin-subtle\">-</span>"; } },
@@ -228,7 +228,7 @@
     } },
     account: { h: "חברה", c: function (r) { return esc(r.ctx.account); } },
     deal: { h: "עסקה", xs: 1, c: function (r) { return esc(r.ctx.deal); } },
-    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r); } },
+    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r); } },
     course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course); } },
     amount: { h: "סכום לחיוב (ללא מע\"מ)", n: 1, t: "amount", c: function (r) {
       if (!num(r.amount)) { return "-"; }
@@ -417,9 +417,37 @@
     if (state.tab === "b2b") { state.b2.state = ""; state.b2.customer = ""; state.b2.view = "list"; state.b2.open = {}; }
     else { state.sc.state = ""; state.sc.period = ""; state.sc.open = {}; }
   }
+  /* D2, 1.2 (the desk move plan §1b, 24.11): a search looks at every row of its tab, whatever tile, period or company is
+     open - Chava's four searches of 17-23.11 all found nothing in the list that was open, three would have found rows
+     unfiltered, and "חיפוש ללא סינון" was pressed 0 times. A row found outside the open list carries its own tile beside
+     its name (whereMark), and the list's head says the search went over every row. The Excel file and the totals of a
+     search are asked with no tile, period or company, so they hold what the screen shows (the server's filter_b2c and
+     filter_b2b, held to the page's by tests/test_desk_parity_js.py). */
+  function searching() { return !!state.query.trim(); }
   function scRows() {
     scPeriod();
-    return scFilter(ROWS.sc, VIEW.b2c, state.sc.state, state.sc.period, state.query);
+    return searching() ? scFilter(ROWS.sc, VIEW.b2c, "", "", state.query)
+      : scFilter(ROWS.sc, VIEW.b2c, state.sc.state, state.sc.period, state.query);
+  }
+  /* the open list's rows, by id: what the tiles, the period and the company would show without the search */
+  function idsOf(rows) { var out = {}; rows.forEach(function (r) { out[r.id] = true; }); return out; }
+  /* while a searched list is drawn: its rows outside the open list, by id (null when no search is drawn) */
+  var OUTSIDE = null;
+  function whereMark(r) {
+    if (!OUTSIDE || !OUTSIDE[r.id]) { return ""; }
+    return " <span class=\"fin-where\" title=\"" + esc("מחוץ לרשימה הפתוחה") + "\">" +
+      (r.board === "b2" ? stateChip(r.state, VIEW.b2b.states, B2_COLOR) : stateChip(r.state)) + "</span>";
+  }
+  /* the head of a searched list: how many it found, and how many of them are outside the open list, named */
+  function searchHead(rows, words, openName) {
+    var out = rows.filter(function (r) { return OUTSIDE && OUTSIDE[r.id]; }).length;
+    return {
+      title: "חיפוש בכל " + words[2],
+      line: plural(rows.length, words[0], words[1]) + " · חיפוש: " + esc(state.query) +
+        (out ? " · " + (out === 1 ? "אחד מהם" : NF.format(out) + " מהם") + " מחוץ לרשימה הפתוחה" : ""),
+      about: "<p class=\"fin-about\">" + esc("החיפוש עובר על כל " + words[2] + ", לא רק על הרשימה הפתוחה (" + openName +
+        "). ליד שורה מחוץ לה כתוב השיבוץ שלה.") + "</p>"
+    };
   }
   /* a state's tile: its count, its name beside the state's dot (the same dot its rows carry), its money quiet. The sum of
      her work ("לטיפול") and "הכל" are no one state, so they carry no colour; "לטיפול" is the anchor, larger */
@@ -622,14 +650,21 @@
   }
 
   function b2cHtml() {
-    var v = VIEW.b2c, p = scPeriod(), rows = scRows();
+    var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
+    /* the open list's columns stay with a search: what is shown where stays (§1b, 1.4) */
     var cols = SC_COLS[one] || SC_COLS[""];
     var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
-    var sum = one && !state.query.trim() ? " · " + money(p.states[one].money) : "";
-    var head = "<div class=\"fin-listhead\"><div><h2>" + esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span></h2>" +
-      "<div class=\"fin-subtle\">" + plural(rows.length, "תקבול אחד", "תקבולים") + sum + (state.query.trim() ? " · חיפוש: " + esc(state.query) + elsewhere(scFilter(ROWS.sc, v, "", "", state.query).length - rows.length) : "") +
-      "</div>" + aboutHtml("b2c", key) + "</div><div class=\"fin-actions\">" +
+    var sum = one && !q ? " · " + money(p.states[one].money) : "";
+    OUTSIDE = null;
+    if (q) {
+      var open = idsOf(scFilter(ROWS.sc, v, key, state.sc.period, ""));
+      OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
+    }
+    var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
+    var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
+      "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
+      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button></div></div>";
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
@@ -640,20 +675,23 @@
       ["סטודנטים", NF.format(p.students)]], "הסכומים כולל מע\"מ", periodSelect());
     /* an asterisk is explained under the list that shows it, and only when it does */
     var guessed = cols.indexOf("refunded") !== -1 && rows.some(refundGuessed);
-    var tot = { body: totalsFor({ tab: "b2c", state: key, period: state.sc.period, q: state.query.trim() }), what: ["תקבול אחד", "תקבולים"] };
+    /* a search's totals are of every payment it found, as its Excel file (exportList) */
+    var tot = { body: totalsFor({ tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() }),
+      what: ["תקבול אחד", "תקבולים"] };
     var list = rows.length ? table(rows, cols, detailHtml, null, exportable() ? tot : null) + listNotes([
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
-      : empty(state.query.trim() ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.",
-        /* the search without its filters, only where a filter narrows it: a state, or a period */
-        state.query.trim() && (key !== "" || state.sc.period !== "") ? unfilterButton() : "");
+      : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
+    OUTSIDE = null;
     return figures + statesHtml(p) + panel(head + list);
   }
   function exportList(tab) {
     /* a newer reading on its way is waited for first, so the file is built from the list the reader then sees */
     return Promise.resolve(pending).then(function () {
       var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
-      var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" ? "" : f.state,
-        period: b2 ? "" : state.sc.period, customer: tab === "b2b" ? state.b2.customer : "",
+      /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
+      var all = searching() && tab !== "b2b_customers";
+      var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" || all ? "" : f.state,
+        period: b2 || all ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
         q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
       return deps.post("/api/desk/export-link", body);
     }).then(function (res) {
@@ -819,7 +857,8 @@
   function b2bHtml() {
     var b = VIEW.b2b, f = state.b2;
     var who = f.customer ? (b.rows.filter(function (x) { return x.account_id === f.customer; })[0] || {}).account : "";
-    var rows = b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
+    var q = searching();
+    var rows = q ? b2Filter(ROWS.b2, b, "", "", state.query) : b2Filter(ROWS.b2, b, f.state, f.customer, state.query);
     var key = f.state === "tasks" ? "" : f.state;
     var what = f.state === "tasks" ? "לטיפול" : f.state ? stateLabel(b.states, f.state) : "כל החיובים";
     var views = "<div class=\"fin-seg\" role=\"group\" aria-label=\"תצוגה\">" +
@@ -842,25 +881,31 @@
         "<button class=\"fin-btn\" type=\"button\" data-export=\"b2b_customers\"" + (customersShown(b).length && VIEW.checks.b2b_ok && exportable() ? "" : " disabled") +
         exportTitle(VIEW.checks.b2b_ok) + ">ייצוא לאקסל</button></div></div>" + customersHtml(b));
     }
-    var head = "<div class=\"fin-listhead\"><div><h2>" + esc(what) + (who ? " <span class=\"fin-subtle\">· " + esc(who) + "</span>" +
-      (mine && (mine.terms || mine.terms_missing) ? termsMark(mine.terms) : "") : "") + "</h2>" +
-      "<div class=\"fin-subtle\">" + plural(rows.length, "חיוב אחד", "חיובים") +
-      (f.state && f.state !== "tasks" && !f.customer && !state.query.trim() && f.state !== "cancelled" ? " · " + money(b.numbers[f.state].money) + " ללא מע\"מ" : "") +
-      (who ? " · <button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button>" : "") +
-      (state.query.trim() ? " · חיפוש: " + esc(state.query) + elsewhere(b2Filter(ROWS.b2, b, "", "", state.query).length - rows.length) : "") + "</div>" +
-      aboutHtml("b2b", f.state) + "</div><div class=\"fin-actions\">" + views +
+    OUTSIDE = null;
+    if (q) {
+      var open = idsOf(b2Filter(ROWS.b2, b, f.state, f.customer, ""));
+      OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
+    }
+    var found = q ? searchHead(rows, ["חיוב אחד", "חיובים", "החיובים"], what + (who ? " · " + who : "")) : null;
+    var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + (who ? " <span class=\"fin-subtle\">· " + esc(who) + "</span>" +
+      (mine && (mine.terms || mine.terms_missing) ? termsMark(mine.terms) : "") : "")) + "</h2>" +
+      "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "חיוב אחד", "חיובים") +
+      (f.state && f.state !== "tasks" && !f.customer && f.state !== "cancelled" ? " · " + money(b.numbers[f.state].money) + " ללא מע\"מ" : "")) +
+      (who ? " · <button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button>" : "") + "</div>" +
+      (found ? found.about : aboutHtml("b2b", f.state)) + "</div><div class=\"fin-actions\">" + views +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2b\"" + (rows.length && VIEW.checks.b2b_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2b_ok) + ">ייצוא לאקסל</button></div></div>";
-    var ledger = f.customer && !f.state;   /* the ledger: oldest first, with the open money owed up to each charge */
+    /* the ledger: oldest first, with the open money owed up to each charge. A search in a ledger finds every company's
+       charges, so it is drawn as the list of every charge, with its company and its tile */
+    var ledger = f.customer && !f.state && !q;
     var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"] : (B2_COLS[key] || B2_COLS[""]);
-    var btot = { body: totalsFor({ tab: "b2b", state: f.state === "tasks" ? "tasks" : f.state, customer: f.customer, q: state.query.trim() }),
-      what: ["חיוב אחד", "חיובים"] };
+    var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
+      q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
     var list = rows.length ? table(rows, bcols, b2Detail, state.b2.open, exportable() ? btot : null)
-      : empty(state.query.trim() ? "אין חיובים שמתאימים לחיפוש." : f.state === "tasks" && !f.customer ? "אין חיובים לטיפול." : "אין כאן חיובים.",
-        /* a search: the same search without its filters (a state, one company), where one narrows it. No search, one
-           company in one state: that company's every charge, its ledger */
-        state.query.trim() ? (f.state !== "" || f.customer ? unfilterButton() : "")
-          : f.customer && f.state !== "" ? "<button class=\"fin-linkbtn\" type=\"button\" data-b2state=\"\">כל החיובים של החברה</button>" : "");
+      : empty(q ? "אין חיובים שמתאימים לחיפוש." : f.state === "tasks" && !f.customer ? "אין חיובים לטיפול." : "אין כאן חיובים.",
+        /* no search, one company in one state: that company's every charge, its ledger */
+        !q && f.customer && f.state !== "" ? "<button class=\"fin-linkbtn\" type=\"button\" data-b2state=\"\">כל החיובים של החברה</button>" : "");
+    OUTSIDE = null;
     return figures + b2Tiles(b) + panel(head + list);
   }
 
