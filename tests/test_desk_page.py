@@ -388,15 +388,15 @@ def test_a_row_found_by_a_field_its_list_does_not_show_says_which_and_what_it_ho
     found = lambda page, rid: re.findall(r'<span class="fin-found">(.*?)</span>$', cells_of(page, rid).get(
         "student", cells_of(page, rid).get("charge", "")))
     # the general columns show what was paid, not the refund: which field found the row, and its value
-    assert found(pages[0], "3107") == ["נמצא לפי סכום החזר: <bdi>976.19 ₪</bdi> · סכום לזיכוי: <bdi>976.19 ₪</bdi>"]
-    # "החזר בוצע" shows "סכום החזר": nothing to say
+    assert found(pages[0], "3107") == ["נמצא לפי: הוחזרו <bdi>976.19 ₪</bdi> · סכום לזיכוי <bdi>976.19 ₪</bdi>"]
+    # "החזר בוצע" shows "הוחזרו": nothing to say
     assert found(pages[1], "3107") == [] and "fin-found" not in pages[1]
     # a cohort's title shows only on hover: the row says it was found by its cohort
-    assert found(pages[2], "3101") == ["נמצא לפי מחזור: הגנת סייבר"]
+    assert found(pages[2], "3101") == ["נמצא לפי: מחזור הגנת סייבר"]
     # found by its name, which the row shows: nothing more
     assert "fin-found" not in pages[3]
     # the companies: "סכום ששולם (כולל מע"מ)" is not a column of the general list, and is one of "שולם חלקית"'s
-    assert found(pages[4], "9903") == ['נמצא לפי סכום ששולם (כולל מע"מ): <bdi>9,000.00 ₪</bdi>']
+    assert found(pages[4], "9903") == ['נמצא לפי: סכום ששולם (כולל מע"מ) <bdi>9,000.00 ₪</bdi>']
     assert "fin-found" not in pages[5]
     # no search, no mark
     assert "fin-found" not in pages[6]
@@ -572,14 +572,17 @@ def test_the_page_heads_mondays_columns_by_their_monday_names_and_lays_out_the_r
     """The page's half of the old test; that its states are the server's (B2C_STATES, B2B_STATES) waits for the port."""
     cols = node(LOAD + "console.log(JSON.stringify(F._columns()));", None)
     heads = cols["heads"]
-    assert {k: heads[k] for k in ("received", "receipt", "to_refund", "refunded", "credit_ref", "invoice", "method",
+    assert {k: heads[k] for k in ("received", "receipt", "to_refund", "credit_ref", "invoice", "method",
                                   "refund_date", "asked", "last_day", "planned", "demand", "amount", "paid_so_far",
                                   "account", "course", "status", "payment", "open")} == {
-        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי", "refunded": "סכום החזר",
+        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי",
         "credit_ref": "אסמכתת זיכוי", "invoice": "אסמכתת חשבונית", "method": "אופן החזר", "refund_date": "תאריך החזר",
         "asked": "תאריך בקשת ביטול", "last_day": "מועד אחרון להחזר", "planned": "מועד העברה מתוכנן",
         "demand": "מועד דרישת תשלום", "amount": 'סכום לחיוב (ללא מע"מ)', "paid_so_far": 'סכום ששולם (כולל מע"מ)',
         "account": "חברה", "course": "קוד קורס", "status": "מצב חיוב", "payment": "סטטוס תשלום", "open": "פתיחה במאנדיי"}
+    # the refund counted is the desk's own word, as the tab's figure and the Excel file call it (QA 24.11): under "סכום
+    # החזר" it read as monday's column, which a refund's details show as it is
+    assert heads["refunded"] == "הוחזרו" and "סכום החזר" not in heads.values()
     refund = cols["sc"]["refund_to_execute"]
     i = refund.index("last_day")
     assert refund[i - 1:i + 2] == ["asked", "last_day", "planned"]              # the two dates side by side

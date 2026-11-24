@@ -55,7 +55,7 @@
  * QA 3 A search with a row outside the open list kept the open list's columns, so a payment found from "החזר לביצוע"
  *      showed a refund's "-" where its own date, channel and receipt are. With any row outside the open list the search
  *      is drawn with the general columns, on both tabs; with every row inside, the open list's own stay (1.4). And a row
- *      found by a field its list does not show says which, and what it holds there ("נמצא לפי סכום החזר: 976.19 ₪",
+ *      found by a field its list does not show says which, and what it holds there ("נמצא לפי: הוחזרו 976.19 ₪",
  *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
  * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
  *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
@@ -74,6 +74,10 @@
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
  *      row sat in "חריג" with no chip.
+ * And with the server's QA 1 (24.11): in "החזר בוצע" the column of the refund counted (monday's "סכום החזר", or what was
+ *      paid for a full refund without it, the asterisk) was headed "סכום החזר" as if it were monday's column; it is
+ *      "הוחזרו", the desk's word for it on the tab's figure and in the Excel file. A refund's details keep "סכום החזר" for
+ *      monday's own value. The mark of what found a row reads "נמצא לפי: <field> <value>" with it.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -281,8 +285,10 @@
     } },
     /* QA 10 (24.11): an empty value is "-" in every column, as monday shows it - "תאריך החזר" was an empty cell */
     refund_date: { h: "תאריך החזר", c: function (r) { return r.refund_date ? d(r.refund_date) : NOT_SET; } },
-    /* "סכום החזר"; a full refund without it counts what was paid, said by the asterisk under the list */
-    refunded: { h: "סכום החזר", n: 1, t: "refunded", c: function (r) {
+    /* the refund counted (app/desk/view.py `refunded`): monday's "סכום החזר", or what was paid for a full refund without
+       it, said by the asterisk under the list. Its word is the desk's "הוחזרו", as the tab's figure and the Excel file
+       call it (QA 24.11): under "סכום החזר" it read as monday's column, which the details show as it is */
+    refunded: { h: "הוחזרו", n: 1, t: "refunded", c: function (r) {
       return refundGuessed(r) ? "<span class=\"fin-subtle\" title=\"סכום החזר ריק או 0: מוצג כל סכום ששולם\">" + money2(r.refunded) + "*</span>"
         : money2(r.refunded);
     } },
@@ -534,7 +540,7 @@
       (r.board === "b2" ? stateChip(r.state, VIEW.b2b.states, B2_COLOR) : stateChip(r.state)) + "</span>";
   }
   /* QA 3 (24.11): a row a search found by a field its list does not show says which, and what that field holds - "976.19"
-     found a row by its "סכום החזר" while the row showed only "סכום ששולם" (₪1,000). The field is named by its column's
+     found a row by its refund while the row showed only "סכום ששולם" (₪1,000). The field is named by its column's
      header; a field no column shows (a cohort's title, shown only on hover) by the column it belongs to */
   var FOUND_COL = {
     sc: { money_in: "received", refunded: "refunded", credit_approved: "to_refund", name: "student", cohort_code: "cohort",
@@ -549,9 +555,9 @@
     if (!DRAWN || !q || !m) { return ""; }
     var by = matchedBy(r, q, m) || [];
     if (!by.length || by.some(function (f) { return !FOUND_HIDDEN[f] && DRAWN[cols[f]]; })) { return ""; }
-    return " <span class=\"fin-found\">נמצא לפי " + by.map(function (f) {
+    return " <span class=\"fin-found\">נמצא לפי: " + by.map(function (f) {
       var v = m.nums.indexOf(f) !== -1 ? money2(r[f]) : FOUND_LTR[f] ? ltr(r[f]) : esc(r[f]);
-      return esc(COLS[cols[f]].h) + ": " + v;
+      return esc(COLS[cols[f]].h) + " " + v;
     }).join(" · ") + "</span>";
   }
   /* the head of a searched list: how many it found, and how many of them are outside the open list, named */
