@@ -143,10 +143,13 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.write) { refused = await F._write(step.write[0], step.write[1], step.write[2]).then(() => "sent", (e) => e.code); }
     if (step.wait) { await new Promise((r) => setTimeout(r, step.wait)); }
     await settle();
-    const act = F._actState();
+    const act = F._actState(), b = F._batchState();
     steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error,
       refused: refused, can: F._can(), sent: sent.length,
-      plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null });
+      plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
+      /* 1.1: the batch on the screen, row by row */
+      batch: b ? { phase: b.phase, error: b.error || "", items: b.items.map((it) => ({ key: it.key, verdict: it.verdict || null,
+        why: it.why || "", result: it.result || null })) } : null, picked: Object.keys(F._picked()).sort() });
   }
   /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
   fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
@@ -483,6 +486,239 @@ def test_an_action_reads_shows_the_plan_writes_the_index_and_asks_this_services_
         (SC_BOARD, "3102", {"color_mm4cq1hw": {"index": 1}})]                         # by index, never by text
     assert wrote["phase"] == "done" and ["/api/desk/refresh", None] in got["posts"]
     assert "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן." in got["toasts"]
+
+
+# --- 1.1 (D2, the desk move plan §1b): two actions on the row itself, for one row or several at once ---------------------
+
+RECEIPT_LABELS = {"0": "טרם", "1": "יצאה", "2": "לא רלוונטי"}
+PAY_LABELS = {"0": "לא שולם", "1": "שולם", "2": "יש בעיה", "3": "מלגת אנליזה", "4": "תשלום הוחזר", "5": "הוחזר חלקי",
+              "9": "ביקש החזר"}
+WRITES = {"permissions": {"approvedScopes": ["boards:read", "boards:write"]}}
+TASKS = {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}
+RECEIPT_COL, STATUS_COL = "color_mm4cq1hw", "color_mm1kxpvt"
+
+
+def receipts_view() -> dict:
+    """The hand-made view with a second payment waiting for its receipt (3106), beside 3102."""
+    return with_row(view(), sc_row("3106", "תלמיד/ה 6", "receipt_pending", invoice="30006", receipt="טרם", receipt_idx="0",
+                                   money_in="5000", paid_typed="5000", net="5000", actions=["receipt_sent"]))
+
+
+def receipts_world(answers=None, **cells) -> dict:
+    """monday as the person reads it: the two payments waiting for a receipt, the refund to execute, their labels."""
+    monday = world(labels={SC_BOARD: {RECEIPT_COL: dict(RECEIPT_LABELS), STATUS_COL: dict(PAY_LABELS)}},
+                   answers=list(answers or []))
+    board = monday["boards"][SC_BOARD]
+    for rid in ("3102", "3106"):
+        board[rid] = {"__name": "תלמיד/ה " + rid[-1], RECEIPT_COL: {"text": "טרם", "index": 0, "label": "טרם"}}
+    board["3103"].update({"__name": "תלמיד/ה 3", STATUS_COL: {"text": "שולם", "index": 1, "label": "שולם"}})
+    for rid, cell in cells.items():
+        board[rid].update(cell)
+    return monday
+
+
+def receipts_done(v: dict | None = None) -> dict:
+    """The reading after both receipts were written: both "הושלם"."""
+    v = copy.deepcopy(v or receipts_view())
+    for r in v["b2c"]["rows"]:
+        if r["id"] in ("3102", "3106"):
+            r.update(state="done", receipt="יצאה", receipt_idx="1", actions=[])
+    return v
+
+
+def status_cell(labels: dict, idx: str) -> dict:
+    return {"text": labels[idx], "index": int(idx), "label": labels[idx]}
+
+
+def writes_of(got: dict) -> list:
+    return [(s["variables"]["b"], s["variables"]["i"], json.loads(s["variables"]["v"])) for s in got["sent"]
+            if s["kind"] == "mutation"]
+
+
+def batch_answers(v: dict, refreshed: dict | None = None) -> dict:
+    return {"GET /api/desk": [{"body": answer(v)}],
+            "POST /api/desk/refresh": [{"body": answer(refreshed or receipts_done(v), taken_at="2026-11-24T08:00:09+00:00")}]}
+
+
+def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_its_write():
+    """Select two rows, press once, one confirmation listing each row's write; on "כתיבה" each row is read again right
+    before its own write, written by index and checked against monday's answer; one refresh after the batch."""
+    import html as h
+    v = receipts_view()
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(v))
+    shown, _one, two, plan, done = got["steps"]
+    # the box and the button only on the rows that offer one of the two: the two receipts and the refund to execute
+    assert sorted(re.findall(r'data-pick="(sc:\d+)"', shown["html"])) == ["sc:3102", "sc:3103", "sc:3106"]
+    assert sorted(re.findall(r'data-row-act="([^"]+)"', shown["html"])) == [
+        "sc:3102:receipt_sent", "sc:3103:refund_done", "sc:3106:receipt_sent"]
+    assert 'data-pick-all="1"' in shown["html"] and "<th class=\"k-rowact\">פעולות</th>" in shown["html"]
+    assert shown["sent"] == 0                                                       # nothing read before a press
+    # the bar: what is picked, and one button per action they offer, with its count
+    bar = h.unescape(two["html"])
+    assert "נבחרו 2 שורות" in bar and 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(2)</span>' in bar
+    # one confirmation, from the two rows read in one request, before anything is written
+    assert plan["batch"]["phase"] == "confirm" and [i["verdict"] for i in plan["batch"]["items"]] == ["write", "write"]
+    page = h.unescape(plan["html"])
+    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in page
+    assert '<li><b>תלמיד/ה 2</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
+    assert '<li><b>תלמיד/ה 6</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
+    assert 'data-batch-go="1">כתיבה</button>' in page and plan["sent"] == 1
+    assert got["sent"][0]["kind"] == "query" and got["sent"][0]["variables"] == {
+        "i": ["3102", "3106"], "c": [RECEIPT_COL], "b": [SC_BOARD]}
+    # each row read right before its write, written by index, one after the other
+    assert [(s["kind"], s["variables"]["i"]) for s in got["sent"][1:]] == [
+        ("query", ["3102"]), ("mutation", "3102"), ("query", ["3106"]), ("mutation", "3106")]
+    assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
+    assert done["batch"]["phase"] == "done" and [i["result"] for i in done["batch"]["items"]] == ["written", "written"]
+    assert "נכתב במאנדיי בשמך ב-2 שורות. המסך מתעדכן." in got["toasts"]
+    # one refresh, as after one action; the picks are the batch's and are cleared
+    assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
+    assert done["picked"] == [] and "data-row=\"3102\"" not in done["html"]          # the reading placed them in "הושלם"
+
+
+def test_a_rows_own_button_is_one_press_to_its_confirmation_and_says_what_follows():
+    """One row: its button reads it and shows its one confirmation, with what the refunds app does after (MON-86)."""
+    import html as h
+    v = receipts_view()
+    refunded = copy.deepcopy(v)
+    for r in refunded["b2c"]["rows"]:
+        if r["id"] == "3103":
+            r.update(state="refunded", status="תשלום הוחזר", status_idx="4", actions=[])
+    got = drive(steps=[{"show": TASKS}, {"click": [{"rowAct": "sc:3103:refund_done"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(v, refunded))
+    plan, done = got["steps"][1], got["steps"][2]
+    page = h.unescape(plan["html"])
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in page
+    assert '<li><b>תלמיד/ה 3</b> · סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"</li>' in page
+    assert "אחרי הכתיבה אפליקציית ההחזרים סוגרת את הבקשה." in page                # the action's `after`, from the server
+    assert writes_of(got) == [(SC_BOARD, "3103", {STATUS_COL: {"index": 4}})]
+    assert done["batch"]["items"] == [{"key": "sc:3103", "verdict": "write", "why": "", "result": "written"}]
+
+
+@pytest.mark.parametrize("now, why", [
+    # the desk read "טרם"; monday holds another value now: not written over
+    (status_cell(RECEIPT_LABELS, "2"), 'השתנתה במאנדיי מאז הקריאה, ועכשיו שליחת קבלה "לא רלוונטי"'),
+    # monday already holds it
+    (status_cell(RECEIPT_LABELS, "1"), 'כבר "יצאה" במאנדיי'),
+])
+def test_a_row_changed_in_monday_since_the_reading_is_not_written_and_the_confirmation_says_why(now, why):
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(**{"3106": {RECEIPT_COL: now}}), context=WRITES, answers=batch_answers(receipts_view()))
+    plan, done = got["steps"][3], got["steps"][4]
+    assert [(i["key"], i["verdict"], i["why"]) for i in plan["batch"]["items"]] == [
+        ("sc:3102", "write", ""), ("sc:3106", "skip", why)]
+    page = h.unescape(plan["html"])
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 2", בשמך:' in page and "<p>לא ייכתב:</p><ul><li><b>תלמיד/ה 6</b> · %s</li>" % why in page
+    assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}})]
+    assert "לא נכתב:" in h.unescape(done["html"]) and why in h.unescape(done["html"])
+
+
+def test_a_row_changed_after_the_confirmation_was_shown_is_not_written_and_the_rest_is():
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]},
+                       {"mutate": {SC_BOARD: {"3102": {RECEIPT_COL: status_cell(RECEIPT_LABELS, "2")}}}},
+                       {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    done = got["steps"][5]["batch"]
+    assert [(i["key"], i["result"]) for i in done["items"]] == [("sc:3102", "skipped"), ("sc:3106", "written")]
+    assert done["items"][0]["why"] == 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו שליחת קבלה "לא רלוונטי"'
+    assert writes_of(got) == [(SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
+    report = h.unescape(got["steps"][5]["html"])
+    assert "נכתב במאנדיי בשמך בשורה אחת." in report and "<li><b>תלמיד/ה 6</b></li>" in report
+    assert "<p>לא נכתב:</p>" in report
+
+
+def test_a_row_that_fails_is_said_with_why_and_the_others_are_written():
+    denied = {"reject": {"message": "User unauthorized to perform action"}}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(answers=[{}, {}, denied]), context=WRITES, answers=batch_answers(receipts_view()))
+    done = got["steps"][4]
+    assert [(i["key"], i["result"], i["why"]) for i in done["batch"]["items"]] == [
+        ("sc:3102", "failed", "מאנדיי לא מרשה לך לכתוב בשורה הזאת. לא נכתב כלום."), ("sc:3106", "written", "")]
+    assert "נכתב במאנדיי בשמך בשורה אחת, ובשאר לא: הפירוט ברשימה. המסך מתעדכן." in got["toasts"]
+    assert 'class="fin-act-msg bad" role="alert"' in done["html"] and "<p>נכשל:</p>" in done["html"]
+    assert len([p for p in got["posts"] if p[0] == "/api/desk/refresh"]) == 1
+
+
+def test_a_missing_permission_stops_the_batch_at_its_first_write_and_nothing_else_is_sent():
+    scope = {"reject": {"message": "Your app is missing the required scopes: boards:write"}}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}],
+                monday=receipts_world(answers=[{}, {}, scope]), context={}, answers=batch_answers(receipts_view()))
+    done = got["steps"][4]
+    assert [(i["result"], i["why"]) for i in done["batch"]["items"]] == [
+        ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נכתב כלום."), ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נשלח.")]
+    assert [s["kind"] for s in got["sent"]] == ["query", "query", "mutation"] and done["can"]["state"] == "no"
+    assert "לא נכתב כלום: הפירוט ברשימה." in got["toasts"] and not [p for p in got["posts"] if p[0] == "/api/desk/refresh"]
+    assert "data-row-act" not in done["html"] and "data-pick" not in done["html"]   # no button left where it cannot write
+
+
+def test_a_label_renamed_in_monday_stops_the_whole_batch_before_anything_is_written():
+    monday = receipts_world()
+    monday["labels"][SC_BOARD][RECEIPT_COL]["1"] = "נשלחה"
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]}],
+                monday=monday, context=WRITES, answers=batch_answers(receipts_view()))
+    failed = got["steps"][2]["batch"]
+    assert failed["phase"] == "failed" and failed["error"] == "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+    assert writes_of(got) == [] and "data-batch-go" not in got["steps"][2]["html"]
+
+
+@pytest.mark.parametrize("context, monday", [
+    ({"permissions": {"approvedScopes": ["boards:read"], "requiredScopes": ["boards:read"]}}, None),
+    (dict(WRITES, user={"isViewOnly": True}), None),
+    ({}, {"absent": True}),
+])
+def test_where_the_person_cannot_write_the_row_carries_no_box_and_no_button(context, monday):
+    got = drive(answer(receipts_view()), [{"show": TASKS}], monday=monday or receipts_world(), context=context)
+    html = got["steps"][0]["html"]
+    assert "data-pick" not in html and "data-row-act" not in html and "k-rowact" not in html and "k-pick" not in html
+
+
+def test_the_bar_offers_each_action_its_picked_rows_offer_and_a_batch_takes_only_the_rows_of_its_action():
+    import html as h
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3103"}]},
+                       {"click": [{"batch": "refund_done"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    bar = h.unescape(got["steps"][2]["html"])
+    assert 'data-batch="receipt_sent">שליחת קבלה: "יצאה" <span class="fin-subtle">(1)</span>' in bar
+    assert 'data-batch="refund_done">סימון "תשלום הוחזר" <span class="fin-subtle">(1)</span>' in bar
+    assert [i["key"] for i in got["steps"][3]["batch"]["items"]] == ["sc:3103"]
+    # a pick in a list that is not on the screen is not in its bar, nor in its batch
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]},
+                       {"show": {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    assert "נבחרה שורה אחת" in got["steps"][1]["html"] and "fin-batchbar" not in got["steps"][2]["html"]
+
+
+def test_a_new_pick_after_a_batch_drops_its_report_and_shows_the_bar_and_a_confirmation_cancelled_writes_nothing():
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]},
+                       {"click": [{"batchClose": "1"}]}, {"click": [{"rowAct": "sc:3106:receipt_sent"}]},
+                       {"click": [{"pick": "sc:3103"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    plan, cancelled, single, picked = got["steps"][2:]
+    assert plan["batch"]["phase"] == "confirm" and cancelled["batch"] is None and writes_of(got) == []
+    assert cancelled["picked"] == ["sc:3102"] and "נבחרה שורה אחת" in cancelled["html"]       # the pick stays for later
+    assert [i["key"] for i in single["batch"]["items"]] == ["sc:3106"]                       # the row's own: that row only
+    assert picked["batch"] is None and "נבחרו 2 שורות" in picked["html"]
+
+
+def test_every_row_picks_at_most_one_batchs_worth_and_a_pick_past_it_is_said():
+    v = view()
+    for i in range(30):
+        v = with_row(v, sc_row(str(4000 + i), "תלמיד/ה %d" % i, "receipt_pending", receipt="טרם", receipt_idx="0",
+                                actions=["receipt_sent"]))
+    got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}},
+                            {"click": [{"pickAll": "1"}]}, {"click": [{"pick": "sc:4029"}]}, {"click": [{"pickAll": "1"}]}],
+                monday=receipts_world(), context=WRITES)
+    assert len(got["steps"][1]["picked"]) == 25 and "sc:4029" not in got["steps"][2]["picked"]
+    assert "אפשר לבחור עד 25 שורות לכתיבה אחת." in got["toasts"]
+    assert got["steps"][3]["picked"] == []                       # every row it can was picked: the second press lets go
 
 
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------

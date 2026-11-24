@@ -833,3 +833,36 @@ def test_a_search_looks_at_every_row_of_its_tab_and_a_row_outside_the_open_list_
     assert '<button class="fin-linkbtn" type="button" data-b2state="">כל החיובים של החברה</button>' in no_search
     source = re.sub(r"/\*.*?\*/", "", PAGE.read_text(encoding="utf-8"), flags=re.S)      # a comment may tell the history
     assert "בכל השיבוצים" not in source and "בשאר השיבוצים" not in source
+
+
+# --- D2, 1.1 (the desk move plan §1b): two actions on the row itself --------------------------------------------------
+
+def test_the_rows_own_buttons_and_boxes_sit_exactly_on_the_rows_the_server_offers_them():
+    """"שליחת קבלה: "יצאה"" and "סימון "תשלום הוחזר"" sit on the row itself, with the box that picks it for a batch - on
+    exactly the rows whose actions (the server's b2c_actions) hold receipt_sent or refund_done, each with the server's own
+    button, and on no other row (a refunded row's reference, an invoice's, a partial refund stay in its details)."""
+    import html as h
+    import re
+    rows_sc = [sc(1, credit_approved="1000", planned="2026-11-20", enr=["E1"]), sc(2, receipt="0"), sc(3, receipt="0"),
+               sc(4, st="4", refund="4000", refund_date="2026-11-02"), sc(5), sc(6, st="2", credit_approved="1000"),
+               sc(7, st="0")]
+    view = fd.build_view(snap(rows_sc, enrollments=[enrollment("E1", asked="2026-11-01")]), TODAY)
+    body = json_safe({"view": view, "taken_at": "2026-11-09T20:00:00+00:00", "age_seconds": 0, "refreshing": False,
+                      "stale": False, "last_attempt": None})
+    html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+                 {"body": body, "cases": [{"tab": "b2c", "query": "", "sc": {"state": "", "period": "", "open": {}}}]})
+    offered = sorted("sc:%s:%s" % (r["id"], k) for r in view["b2c"]["rows"] for k in r["actions"]
+                     if k in ("receipt_sent", "refund_done"))
+    assert offered == ["sc:1:refund_done", "sc:2:receipt_sent", "sc:3:receipt_sent"]
+    assert sorted(re.findall(r'data-row-act="([^"]+)"', html)) == offered
+    assert sorted(re.findall(r'data-pick="(sc:\d+)"', html)) == ["sc:1", "sc:2", "sc:3"]
+    buttons = {a["key"]: a["button"] for a in view["b2c"]["actions"]["list"]}
+    for x in offered:
+        assert 'data-row-act="%s">%s</button>' % (x, h.escape(buttons[x.split(":")[2]])) in html
+    # the companies' list carries neither: its actions stay in a charge's details
+    b2_view = fd.build_view(snap([sc(9)], [b2(1, billing="0", payment="2", due="2026-11-20"), b2(2, payment="2")]), TODAY)
+    body = json_safe({"view": b2_view, "taken_at": "2026-11-09T20:00:00+00:00", "age_seconds": 0, "refreshing": False,
+                      "stale": False, "last_attempt": None})
+    html, = node(LOAD + "console.log(JSON.stringify(input.cases.map(c => F._render(input.body, c))));",
+                 {"body": body, "cases": [{"tab": "b2b", "query": "", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}]})
+    assert "data-row-act" not in html and "data-pick" not in html

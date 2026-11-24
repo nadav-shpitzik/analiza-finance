@@ -912,6 +912,10 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
     assert "רק כשלאפליקציה יש הרשאה לכתוב עדכונים במאנדיי" in bill and "ועל החברה נכתב עדכון בשמך" not in bill
     # the ID number is never in the Excel file now (app/desk/export.py), and the legend no longer says it is
     students = {i["term"]: i["text"] for p in fd._legend_out("b2c") for i in p["items"]}
+    # D2, 1.1: two actions on the row itself, by their buttons' own names, for several rows at once, never over a change
+    acts = students["פעולות"]
+    assert fd.DESK_ACTIONS["receipt_sent"]["button"] in acts and fd.DESK_ACTIONS["refund_done"]["button"] in acts
+    assert "בשורה עצמה" in acts and "עד 25" in acts and "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת" in acts
     assert "אקסל" not in students["ת.ז"] and "בשמך" in students["ת.ז"]
 
 

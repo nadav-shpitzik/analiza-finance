@@ -338,6 +338,20 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-written::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--fin-focus);
   animation: fin-pulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { #screen-finance .fin-written::before { animation: none; } }
+/* 1.1 (D2): two actions on the row itself - the box that picks a row for a batch at the row's start, the row's own button
+   before "פתיחה במאנדיי" - and the batch above the list: its bar of picked rows, its one confirmation, its report */
+#screen-finance table.fin-t .k-pick { width: 28px; padding-inline-end: 0; }
+#screen-finance .fin-pick { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: var(--fin-focus); cursor: pointer; }
+#screen-finance .fin-pick[disabled] { cursor: default; }
+#screen-finance table.fin-t td.k-rowact { white-space: nowrap; padding-top: 4px; padding-bottom: 4px; }
+#screen-finance .fin-btn.fin-rowact { height: 28px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-batch { margin: 0 16px 12px; }
+#screen-finance .fin-batch .fin-act-msg { margin-top: 0; }
+#screen-finance .fin-batchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+  border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-sel); font-size: 14px; }
+#screen-finance .fin-batch-plan ul, #screen-finance .fin-batch-done ul { max-height: 220px; overflow: auto; }
+#screen-finance .fin-batch-done p { margin: 6px 0 2px; font-size: 14px; }
+#screen-finance .fin-batch-done ul { margin: 0; padding-inline-start: 18px; font-size: 14px; }
 /* "אין תנאי תשלום" that leads to the company's ledger: the same chip, pressable, underlined lightly as the desk's links are */
 #screen-finance button.fin-chiplink { border: 0; font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }

@@ -249,7 +249,24 @@
     balance: { h: "יתרה לגבייה (כולל מע\"מ)", n: 1, t: "balance", c: function (r) { return r.balance != null ? money2(r.balance) : "-"; } },
     late: { h: "ימים בפיגור", n: 1, opt: function (r) { return r.days_late != null; }, c: function (r) { return r.days_late != null ? NF.format(r.days_late) : ""; } },
     notes: { h: "מה לבדוק", c: function (r) { return rowChips(r); } },
-    open: { h: "פתיחה במאנדיי", c: function (r) { return openLink(r); } }
+    open: { h: "פתיחה במאנדיי", c: function (r) { return openLink(r); } },
+    /* 1.1 (D2): the box that picks a row for a batch, under a box that picks every row it can, and the row's own button -
+       only on the rows that offer one of the two actions, where the person may write (pickable) */
+    pick: { h: "", opt: function (r) { return pickable(r); }, hh: function (rows) {
+      return "<input type=\"checkbox\" class=\"fin-pick\" data-pick-all=\"1\"" + (allPicked(rows) ? " checked" : "") + (busy() ? " disabled" : "") +
+        " aria-label=\"" + esc("בחירת כל השורות") + "\" title=\"" + esc("בחירת כל השורות") + "\">";
+    }, c: function (r) {
+      if (!pickable(r)) { return ""; }
+      var k = rowKey(r);
+      return "<input type=\"checkbox\" class=\"fin-pick\" data-pick=\"" + esc(k) + "\"" + (PICKED[k] ? " checked" : "") +
+        (busy() ? " disabled" : "") + " aria-label=\"" + esc("בחירת השורה " + r.name) + "\">";
+    } },
+    rowact: { h: "פעולות", opt: function (r) { return pickable(r); }, c: function (r) {
+      var a = pickable(r) ? rowAction(r) : null;
+      if (!a) { return ""; }
+      return "<button type=\"button\" class=\"fin-btn fin-rowact\" data-row-act=\"" + esc(rowKey(r) + ":" + a.key) + "\"" +
+        (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>";
+    } }
   };
   /* the companies list's columns and order, by the state chosen (app/finance.py B2B_SORT is the same order) */
   var B2_COLS = {
@@ -324,14 +341,14 @@
       var f = COLS[k] && COLS[k].t, cell = "";
       if (f && t.sums[f] != null) { cell = money2(t.sums[f]); }
       else if (f && t.sums.partial_unknown) { cell = "<span class=\"fin-subtle\">חסר ב-" + plural(t.sums.partial_unknown, "חיוב אחד", "חיובים") + "</span>"; }
-      if (!cell && first) { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
+      if (!cell && first && k !== "pick") { first = false; cell = "<b>סה\"כ</b> <span class=\"fin-subtle\">" + plural(t.count, what[0], what[1]) + "</span>"; }
       return "<td" + cls(k) + ">" + cell + "</td>";
     }).join("") + "</tr></tfoot>";
   }
   function table(rows, cols, detail, opened, totals) {
     cols = cols.filter(function (k) { return !COLS[k].opt || rows.some(COLS[k].opt); });
     return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t\"><thead><tr>" + cols.map(function (k) {
-      return "<th" + cls(k) + ">" + esc(COLS[k].h) + "</th>";
+      return "<th" + cls(k) + ">" + (COLS[k].hh ? COLS[k].hh(rows) : esc(COLS[k].h)) + "</th>";
     }).join("") + "</tr></thead><tbody>" + rows.map(function (r) {
       var open = detail && (opened || state.sc.open)[r.id];
       var attrs = detail ? " class=\"fin-rowbtn" + (open ? " open" : "") + "\" data-row=\"" + esc(r.id) + "\" tabindex=\"0\" aria-expanded=\"" + (open ? "true" : "false") + "\"" : "";
@@ -635,8 +652,9 @@
   function b2cHtml() {
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
-    /* the open list's columns stay with a search: what is shown where stays (§1b, 1.4) */
-    var cols = SC_COLS[one] || SC_COLS[""];
+    /* the open list's columns stay with a search: what is shown where stays (§1b, 1.4); the box and the row's button of
+       1.1 at its edges, where a row offers one of the two */
+    var cols = withRowActions(SC_COLS[one] || SC_COLS[""]);
     var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
     var sum = one && !q ? " · " + money(p.states[one].money) : "";
     OUTSIDE = null;
@@ -665,7 +683,7 @@
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
     OUTSIDE = null;
-    return figures + statesHtml(p) + panel(head + list);
+    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list);
   }
   function exportList(tab) {
     /* a newer reading on its way is waited for first, so the file is built from the list the reader then sees */
@@ -1046,16 +1064,29 @@
     return mondayCall(WRITE_ROW, { b: String(boardId), i: String(itemId), v: JSON.stringify(values), c: Object.keys(values) })
       .then(function (data) { return cellsOf((data.change_multiple_column_values || {}).column_values); });
   }
-  /* the row as monday holds it now, read as the person: on the board it should be on, every column there */
-  function readRow(boardId, itemId, cols) {
-    return mondayCall(READ_ROW, { i: [String(itemId)], c: cols, b: [String(boardId)] }).then(function (data) {
-      var item = (data.items || [])[0];
-      if (!item || String((item.board || {}).id) !== String(boardId)) { throw { code: "not_found", text: "" }; }
+  /* rows as monday holds them now, read as the person, in one request: every column there on the board they should be
+     on. {id: {name, cells, columns}} for the items monday answered from that board; an item it did not answer, or answered
+     from another board, is not in it (a row's batch, 1.1, reads its rows so; BATCH_MAX keeps them in one answer) */
+  function readRows(boardId, itemIds, cols) {
+    return mondayCall(READ_ROW, { i: itemIds.map(String), c: cols, b: [String(boardId)] }).then(function (data) {
       var columns = {};
       ((((data.boards || [])[0]) || {}).columns || []).forEach(function (c) { if (c && c.id) { columns[c.id] = c; } });
+      var items = {};
+      (data.items || []).forEach(function (item) {
+        if (!item || String((item.board || {}).id) !== String(boardId)) { return; }
+        items[String(item.id)] = { name: item.name || "", cells: cellsOf(item.column_values), columns: columns };
+      });
       var missing = cols.filter(function (c) { return !columns[c]; });
-      if (missing.length) { throw { code: "columns_changed", text: missing.join(", ") }; }
-      return { name: item.name || "", cells: cellsOf(item.column_values), columns: columns };
+      if (missing.length && Object.keys(items).length) { throw { code: "columns_changed", text: missing.join(", ") }; }
+      return items;
+    });
+  }
+  /* the row as monday holds it now, read as the person: on the board it should be on, every column there */
+  function readRow(boardId, itemId, cols) {
+    return readRows(boardId, [itemId], cols).then(function (items) {
+      var item = items[String(itemId)];
+      if (!item) { throw { code: "not_found", text: "" }; }
+      return item;
     });
   }
   /* a status column's labels by index, as monday holds them now ({"4": "תשלום הוחזר"}) */
@@ -1292,7 +1323,8 @@
   function startAction(rk, key) {
     var r = rowByKey(rk);
     var a = r && rowActions(r).filter(function (x) { return x.key === key; })[0];
-    if (!a || CAN.state === "no" || busyAct()) { return; }
+    if (!a || CAN.state === "no" || busy()) { return; }
+    if (BATCH && !busyBatch()) { BATCH = null; }          /* a batch's confirmation, not being written, gives way */
     var typed = {}, untouched = {}, bad = "";
     stepWrites(a).forEach(function (w) {
       if (!w.input) { return; }
@@ -1406,7 +1438,7 @@
     var list = rowActions(r);
     if (!list.length) { return ""; }
     var act = ACT && ACT.key === rowKey(r) ? ACT : null;
-    var off = CAN.state === "no" || busyAct() || (!!act && act.phase === "confirm");
+    var off = CAN.state === "no" || busy() || (!!act && act.phase === "confirm");
     return "<section class=\"fin-dx-block fin-acts\" aria-label=\"פעולות\"><h3 class=\"fin-dx-h\">פעולות <span class=\"fin-dx-name\">" +
       "נכתבות במאנדיי בשמך</span></h3>" + (CAN.state === "no" ? "<p class=\"fin-act-why\">" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "</p>" : "") +
       "<div class=\"fin-act-row\">" + list.map(function (a) { return actionControl(r, a, off); }).join("") + "</div>" +
@@ -1431,6 +1463,238 @@
         else { CAN = { state: "no", why: "no_scope" }; }
       } else { CAN = { state: "unknown", why: "" }; }
     }, function () { CAN = { state: "unknown", why: "" }; }).then(function () { if (VIEW) { redraw(); } });
+  }
+
+  /* ---------- 1.1 (D2, the desk move plan §1b): two actions on the row itself, for one row or several at once ----------
+     In 17-24.11 Chava made 36 edits on Student Charge, all in monday: 21 "שליחת קבלה" to "יצאה" (receipt_sent) and 9
+     "סטטוס תשלום" to "תשלום הוחזר" (refund_done), eight of these within two minutes on 22.11 - and pressed no action of
+     the desk, where they sat in a row's details behind a confirm step. So these two sit on the row itself: its button is
+     one press to them, and a box at the row's start picks it for several at once, one press for them all. Either way
+     ONE confirmation lists what will be written in each row, from the rows read live as the person (one request); a row
+     whose value changed in monday since the desk's reading is not written, and the confirmation says so. On "כתיבה" each
+     row is read again right before its write, written through mondayWrite (the allowlist as it is) and checked against
+     monday's answer - exactly as a single action (confirmAction) - one row after another; a row that changed since the
+     confirmation was shown is not written. The result is said per row: written, not written and why, failed and why.
+     One refresh of the reading after the batch, as after one action (until the stored reading lands, a forced reading
+     reads every board, about 9 seconds). The buttons sit only on rows whose state offers the action (the server's
+     per-row `actions`), and only where the person may write. */
+  var ROW_ACTIONS = { receipt_sent: 1, refund_done: 1 };
+  /* at most this many rows in one batch: its rows are read in one request, and monday's items(ids:) answers 25 at most */
+  var BATCH_MAX = 25;
+  var PICKED = {};     /* the rows picked for a batch, by "sc:123"; only the rows of the list on the screen count */
+  var BATCH = null;    /* the batch on the screen: { action, a, items: [{ key, row, name, verdict, why, live, plan, result }],
+                          phase: "reading" | "confirm" | "nothing" | "writing" | "done" | "failed", at, total, error } */
+  function busyBatch() { return !!BATCH && (BATCH.phase === "reading" || BATCH.phase === "writing"); }
+  function busy() { return busyAct() || busyBatch(); }
+  /* the row's one action of the two, as the server offers it: one step that sets one status, nothing typed */
+  function rowAction(r) {
+    return rowActions(r).filter(function (a) {
+      return ROW_ACTIONS[a.key] && a.steps.length === 1 && a.steps[0].length === 1 && a.steps[0][0].kind === "status" &&
+        !a.steps[0][0].input;
+    })[0] || null;
+  }
+  /* a row that carries the button and the box: it offers one of the two, the person may write, and it was not just
+     written from here (its new value waits for a reading) */
+  function pickable(r) { return CAN.state !== "no" && !r.written && !!rowAction(r); }
+  function pickedIn(rows) { return rows.filter(function (r) { return PICKED[rowKey(r)] && pickable(r); }); }
+  function startBatch(actionKey, keys) {
+    if (CAN.state === "no" || busy()) { return; }
+    var items = [], a = null;
+    keys.forEach(function (k) {
+      var r = rowByKey(k), x = r && pickable(r) ? rowAction(r) : null;
+      if (!x || x.key !== actionKey || items.length >= BATCH_MAX) { return; }
+      a = a || x;
+      items.push({ key: k, row: r, name: r.name });
+    });
+    if (!items.length) { return; }
+    /* one thing on the screen at a time: a single action's plan, not being written, gives way */
+    if (ACT && !busyAct()) { ACT = null; }
+    var batch = BATCH = { action: actionKey, a: a, items: items, phase: "reading", at: 0, total: 0, error: "" };
+    use("act", { action: actionKey, phase: "batch_start" });
+    redraw();
+    var w = a.steps[0][0];
+    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), [w.column]).then(function (got) {
+      if (BATCH === batch) { settleBatch(batch, got); }
+    }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
+  }
+  /* a status cell as the desk's reading shows it: its index, "" when empty */
+  function shownIndex(r, column) {
+    var f = ROW_FIELD[column];
+    return f && f.length === 2 ? String(r[f[1]] == null ? "" : r[f[1]]) : "";
+  }
+  function settleBatch(batch, got) {
+    var w = batch.a.steps[0][0], labelsMoved = false;
+    batch.items.forEach(function (it) {
+      var live = got[String(it.row.id)];
+      it.live = live || null;
+      if (!live) { it.verdict = "skip"; it.why = WRITE_ERRORS.not_found; return; }
+      it.name = live.name || it.name;
+      var cell = live.cells[w.column] || { text: "", index: null, label: "" }, held = cell.index == null ? "" : String(cell.index);
+      var plan = planAction(batch.a, live, {}, israelToday(), {});
+      if (plan.problems.length) { labelsMoved = true; return; }
+      if (held === String(w.index)) { it.verdict = "skip"; it.why = "כבר " + shownCell("status", cell) + " במאנדיי"; return; }
+      /* the desk showed another value: monday changed since the reading, and what is there now is not written over */
+      if (held !== shownIndex(it.row, w.column)) {
+        it.verdict = "skip";
+        it.why = "השתנתה במאנדיי מאז הקריאה, ועכשיו " + w.title + " " + shownCell("status", cell);
+        return;
+      }
+      it.verdict = "write";
+      it.plan = plan;
+    });
+    if (labelsMoved) { failBatch(batch, { code: "label_moved", text: w.title + " " + w.label }); return; }
+    var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
+    batch.phase = n ? "confirm" : "nothing";
+    use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
+    redraw();
+    /* the confirmation is read out where it appears: focus on the box, never on "כתיבה" (a key held down must not write) */
+    var box = root && root.querySelector ? root.querySelector(".fin-batch-plan") : null;
+    if (box && box.focus) { box.focus(); }
+  }
+  function failBatch(batch, e) {
+    if (e && e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; }
+    use("act", { action: batch.action, phase: "batch_failed", code: useWord(e && e.code) || "monday" });
+    batch.phase = "failed";
+    batch.error = errorWords(e);
+    batch.detail = (e && e.text) || "";
+    redraw();
+    flash(batch.error);
+  }
+  function confirmBatch() {
+    var batch = BATCH;
+    if (!batch || batch.phase !== "confirm" || busyAct()) { return; }
+    var w = batch.a.steps[0][0], boardId = boardIdOf(batch.items[0].row), stop = "", maybe = false;
+    var todo = batch.items.filter(function (it) { return it.verdict === "write"; });
+    batch.phase = "writing"; batch.at = 0; batch.total = todo.length;
+    /* the picks are the batch's now: whatever happens, the report says it row by row */
+    batch.items.forEach(function (it) { delete PICKED[it.key]; });
+    use("act", { action: batch.action, phase: "batch_confirm" });
+    redraw();
+    todo.reduce(function (p, it) {
+      return p.then(function () {
+        if (stop) { it.result = "failed"; it.why = stop + ". לא נשלח."; return null; }
+        batch.at += 1;
+        redraw();
+        /* the row again, as the person, right before its write: written only if it still holds what the confirmation
+           showed (and its label still stands for the index), as a single action's confirmAction */
+        return readRow(boardId, it.row.id, [w.column]).then(function (live) {
+          var now = planAction(batch.a, live, {}, israelToday(), {});
+          if (changedSince(it.live, live, [w.column]) || now.problems.length ||
+              JSON.stringify(now.steps) !== JSON.stringify(it.plan.steps)) {
+            it.result = "skipped";
+            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + w.title + " " +
+              shownCell("status", live.cells[w.column] || { index: null });
+            return null;
+          }
+          return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
+            noteWritten(it.key, cells, it.live);
+            it.result = "written";
+          });
+        }).catch(function (e) {
+          e = e || {};
+          if (e.cells && Object.keys(e.cells).length) { noteWritten(it.key, e.cells, it.live); }
+          /* something may be in monday that the screen does not show: a write monday kept otherwise, or one it did not
+             answer in time */
+          if ((e.landed && e.landed.length) || e.code === "unverified" || (e.code === "timeout" && e.landed)) { maybe = true; }
+          it.result = "failed";
+          it.why = errorWords(e);
+          /* what fails every row alike stops the rest: the app's permission, or monday asking to slow down */
+          if (e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; stop = WRITE_ERRORS.no_scope; }
+          if (e.code === "rate_limited") { stop = WRITE_ERRORS.rate_limited; }
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      var written = todo.filter(function (it) { return it.result === "written"; }).length;
+      batch.phase = "done";
+      use("act", { action: batch.action, phase: "batch_done",
+        code: written === todo.length ? "" : written ? "partial" : "none" });
+      redraw();
+      flash(written ? "נכתב במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
+        (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". המסך מתעדכן." : "לא נכתב כלום: הפירוט ברשימה.");
+      /* one refresh after the batch, as after one action (refreshAfterWrite asks again at most twice while a written row
+         is not shown yet) */
+      if (written || maybe) { refreshAfterWrite(0); }
+    });
+  }
+  function batchLine(it, words) {
+    return "<li><b>" + esc(it.name) + "</b> · " + esc(words) + "</li>";
+  }
+  function batchHtml(rows) {
+    var b = BATCH, close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
+    if (b) {
+      var w = b.a.steps[0][0];
+      if (b.phase === "reading") {
+        return "<div class=\"fin-batch\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
+          (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
+      }
+      if (b.phase === "failed") {
+        return "<div class=\"fin-batch\"><p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + " " + close + "</p>" +
+          (b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "") + "</div>";
+      }
+      var writes = b.items.filter(function (it) { return it.verdict === "write"; });
+      var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
+      var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
+      if (b.phase === "nothing") {
+        return "<div class=\"fin-batch fin-act-plan fin-batch-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+          "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
+          "<div class=\"fin-act-go\">" + close + "</div></div>";
+      }
+      if (b.phase === "confirm") {
+        return "<div class=\"fin-batch fin-act-plan fin-batch-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+          "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
+            : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
+            var l = it.plan.lines[0];
+            return batchLine(it, l.title + ": עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue("text", l.to));
+          }).join("") + "</ul>" + notWritten +
+          (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
+          "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
+          "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
+      }
+      if (b.phase === "writing") {
+        return "<div class=\"fin-batch\"><p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי" +
+          (b.total > 1 ? ", שורה " + NF.format(b.at) + " מתוך " + NF.format(b.total) : "") + "...</p></div>";
+      }
+      /* done: every row of the batch, by what happened to it */
+      var done = writes.filter(function (it) { return it.result === "written"; });
+      var failed = writes.filter(function (it) { return it.result === "failed"; });
+      var later = writes.filter(function (it) { return it.result === "skipped"; });
+      var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
+        ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן." : "לא נכתב כלום.";
+      return "<div class=\"fin-batch fin-batch-done\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
+        esc(head) + " " + close + "</p>" +
+        (done.length ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
+          done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
+        (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
+        (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
+          "</ul>" : "") + "</div>";
+    }
+    /* no batch: the rows picked in this list, and one button per action they offer */
+    var picked = pickedIn(rows);
+    if (!picked.length) { return ""; }
+    var by = {};
+    picked.forEach(function (r) { var a = rowAction(r); (by[a.key] = by[a.key] || { a: a, n: 0 }).n += 1; });
+    return "<div class=\"fin-batch fin-batchbar\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" +
+      (picked.length === 1 ? "נבחרה שורה אחת" : "נבחרו " + NF.format(picked.length) + " שורות") + "</span>" +
+      Object.keys(by).map(function (k) {
+        return "<button type=\"button\" class=\"fin-btn\" data-batch=\"" + esc(k) + "\"" + (busy() ? " disabled" : "") + ">" +
+          esc(by[k].a.button) + " <span class=\"fin-subtle\">(" + NF.format(by[k].n) + ")</span></button>";
+      }).join("") + "<button type=\"button\" class=\"fin-linkbtn\" data-pick-clear=\"1\">ניקוי הבחירה</button></div>";
+  }
+  /* the list's columns with the two at the edges: the box first, the row's button before "פתיחה במאנדיי" */
+  function withRowActions(cols) {
+    return ["pick"].concat(cols.filter(function (k) { return k !== "open"; }), ["rowact"], cols.indexOf("open") !== -1 ? ["open"] : []);
+  }
+  /* "בחירת כל השורות": the rows of the list that carry a box, in its order, up to one batch's worth (BATCH_MAX); when as
+     many as it can hold are picked, none */
+  function allPicked(rows) {
+    var can = rows.filter(pickable), n = pickedIn(rows).length;
+    return !!can.length && n >= Math.min(can.length, BATCH_MAX);
+  }
+  function pickAll(rows) {
+    var can = rows.filter(pickable);
+    if (allPicked(rows)) { can.forEach(function (r) { delete PICKED[rowKey(r)]; }); return; }
+    var n = pickedIn(rows).length;
+    can.forEach(function (r) { if (!PICKED[rowKey(r)] && n < BATCH_MAX) { PICKED[rowKey(r)] = true; n += 1; } });
   }
 
   /* ---------- how the desk is used (16.11) ----------
@@ -1783,7 +2047,7 @@
     return new Date(at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
   var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
-    "actInput", "act", "terms", "idCopy"];
+    "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose"];
   function focusKey() {
     var a = document.activeElement;
     if (!a || a === root || !root.contains(a) || !a.dataset) { return ""; }
@@ -1996,8 +2260,37 @@
   function onClick(ev) {
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
+      "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
+    /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "כתיבה", its close */
+    if (el.dataset.pick || el.dataset.pickAll || el.dataset.pickClear) {
+      if (busy()) { redraw(); return; }
+      /* another pick: a batch's confirmation or report on the screen gives way to the bar of what is picked now */
+      BATCH = null;
+      if (el.dataset.pickAll) { pickAll(scRows()); }
+      else if (el.dataset.pickClear) { PICKED = {}; }
+      else if (PICKED[el.dataset.pick]) { delete PICKED[el.dataset.pick]; }
+      else if (pickedIn(scRows()).length < BATCH_MAX) { PICKED[el.dataset.pick] = true; }
+      else { flash("אפשר לבחור עד " + BATCH_MAX + " שורות לכתיבה אחת."); }
+      redraw(); return;
+    }
+    if (el.dataset.rowAct) {
+      var at = el.dataset.rowAct.lastIndexOf(":");
+      startBatch(el.dataset.rowAct.slice(at + 1), [el.dataset.rowAct.slice(0, at)]); return;
+    }
+    if (el.dataset.batch) {
+      startBatch(el.dataset.batch, pickedIn(scRows()).map(rowKey)); return;
+    }
+    if (el.dataset.batchGo) { confirmBatch(); return; }
+    if (el.dataset.batchClose) {
+      if (!busyBatch()) {
+        /* a confirmation shown and not written: she chose not to */
+        if (BATCH && BATCH.phase === "confirm") { use("act", { action: BATCH.action, phase: "batch_cancel" }); }
+        BATCH = null; redraw();
+      }
+      return;
+    }
     /* the actions (round 3, slice 3): inside a row's details, so they never open or close the row */
     if (el.dataset.act) {
       var cut = el.dataset.act.lastIndexOf(":");
@@ -2042,7 +2335,7 @@
       return;
     }
     if (el.dataset.row) {
-      if (ev.target.closest("a,button")) { return; }
+      if (ev.target.closest("a,button,input,label")) { return; }
       var opened = state.tab === "b2b" ? state.b2.open : state.sc.open;
       opened[el.dataset.row] = !opened[el.dataset.row];
       var row = rowByKey((state.tab === "b2b" ? "b2" : "sc") + ":" + el.dataset.row);
@@ -2154,6 +2447,8 @@
       startAction(rk, key);
     },
     _confirm: confirmAction, _actState: function () { return ACT; }, _can: function () { return CAN; },
+    /* 1.1 (D2): a batch, and the rows picked for one */
+    _batchState: function () { return BATCH; }, _picked: function () { return PICKED; }, _batchMax: BATCH_MAX,
     _show: function (st) {
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];
