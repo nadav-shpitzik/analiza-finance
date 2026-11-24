@@ -18,7 +18,7 @@ from decimal import Decimal
 
 import pytest
 
-from tests.desk_page_view import answer, sc_row, view
+from tests.desk_page_view import answer, b2_row, sc_row, view
 
 NODE = shutil.which("node")
 
@@ -401,3 +401,70 @@ def test_ticking_a_rows_box_never_moves_the_rows_and_the_next_click_ticks_the_ne
     assert before["bar"] == "לא נבחרו שורות. אפשר לבחור כמה בתיבה שבתחילת השורה, ולסמן בכולן יחד."
     assert [steps[n]["bar"].split(" ", 2)[:2] for n in ("one", "two", "none")] == [
         ["נבחרה", "שורה"], ["נבחרו", "2"], ["לא", "נבחרו"]]
+
+
+def long_view(copies: int = 3) -> dict:
+    """The hand-made view with rows as long as real ones run (generic and invented, never a real name): long names, a
+    sales rep, a date that was not typed, every state of both tabs, the two actions on the row - so the lists' widest
+    cells are as wide as at Chava's desk."""
+    v = view()
+    states = ["receipt_pending", "refund_to_execute", "exception", "done", "refunded", "refund_asked", "no_money"]
+    rows = []
+    for i, st in enumerate(states * copies):
+        kw = dict(invoice="3000%02d" % i, rep="נציג/ה לדוגמה ארוך", channel="העברה בנקאית", date_from="created",
+                  money_in="12500", paid_typed="12500", lead_ids=[])
+        if st == "receipt_pending":
+            kw.update(receipt="טרם", receipt_idx="0", actions=["receipt_sent"])
+        if st == "refund_to_execute":
+            kw.update(credit_approved="3950", planned="2026-11-27", asked_date="2026-11-12", refund_last_day="2026-11-26",
+                      refund_method="העברה בנקאית", flags=["refund_to_execute"], actions=["refund_done"])
+        rows.append(sc_row(str(5000 + i), "תלמיד/ה לדוגמה בשם ארוך-ארוך %d" % i, st, **kw))
+    v["b2c"]["rows"] = rows
+    b2 = []
+    kinds = [("overdue", dict(due="2026-10-31", days_late=24, flags=["overdue"], actions=["b2b_paid"])),
+             ("to_bill", dict(billing="מאושר לחיוב", billing_idx="1", due="", flags=["terms_missing"])),
+             ("partial", dict(payment="שולם חלקית", payment_idx="0", paid_so_far="9000", balance="11650")),
+             ("open", dict(due="2026-12-31")), ("exception", dict(flags=["amount_missing"])), ("planned", dict(demand="2027-01-01")),
+             ("paid", {}), ("pending", dict(billing="")), ("cancelled", {})]
+    for i, (st, kw) in enumerate(kinds * 2):
+        acc = ("7701", "7702", "7703")[i % 3]
+        terms = {"7701": "שוטף+30", "7702": "שוטף+60", "7703": ""}[acc]
+        ctx = {"account": "חברה לדוגמה בעמ לפיתוח %d" % i, "deal": "עסקה לדוגמה מחזור סייבר %d" % i}
+        b2.append(b2_row(str(9000 + i), "פעימה %d · 2026-10 · A651" % i, st, acc, ctx["account"], terms, amount="125000",
+                         invoice="50%03d" % i, ctx=ctx, deal=ctx["deal"], **kw))
+    v["b2b"]["rows"] = b2
+    return with_counts(v)
+
+
+def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):
+    """QA 4 (24.11): at full width (a 1707-pixel window with monday's sidebar open) "לטיפול" and "הכל" ran about 40 pixels
+    past their frame: "פתיחה במאנדיי" showed only "פר" and was reached only by scrolling sideways. At monday's view widths of
+    1280 and 1400, with rows as long as real ones, every column of those lists - on both tabs - is inside its frame. And
+    the date that was not typed reads "(לפי יום היצירה)" in its cell (QA 10: finance.css draws the words around the term)."""
+    base, _log = serve(long_view())
+    got = qa_visit(r"""
+  const fit = (tile) => page.evaluate((tile) => {
+    const tw = document.querySelector(".fin-tw"), t = tw.querySelector("table"), open = t.querySelector("thead th.k-open");
+    const f = tw.getBoundingClientRect(), o = open.getBoundingClientRect();
+    return { tile: tile, frame: Math.round(f.width), table: Math.round(t.getBoundingClientRect().width),
+      open: [Math.round(o.left - f.left), Math.round(f.right - o.right)], sideways: tw.scrollWidth - tw.clientWidth };
+  }, tile);
+  out.steps[at] = [];
+  for (const [tab, tile] of [["b2c", '[data-bstate="tasks"]'], ["b2c", '[data-bstate=""]'], ["b2b", '[data-b2state="tasks"]'],
+                             ["b2b", '[data-b2state=""]']]) {
+    await page.click('[data-fintab="' + tab + '"]');
+    await page.click(tile);
+    await page.waitForSelector(".fin-tw thead th.k-open");
+    out.steps[at].push(await fit(tab + " " + tile));
+  }
+  await page.click('[data-fintab="b2c"]');
+  await page.click('[data-bstate=""]');
+  out.steps[at + " created"] = await page.$eval("tbody td.k-date > .fin-subtle", (el) => [getComputedStyle(el, "::before").content,
+    el.textContent, getComputedStyle(el, "::after").content, getComputedStyle(el).display]);
+""", base, fake_sdk({}), sizes=((1280, 748), (1400, 748)))
+    assert got["errors"] == []
+    for size in ("1280x748", "1400x748"):
+        for x in got["steps"][size]:
+            # the table no wider than its frame, nothing to scroll sideways, "פתיחה במאנדיי" wholly inside it
+            assert x["table"] <= x["frame"] and x["sideways"] <= 0 and min(x["open"]) >= 0, (size, x)
+        assert got["steps"][size + " created"] == ['"(לפי "', "יום היצירה", '")"', "block"]

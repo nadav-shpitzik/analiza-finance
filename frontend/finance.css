@@ -190,6 +190,13 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-t td.k-charge { min-width: 180px; }
 /* what to look at: its chips wrap inside the cell, never past the frame */
 #screen-finance table.fin-t td.k-notes { min-width: 170px; }
+/* QA 4 (24.11): at full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut
+   to "פר" and reached only by scrolling sideways: their widest cells could not wrap. A state's name and the totals' label
+   may wrap now, in their cell, rather than push the last column out (the date's "(לפי יום היצירה)" sits under the date);
+   a state's dot stays on its first line */
+#screen-finance table.fin-t td .fin-statechip { white-space: normal; align-items: flex-start; }
+#screen-finance table.fin-t td .fin-statechip::before { margin-top: calc(.725em - 4px); }
+#screen-finance table.fin-t tfoot td:not(.n) { white-space: normal; }
 #screen-finance table.fin-t td .fin-chip { white-space: normal; border-radius: 10px; }
 #screen-finance table.fin-t .k-open { width: 44px; text-align: center; }
 /* a row's name opens its monday card: a link by its underline, in the ink of the row until it is pointed at */

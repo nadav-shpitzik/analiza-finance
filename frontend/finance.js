@@ -66,6 +66,10 @@
  *       situation write it (CREATED_BY); an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
  *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
  *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
+ * QA 4 At full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut to "פר":
+ *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
+ *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
+ *      with rows as long as real ones (a list's narrowest width went from about 1210 to about 1070 pixels).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
