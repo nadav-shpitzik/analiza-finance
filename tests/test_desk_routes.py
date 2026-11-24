@@ -103,16 +103,21 @@ def test_a_view_that_cannot_be_built_is_said_never_a_500(desk, monkeypatch, capl
     assert t.status_code == 503 and t.json() == {"error": "finance_unavailable", "reason": "crashed"}
 
 
-def test_an_old_reading_is_read_again_inside_the_request_and_nothing_is_ever_refreshing(desk):  # noqa: F811
-    """analiza-metrics answered an expired reading at once, `refreshing`, and the page asked again (`?fresh=1`; its
-    SharedReading's stale path, not ported). Here a reading past HELD_TTL_S is read again inside the request that finds
-    it, so `refreshing` is always false and the answer is the newer reading."""
+def test_an_old_reading_is_answered_at_once_refreshing_and_the_pages_own_request_reads_the_next(desk):  # noqa: F811
+    """D2 (24.11) ports analiza-metrics' stale path (SharedReading part 6, `test_an_expired_desk_is_answered_at_once_and_
+    the_pages_own_request_reads_the_next`), which D2's first routes had left out - this test said so then, and pinned the
+    reading inside the request instead: a reading past HELD_TTL_S is answered at once, `refreshing`, nothing is read after
+    the answer, and the page's own request (`?fresh=1`) reads the next - a refresh, one request."""
     first = desk.get(session_token(1)).json()
     st = main.app.state.desk
     st.reading.reading_at -= rd.HELD_TTL_S + 1
     second = desk.get(session_token(1)).json()
-    assert readings(desk.w) == 2 and second["refreshing"] is False and first["refreshing"] is False
-    assert second["age_seconds"] == 0 and second["stale"] is False
+    assert first["refreshing"] is False and second["refreshing"] is True and readings(desk.w) == 1
+    assert second["taken_at"] == first["taken_at"] and second["stale"] is False and second["view"] is not None
+    third = desk.get(session_token(1), path="/api/desk?fresh=1").json()
+    assert third["refreshing"] is False and readings(desk.w) == 2 and third["taken_at"] != first["taken_at"]
+    assert third["age_seconds"] == 0 and st.reading.reading["kind"] == "delta"
+    assert desk.get(session_token(1)).json()["refreshing"] is False      # and the next open, inside the span, is not
 
 
 def test_a_reading_shown_while_every_reading_after_it_fails_is_stale_after_ten_minutes(desk):  # noqa: F811
@@ -120,7 +125,8 @@ def test_a_reading_shown_while_every_reading_after_it_fails_is_stale_after_ten_m
     st = main.app.state.desk
     st.reading.reading_at -= dr.STALE_S - 100                     # old, and the next try fails: not stale yet
     desk.w.fail = [httpx.Response(401, text="no")]
-    body = desk.get(session_token(1)).json()
+    # since D2 a plain open answers an old reading at once: the page's own request (`?fresh=1`) is the one that reads
+    body = desk.get(session_token(1), path="/api/desk?fresh=1").json()
     assert body["stale"] is False and body["last_attempt"]["error"] == "auth" and body["taken_at"] == first["taken_at"]
     st.reading.reading_at -= 200                                   # past ten minutes, and the last attempt failed
     body = desk.get(session_token(1)).json()                       # (within the gap after it: nothing is read)

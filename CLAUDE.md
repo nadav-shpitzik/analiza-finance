@@ -90,12 +90,20 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   through finance.js's one door (`mondayCall`; its one mutation in `mondayWrite`, behind `WRITABLE`). What the server never
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
   page's memory and sent nowhere. Tests: `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
-- **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/store.py`; `migrations/005`
+- **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/usage_store.py`; `migrations/005`
   is analiza-metrics' 004 statement for statement, so D5 imports that history row for row): closed words and counts, checked
   by `app/desk/usage.py` (analiza-metrics' vocabulary, ported faithfully), never a name, an amount, a search's text or an ID
   number. The sessionToken only, under the token's user id, with a limit of its own apart from the desk's budget. The table
   is never made at runtime: a missing one is `store_schema`, 503 `usage_unavailable`, said in `/health` `desk.usage`. A kind
   or a detail changes in the page and the vocabulary together (`tests/test_desk_usage.py`); the queries: `docs/usage-data.md`.
+- **The desk's stored reading and its refresh (D2, 24.11; analiza-metrics round 3 slice 2 at da671b2):** `HeldReading`
+  (`app/desk/reading.py`) keeps the last reading in `desk_readings` too (migrations/006, one row, `app/desk/store.py`: never
+  a `NEVER_READ` column, and the store refuses a text that names one). A plain `GET /api/desk` past the span answers the
+  held reading, or on a cold instance the stored one, at once with `refreshing: true`; `?fresh=1` and `POST /api/desk/refresh`
+  read a refresh (`read_delta`: each board's items updated since the held reading, read again by id; the deciding leads every
+  time), whole instead with nothing held, after `FULL_AFTER` (36 h), on a count mismatch or a failed refresh (at most once
+  per `FALLBACK_GAP`, never on `NO_FALLBACK` or a rate limit). A request, never a thread. `/health`: `desk.last_reading.kind`,
+  `desk.refresh` (codes), with a database `desk.stored` (its age); never a count of rows. Tests: `tests/test_desk_mirror.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

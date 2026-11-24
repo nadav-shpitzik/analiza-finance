@@ -110,7 +110,8 @@ def reading_of(s: dict, n: int = 1) -> dict:
 
 
 class Served:
-    """How many readings the desk made (`calls`), each answered with the next snapshot given, the last one again after."""
+    """How many readings the desk made (`calls`), each answered with the next snapshot given, the last one again after;
+    a refresh (D2) too, as a refresh of the reading it was laid over (analiza-metrics FakeFinance.read_delta)."""
 
     def __init__(self, snapshots):
         self.snapshots, self.calls = list(snapshots), 0
@@ -119,10 +120,15 @@ class Served:
         self.calls += 1
         return reading_of(self.snapshots[min(self.calls, len(self.snapshots)) - 1], self.calls)
 
+    def delta(self, reader, base) -> dict:
+        return dict(self(reader), kind="delta", full_read_at=base["full_read_at"])
+
 
 def served(monkeypatch, *snapshots) -> Served:
     """The desk's reading answers these snapshots in turn instead of reading monday (the members still come from the
-    test's monday): app/desk/reading.py's HeldReading calls `read_desk`, which this replaces."""
+    test's monday): app/desk/reading.py's HeldReading calls `read_desk` and, since D2, `read_delta`, which this replaces.
+    (A snapshot here carries no `asked`, so it is never laid under a refresh: each reading after it is whole.)"""
     s = Served(snapshots)
     monkeypatch.setattr(rd, "read_desk", s)
+    monkeypatch.setattr(rd, "read_delta", s.delta)
     return s

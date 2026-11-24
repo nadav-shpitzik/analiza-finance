@@ -21,7 +21,8 @@ from fastapi.testclient import TestClient
 
 from app import main, migrate
 from app.desk import routes as dr
-from app.desk import store, usage
+from app.desk import usage
+from app.desk import usage_store as store
 from tests.conftest import TEST_DATABASE_URL, drop_all, needs_pg
 from tests.test_desk import SECRET, desk, session_token  # noqa: F401 - `desk` is the fixture
 
@@ -517,9 +518,9 @@ def test_the_store_and_the_migration_name_the_same_usage_columns_and_the_table_i
         "  source_id bigint\n);") + "CREATE UNIQUE INDEX IF NOT EXISTS desk_events_source ON desk_events (source, source_id);\n"
     assert statements == expected
     body = sql[sql.index("CREATE TABLE IF NOT EXISTS desk_events"):]
-    for col in store.DESK_TABLES["desk_events"]:
+    for col in store.USAGE_TABLES["desk_events"]:
         assert "\n  %s " % col in body, col
-    assert migrate.checked_tables()["desk_events"] == store.DESK_TABLES["desk_events"]
+    assert migrate.checked_tables()["desk_events"] == store.USAGE_TABLES["desk_events"]
     assert "DROP" not in statements.upper() and "ALTER" not in statements.upper()
 
 

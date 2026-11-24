@@ -11,14 +11,17 @@
 - GET /api/desk: the gate (app/desk/gate.py), then who the reader is and the desk's reading (app/desk/reading.py) as
   counts, for the tabs the reader may see (D1), and the desk itself (D2): `view`, those tabs built from that reading
   (app/desk/view.py), a tab whose board the reader is not on removed, not hidden. It carries names and money, so only a
-  tab's own members get it. Always 200 after the gate: no reading is `view: null`, and `last_attempt` says why.
+  tab's own members get it. Always 200 after the gate: no reading is `view: null`, and `last_attempt` says why. Past its
+  span the reading held - or, on an instance that holds none, the stored one (app/desk/store.py) - is answered at once,
+  `refreshing: true`, and the page's own next request, `?fresh=1`, reads the next: a refresh that reads only what changed
+  (analiza-metrics `finance_view`, round 3 slice 2).
 - POST /api/desk/refresh: the same answer from a reading that started after the press, at most one forced reading per
   REFRESH_GAP_S per instance (429 `rate_limited`).
 - GET /api/desk/totals: a list's totals exactly as the page filters it, from the reading the page shows; never a read.
 - POST /api/desk/export-link, GET /api/desk/export.xlsx: a list as an Excel file (app/desk/export.py) behind a link signed
   with this service's own key, EXPORT_LINK_S long.
 - POST /api/usage: what the reader did on the page, as closed words and counts (app/desk/usage.py), kept in `desk_events`
-  (app/desk/store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
+  (app/desk/usage_store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
 
 D2's routes are analiza-metrics app/finance_api.py at `da671b2` (`finance_view`, `finance_refresh`, `finance_totals`,
 `finance_export_link`, `finance_export_file`, `usage`) on this service's gate and reading, with what changed said at each.
@@ -56,7 +59,7 @@ from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
-from .store import UsageStoreError, append_events
+from .usage_store import UsageStoreError, append_events
 from .usage import Refused, UsageStats, clean_batch
 from .view import (B2B_STATES, B2C_STATES, DESK_TZ, build_view, filter_b2b, filter_b2c, filter_customers, json_safe,
                    list_totals, query_exportable, today_in, visible_part)
@@ -116,9 +119,24 @@ def _reader(state: Any, token: str) -> MondayReader:
     return MondayReader(token)
 
 
+def _store(state: Any, cfg: config.Config) -> Any:
+    """Where the desk keeps its last reading (D2): the service's own Postgres, or None without DATABASE_URL (the desk then
+    holds its reading in memory only, as D1 did). Tests put a store of their own on `state.desk_store`."""
+    given = getattr(state, "desk_store", None)
+    if given is not None:
+        return given
+    if cfg.database_url:
+        from .store import DeskStore
+
+        return DeskStore(cfg.database_url)
+    return None
+
+
 def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
-    """One per instance, made again when the token or the test transport changes (the config is read per request)."""
-    key = (hashlib.sha256(cfg.monday_token.encode("utf-8")).hexdigest(), id(getattr(state, "monday_transport", None)))
+    """One per instance, made again when the token, the database or the test transport changes (the config is read per
+    request)."""
+    key = (hashlib.sha256(cfg.monday_token.encode("utf-8")).hexdigest(), id(getattr(state, "monday_transport", None)),
+           hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), id(getattr(state, "desk_store", None)))
     with _state_lock:
         current = getattr(state, "desk", None)
         if current is not None and current.key == key:
@@ -135,7 +153,7 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
         # D2: `refresh`, the press's own limit (one forced reading per REFRESH_GAP_S on this instance, whoever presses);
         # `view`, the view of the reading held, built once for it: (that reading, its view or None, None or "crashed")
         made = SimpleNamespace(key=key, members=Members(subscribers),
-                               reading=HeldReading(lambda: _reader(state, cfg.monday_token)),
+                               reading=HeldReading(lambda: _reader(state, cfg.monday_token), store=_store(state, cfg)),
                                limiter=RateLimiter(DESK_PER_USER_HOUR, DESK_PER_DAY),
                                refresh=RateLimiter(1, 1, user_window=REFRESH_GAP_S, global_window=REFRESH_GAP_S),
                                view=None, view_lock=threading.Lock())
@@ -155,18 +173,43 @@ def usage_state(state: Any) -> SimpleNamespace:
         return current
 
 
-def health_block(state: Any, cfg: config.Config) -> dict:
-    """The desk in /health: whether its two secrets are set, this instance's last reading (no count of rows), whether
-    each board's members were read, and the usage batches: written, events refused, writes failed (`usage`). Never a
-    secret, a user, a row or an event."""
+def stored_part(glance: Any, now: Optional[float] = None) -> Any:
+    """The stored reading for /health (app/desk/store.py `glance`, read with the store's other glances at most every
+    STORE_TTL_S): when it was taken and its age now, which kind it is, whether it was complete. None when the table holds
+    none (or was not read); the class of an error as it came."""
+    if not isinstance(glance, dict) or "error" in glance:
+        return glance
+    out = dict(glance)
+    try:
+        taken = datetime.fromisoformat(glance["read_at"]).timestamp()
+        out["age_s"] = max(0, int((time.time() if now is None else now) - taken))
+    except (KeyError, TypeError, ValueError):
+        out["age_s"] = None
+    return out
+
+
+def health_block(state: Any, cfg: config.Config, stored: Any = None, now: Optional[float] = None) -> dict:
+    """The desk in /health: whether its two secrets are set, this instance's last reading (its kind, time and cost, no
+    count of rows), and whether each board's members were read. Since D2, with a database the stored reading's times and
+    age (`stored`), once this instance has served the desk how it read and kept its reading (`refresh`: codes, times,
+    seconds and requests), and the usage batches: written, events refused, writes failed (`usage`). Never a secret, a
+    user, a row, a count of rows or an event."""
     from .reading import health_part
 
     current = getattr(state, "desk", None)
-    return {"client_secret_set": bool(cfg.monday_client_secret), "monday_token_set": bool(cfg.monday_token),
-            "page": "/desk/",
-            "last_reading": None if current is None else health_part(current.reading.last),
-            "members": {} if current is None else current.members.state(),
-            "usage": usage_state(state).stats.health()}
+    out = {"client_secret_set": bool(cfg.monday_client_secret), "monday_token_set": bool(cfg.monday_token),
+           "page": "/desk/",
+           "last_reading": None if current is None else health_part(current.reading.last),
+           "members": {} if current is None else current.members.state(),
+           "usage": usage_state(state).stats.health()}
+    if cfg.database_url:
+        out["stored"] = stored_part(stored, now)
+    if current is not None:
+        try:
+            out["refresh"] = current.reading.health()
+        except Exception as exc:  # noqa: BLE001 - /health never raises
+            out["refresh"] = {"error": type(exc).__name__}
+    return out
 
 
 # ---- the page and its assets ----------------------------------------------------------------------------------------
@@ -342,17 +385,18 @@ def _unavailable(st: Any, reason: Optional[str] = None) -> JSONResponse:
     return err(503, "finance_unavailable", reason=reason or last.get("error") or "not_read")
 
 
-def _answer(st: Any, got: Visitor, endpoint: str, force: bool) -> JSONResponse:
+def _answer(st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = False) -> JSONResponse:
     """The desk for this reader. D1's counts (`user`, `tabs`, `reading`, `last_attempt`) and since D2 the desk itself:
     `view`, the tabs the reader may see (`visible_part`), its money as strings; `view_error`, "crashed" when the reading
     could not be built into one; `taken_at`, the reading's time, which the totals and the files are asked by; its
-    `age_seconds`; `refreshing`, always false (a reading is made inside the request, never after it); and `stale`, when
-    the reading shown is older than STALE_S because every reading since has failed. No reading: `view` is null and
-    `last_attempt` says why."""
+    `age_seconds`; `refreshing`, when the reading is the held or the stored one answered at once past its span (`stale_ok`,
+    a plain open): the page asks for the next itself, `?fresh=1` - a request, never a thread after the answer
+    (analiza-metrics ADR-0087); and `stale`, when the reading shown is older than STALE_S because every reading since has
+    failed. No reading: `view` is null and `last_attempt` says why."""
     # True, False, or None when the board's members could not be read: only True opens the tab
     tabs = {"b2c": got.b2c, "b2b": got.b2b}
     keys = [key for tab, seen in tabs.items() if seen is True for key in TAB_BOARDS[tab]]
-    reading, last = st.reading.get(force=force)
+    reading, last, refreshing = st.reading.answer(force=force, stale_ok=stale_ok)
     age = st.reading.age_s() if reading is not None else None
     shown, view, view_error = None, None, None
     if reading is not None:
@@ -377,21 +421,23 @@ def _answer(st: Any, got: Visitor, endpoint: str, force: bool) -> JSONResponse:
         "view_error": view_error,
         "taken_at": None if reading is None else reading.get("read_at"),
         "age_seconds": age,
-        "refreshing": False,
+        "refreshing": bool(refreshing and reading is not None),
         "stale": bool(reading is not None and failing and age is not None and age > STALE_S),
     }))
 
 
 @router.get("/api/desk")
-def desk_api(request: Request) -> JSONResponse:
+def desk_api(request: Request, fresh: int = 0) -> JSONResponse:
     """The desk (D2) over the skeleton's answer (D1): who the reader is, which tabs they may see, the desk's reading as
-    counts for those tabs' boards, and the view of those tabs. sync def on purpose: a reading is seconds of blocking I/O,
-    run in the threadpool."""
+    counts for those tabs' boards, and the view of those tabs. A first open may be answered with the last reading at once
+    (`refreshing`); the page's own second request, `?fresh=1`, then waits for a reading inside the span - read in THAT
+    request (analiza-metrics `finance_view`). sync def on purpose: a reading is seconds of blocking I/O, run in the
+    threadpool."""
     got = _gated(request, "desk")
     if isinstance(got, JSONResponse):
         return got
     _cfg, st, visitor = got
-    return _answer(st, visitor, "desk", force=False)
+    return _answer(st, visitor, "desk", force=False, stale_ok=not fresh)
 
 
 @router.post("/api/desk/refresh")
@@ -522,8 +568,9 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
                      taken: str = "", customer: str = "", u: int = 0, exp: str = "", sig: str = "") -> Response:
     """The file behind a link from /api/desk/export-link. No session header (a new tab cannot send one): the signature
     and the two minutes stand in for it, and the board's members are asked again, through the same cache as the gate.
-    The reading is the one this instance holds, as the page got it - read now only when it holds none (an instance the
-    link landed on cold) - and the file says when the page showed another (analiza-metrics `finance_export_file`)."""
+    The reading is the one this instance holds, as the page got it - on an instance the link landed on cold, the stored
+    one, and read now only when there is neither - and the file says when the page showed another (analiza-metrics
+    `finance_export_file`, `stale_ok=True`)."""
     cfg = config.load()
     missing = [name for name, value in (("MONDAY_CLIENT_SECRET", cfg.monday_client_secret),
                                         ("MONDAY_TOKEN", cfg.monday_token)) if not value]
@@ -543,9 +590,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     if not member:
         _audit_link(u, "not_a_member")
         return err(403, "not_a_board_member")
-    reading = st.reading.reading
-    if reading is None:
-        reading, _last = st.reading.get()
+    reading, _last, _refreshing = st.reading.answer(stale_ok=True)
     if reading is None:
         return _unavailable(st)
     whole, error = _view_of(st, reading)
