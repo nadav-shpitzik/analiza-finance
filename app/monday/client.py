@@ -187,7 +187,7 @@ def _text(value) -> str:
     every save while it stays (review 22.11); a lone surrogate cannot even be encoded, so one in a name failed every save
     of the desk's stored reading and made every answer of the desk a 500 (review of a32395f) - it is the replacement
     character instead. Neither ever means anything in monday's text."""
-    return _SURROGATE.sub("�", str(value or "").replace("\x00", ""))
+    return _SURROGATE.sub("\ufffd", str(value or "").replace("\x00", ""))
 
 
 def flatten(item: dict, keep: Optional[Iterable[str]] = None) -> dict:
@@ -239,7 +239,7 @@ class MondayReader:
         self.client.close()
 
     def _redact(self, text: str) -> str:
-        text = _SURROGATE.sub("�", str(text or ""))  # monday's message reaches an answer too (`last_attempt.detail`)
+        text = _SURROGATE.sub("\ufffd", str(text or ""))  # monday's message reaches an answer too (`last_attempt.detail`)
         if self._token:
             text = text.replace(self._token, "[token]")
         return text[:DETAIL_MAX]
