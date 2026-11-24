@@ -45,9 +45,9 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, P_PART, P_REFUNDED,
-                   PAY, PLANNED_LABEL, REFUND_DUE_DAYS, REFUNDED_WORD, aging_columns, aging_file_header, aging_value, day,
-                   is_refund_row, row_reasons)
+from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, NO_TERMS, P_PART,
+                   P_REFUNDED, PAY, PLANNED_LABEL, REFUND_DUE_DAYS, REFUNDED_WORD, UNNAMED_LABEL, aging_columns,
+                   aging_file_header, aging_value, day, is_refund_row, row_reasons)
 
 MONEY_FMT = "#,##0.00"
 DATE_FMT = "dd/mm/yyyy"
@@ -71,6 +71,18 @@ def _counted_paid(r: dict) -> Decimal | None:
     """"סכום ששולם" where it counts: a status that brought money in, with the amount typed. Elsewhere blank, so no
     total counts it - as a cancelled company charge is (the page shows such an amount struck through)."""
     return r["money_in"] if r["status_idx"] in MONEY_IN and r["paid_typed"] is not None else None
+
+
+def _label(field: str) -> Callable[[dict], str]:
+    """A status cell as the page writes it: its label, or "תווית בלי שם" where monday holds a value whose label has no name
+    (the row's `unnamed`). QA 24.11, 2829373007: the page said so in "ערוץ תשלום", and the file's cell was empty."""
+    return lambda r: UNNAMED_LABEL if field in (r.get("unnamed") or ()) else r[field]
+
+
+def _terms(r: dict) -> str:
+    """The company's "תנאי תשלום", or "אין תנאי תשלום" where its cell is empty, as the page writes beside it (QA 24.11: the
+    ledger file of a company without terms had the column empty on every row). A charge with no company has none."""
+    return r["account_terms"] or (NO_TERMS if r["account_no_terms"] else "")
 
 
 def _reasons(tab: str) -> Callable[[dict], str]:
@@ -98,22 +110,22 @@ B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # Student Charge's "נציג מכירות", next to the name as on her board (17.11): the lead's current Owner
     ("נציג מכירות", lambda r: r.get("rep", ""), "text", 16),
     ("סכום ששולם", _counted_paid, "money", 14),
-    ("ערוץ תשלום", lambda r: r["channel"], "text", 13),
-    ("סוג חיוב", lambda r: r["type"], "text", 13),
+    ("ערוץ תשלום", _label("channel"), "text", 13),
+    ("סוג חיוב", _label("type"), "text", 13),
     ("מחזור", lambda r: r["cohort_code"], "text", 9),
     ("שם המחזור", lambda r: r["cohort_title"], "text", 30),
     # the cohort's "Registration Flow", by the name the same field carries on the Deals board (17.11, view.FLOW_LABEL)
     (FLOW_LABEL, lambda r: r["flow"], "text", 18),
     ("שיבוץ", lambda r: B2C_STATES[r["state"]]["label"], "text", 28),
     ("מה לבדוק", _reasons("b2c"), "text", 40),
-    ("סטטוס תשלום", lambda r: r["status"], "text", 13),
-    ("שליחת קבלה", lambda r: r["receipt"], "text", 11),
+    ("סטטוס תשלום", _label("status"), "text", 13),
+    ("שליחת קבלה", _label("receipt"), "text", 11),
     # monday's "סכום החזר" as typed, 0 too (QA 24.11: the file wrote the counted refund under monday's name); what the
     # desk counts of it is the next column, under the page's word for it, and the total is that one's
     ("סכום החזר", lambda r: r["refund_typed"], "amount", 13),
     (REFUNDED_WORD, lambda r: _money_or_blank(r["refunded"]), "money", 13),
     ("תאריך החזר", lambda r: day(r["refund_date"]), "date", 12),
-    ("אופן החזר", lambda r: r["refund_method"], "text", 12),
+    ("אופן החזר", _label("refund_method"), "text", 12),
     ("אסמכתת זיכוי", lambda r: r["credit_ref"], "text", 14),
     ("סכום לזיכוי", lambda r: _money_or_blank(r["credit_approved"]), "money", 13),
     ("תאריך בקשת ביטול", _refund_day("asked_date"), "date", 12),
@@ -135,11 +147,11 @@ B2B_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     ("סכום לחיוב (ללא מע\"מ)", lambda r: r["amount"] if r["amount_known"] and r["state"] != "cancelled" else None, "money", 15),
     ("שיבוץ", lambda r: B2B_STATES[r["state"]]["label"], "text", 22),
     ("מה לבדוק", _reasons("b2b"), "text", 40),
-    ("מצב חיוב", lambda r: r["billing"], "text", 18),
-    ("סטטוס תשלום", lambda r: r["payment"], "text", 13),
+    ("מצב חיוב", _label("billing"), "text", 18),
+    ("סטטוס תשלום", _label("payment"), "text", 13),
     ("מועד פירעון", lambda r: day(r["due"]), "date", 12),
     # the account's own "תנאי תשלום", as monday holds it ("אחר" too); the due date counts only the four it knows
-    ("תנאי תשלום", lambda r: r["account_terms"], "text", 11),
+    ("תנאי תשלום", _terms, "text", 11),
     ("ימים בפיגור", lambda r: r["days_late"], "int", 10),
     ("אסמכתת חשבונית", lambda r: r["invoice"], "text", 15),
     ("סכום ששולם (כולל מע\"מ)", lambda r: r["paid_so_far"], "money", 16),
@@ -156,7 +168,7 @@ def customer_columns(customers: list[dict]) -> list[tuple[str, Callable[[dict], 
 
     def value(key: str, kind: str) -> Callable[[dict], Any]:
         if key == "terms":   # as the page marks it: a company whose "תנאי תשלום" is empty
-            return lambda c: c["terms"] or ("אין תנאי תשלום" if c.get("terms_missing") else "")
+            return lambda c: c["terms"] or (NO_TERMS if c.get("terms_missing") else "")
         if kind == "money":  # no money is a blank cell, as the page's "-", so no total counts a zero
             return lambda c: aging_value(c, key) or None
         return lambda c: aging_value(c, key)   # a name, and a count the page shows as 0 too

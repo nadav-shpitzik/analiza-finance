@@ -488,3 +488,31 @@ def test_the_students_file_totals_what_the_page_counts_and_never_mondays_refund_
     info = {r[0].value: r[1].value for r in wb["פרטים"].iter_rows()}
     page = fd.list_totals("b2c", fd.filter_b2c(fd.build_view(s, TODAY)["b2c"], "", "", ""))
     assert (info['סה"כ סכום ששולם'], info['סה"כ ' + fd.REFUNDED_WORD]) == (page["money_in"], page["refunded"]) == (16000, 8000)
+
+
+def test_the_file_writes_what_the_page_writes_for_a_nameless_label_and_a_company_without_terms(desk, monkeypatch):  # noqa: F811
+    """QA 24.11: 2829373007's "ערוץ תשלום" holds a value whose label has no name - the page says "תווית בלי שם", the
+    file's cell was empty; and the ledger file of a company without terms ("משרד העבודה") had "תנאי תשלום" empty on every
+    row, where the page says "אין תנאי תשלום". The file writes what the page writes, in every status column of both."""
+    nameless = sc(1, st="5", paid="0", refund="0", lead=["L1"])
+    for key in ("channel", "ctype", "refund_method"):
+        nameless[fd.SC[key]], nameless[fd.SC[key] + "#"] = "", "17"
+    nameless[fd.SC["status"]] = nameless[fd.SC["receipt"]] = ""    # "הוחזר חלקי" and "יצאה" by their index, no name
+    charge = b2(3, payment="2", due="2026-09-01")
+    charge[fd.B2["billing"]] = charge[fd.B2["payment"]] = ""        # "חויב" and "לא שולם" by their index, no name
+    served(monkeypatch, snap([nameless, sc(2, channel="אשראי", lead=["L1"])],
+                             [charge, b2(4, payment="2", due="2026-09-01", account="A2"),
+                              b2(5, payment="2", due="2026-09-01", account="")],
+                             accounts=[acct("A1", ""), acct("A2", "שוטף+30")], leads=[lead("L1")]))
+    word = fd.UNNAMED_LABEL
+    _h, rows, _i = sheet(desk, {"tab": "b2c", "state": ""}, "תקבולים")
+    assert [rows["1"][h] for h in ("ערוץ תשלום", "סוג חיוב", "אופן החזר", "סטטוס תשלום", "שליחת קבלה")] == [word] * 5
+    assert rows["1"]["סכום החזר"] == 0                              # and its 0 refund is 0, as the page says (item 1)
+    assert (rows["2"]["ערוץ תשלום"], rows["2"]["סטטוס תשלום"], rows["2"]["אופן החזר"]) == ("אשראי", "שולם", None)
+    _h, charges, _i = sheet(desk, {"tab": "b2b", "state": ""}, "חיובים")
+    assert (charges["3"]["מצב חיוב"], charges["3"]["סטטוס תשלום"]) == (word, word)
+    assert (charges["4"]["מצב חיוב"], charges["4"]["סטטוס תשלום"]) == ("חויב", "לא שולם")
+    # the company's terms, or "אין תנאי תשלום" where it has none; a charge with no company has no terms to lack
+    assert [charges[i]["תנאי תשלום"] for i in ("3", "4", "5")] == [fd.NO_TERMS, "שוטף+30", None]
+    _h, ledger, _i = sheet(desk, {"tab": "b2b", "state": "", "customer": "A1"}, "חיובים")
+    assert [r["תנאי תשלום"] for r in ledger.values()] == [fd.NO_TERMS]

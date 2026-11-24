@@ -278,7 +278,11 @@ _NO_MONEY_LABELS = _or_empty([PAY[P_UNPAID], PAY[P_PROBLEM], PAY[P_SCHOLARSHIP]]
 # much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
 RECEIVED_WORD, REFUNDED_WORD = "התקבלו", "הוחזרו"
 _RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפרטים: היום, או כמה ימים נותרו עד אליו, או כמה ימים עברו מאז.")
-_UNNAMED_WORD = ("תווית בלי שם", "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
+# what the page writes in a status cell that holds a value with no label (`unnamed_labels`), and what the Excel files write
+# there too (QA 24.11: the file's cell was empty); and beside a company whose "תנאי תשלום" is empty, on the page and in
+# the files alike
+UNNAMED_LABEL, NO_TERMS = "תווית בלי שם", "אין תנאי תשלום"
+_UNNAMED_WORD = (UNNAMED_LABEL, "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
                                  "נראה כמו תא ריק. פותחים את השורה במאנדיי ובוחרים תווית.")
 
 # The legend ("מקרא"), per tab, in four parts (QA 11.11, 2.2: words on the screen were missing from it). The page shows it
@@ -334,7 +338,7 @@ LEGEND = {
         ("לטיפול", TASKS_ABOUT["b2b"]),
         ("מועד פירעון", "לפי תנאי התשלום של החברה: שוטף הוא סוף החודש של מועד דרישת התשלום, ושוטף+30, שוטף+45 "
                         "ושוטף+60 הם סוף החודש ועוד 30, 45 או 60 יום. בלי תנאי תשלום, או \"אחר\": מועד דרישת "
-                        "התשלום עצמו. ליד מועד הפירעון כתובים תנאי התשלום, או \"אין תנאי תשלום\"."),
+                        "התשלום עצמו. ליד מועד הפירעון כתובים תנאי התשלום, או %s." % _q(NO_TERMS)),
         # two entries, not one: "מתוכה בפיגור" is the money of "בפיגור" only, while days late are counted on a partly paid
         # charge too (the hostile review of the QA round: one sentence said both of both)
         ("מתוכה בפיגור", "מתוך היתרה הפתוחה: החיובים ב%s, שמועד הפירעון שלהם עבר. ליד הסכום: כמה ממנו בחברות בלי "
@@ -431,7 +435,7 @@ LEGEND_FLAGS = {
         ("billed_no_invoice", "חסרה אסמכתת חשבונית", "מצב חיוב %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ." % _BILLED),
         ("paid_not_billed", "\"שולם\" לפני \"חויב\"", "סטטוס תשלום %s, ומצב חיוב אינו %s." % (_q(B2B_PAY[BP_PAID]), _BILLED)),
         ("payer_mismatch", "החברה אינה Account משלם בעסקה", "החברה בחיוב אחרת מ-Account משלם בעסקה."),
-        ("terms_missing", "אין תנאי תשלום", "תנאי תשלום של החברה ריק בלוח החברות, ולכן מועד הפירעון הוא מועד דרישת "
+        ("terms_missing", NO_TERMS, "תנאי תשלום של החברה ריק בלוח החברות, ולכן מועד הפירעון הוא מועד דרישת "
                                             "התשלום עצמו, וממנו נספר גם הפיגור. מופיע גם ליד מועד הפירעון, ליד החברה "
                                             "ב\"לפי לקוח\" ובכרטסת שלה."),
         ("amount_missing", "סכום לחיוב (ללא מע\"מ) לא הוקלד", "חיוב לחייב, או שכבר חויב, בלי סכום."),
