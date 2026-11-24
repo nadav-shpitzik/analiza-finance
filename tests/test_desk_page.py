@@ -461,10 +461,7 @@ def test_a_date_that_was_not_typed_says_by_what_it_is_dated_and_an_empty_value_i
     said = '03.11.26 <span class="fin-subtle">(לפי יום היצירה)</span>'
     assert fact(detail_of(every, "3101"), "תאריך תקבול") == said
     assert "שולם <bdi>4,000.00 ₪</bdi> ב-03.11.26 (לפי יום היצירה)" in detail_of(every, "3101")
-    assert cells_of(every, "3101")["date"] == '03.11.26 <span class="fin-subtle">יום היצירה</span>'
-    css = (FRONT / "finance.css").read_text(encoding="utf-8")
-    assert 'table.fin-t tbody td.k-date > .fin-subtle::before { content: "(לפי "; }' in css
-    assert 'table.fin-t tbody td.k-date > .fin-subtle::after { content: ")"; }' in css
+    assert cells_of(every, "3101")["date"] == said  # the list's cell says it in full too, in its text (not drawn by css)
     dash = '<span class="fin-subtle">-</span>'
     assert cells_of(refunded, "3105")["refund_date"] == dash
     assert cells_of(b2_all, "9902")["due"] == dash and cells_of(b2_all, "9902")["deal"] == dash

@@ -78,9 +78,8 @@
  *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
  *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
  * QA 10 The page's words: a refresh on its way is "מתעדכן" on the button pressed as beside the reading's time (it was
- *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" - in the list's cell finance.css draws "(לפי" and
- *       ")" around the legend's term, whose markup tests/test_desk_parity_js.py holds, and the details and the row's
- *       situation write it (CREATED_BY); an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
+ *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" (CREATED_BY) in the list's cell, the details
+ *       and the row's situation alike; an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
  *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
  *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
  * QA 11 The totals: the total row of "לפי לקוח" has the count of "לטיפול" (the companies' counts shown, added: a count, no
@@ -407,12 +406,11 @@
   }
   /* "תאריך תקבול" as typed; where it was not, the day the row was created, marked so in the cell (QA 2.5) */
   var CREATED_WORD = "יום היצירה";
-  /* QA 10 (24.11): "יום היצירה" alone beside a date did not read without the legend, so it is said "(לפי יום היצירה)". In
-     the list's cell the markup stays the legend's term alone - tests/test_desk_parity_js.py holds it - and finance.css
-     draws "(לפי" and ")" around it, on a line of its own; the details and the row's situation say it in full */
+  /* QA 10 (24.11): "יום היצירה" alone beside a date did not read without the legend, so it is said "(לפי יום היצירה)",
+     in the list's cell (on a line of its own under the date, finance.css), the details and the row's situation alike */
   var CREATED_BY = "(לפי " + CREATED_WORD + ")";
   function paidDate(r) {
-    return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_WORD + "</span>";
+    return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
   }
   function paidDateSaid(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";

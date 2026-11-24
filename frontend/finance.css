@@ -188,12 +188,9 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-t .k-date, #screen-finance table.fin-t td.k-demand, #screen-finance table.fin-t .k-planned,
 #screen-finance table.fin-t .k-refund_date, #screen-finance table.fin-t .k-asked, #screen-finance table.fin-t .k-last_day { white-space: nowrap; }
 #screen-finance table.fin-t td.k-due { min-width: 84px; }
-/* QA 10 (24.11): beside a payment date that was not typed, "(לפי יום היצירה)", on a line of its own under the date. The
-   cell's markup is the legend's term alone (finance.js paidDate; tests/test_desk_parity_js.py holds it), so the words
-   around it are drawn here; the details and the row's situation write them in full (paidDateSaid, CREATED_BY) */
+/* QA 10 (24.11): beside a payment date that was not typed, "(לפי יום היצירה)" (finance.js paidDate), on a line of its own
+   under the date */
 #screen-finance table.fin-t tbody td.k-date > .fin-subtle { display: block; white-space: normal; }
-#screen-finance table.fin-t tbody td.k-date > .fin-subtle::before { content: "(לפי "; }
-#screen-finance table.fin-t tbody td.k-date > .fin-subtle::after { content: ")"; }
 #screen-finance table.fin-t td.k-charge { min-width: 180px; }
 /* what to look at: its chips wrap inside the cell, never past the frame */
 #screen-finance table.fin-t td.k-notes { min-width: 170px; }

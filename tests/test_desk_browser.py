@@ -467,7 +467,7 @@ def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):
         for x in got["steps"][size]:
             # the table no wider than its frame, nothing to scroll sideways, "פתיחה במאנדיי" wholly inside it
             assert x["table"] <= x["frame"] and x["sideways"] <= 0 and min(x["open"]) >= 0, (size, x)
-        assert got["steps"][size + " created"] == ['"(לפי "', "יום היצירה", '")"', "block"]
+        assert got["steps"][size + " created"] == ["none", "(לפי יום היצירה)", "none", "block"]
 
 
 def test_a_row_says_it_opens_its_details_by_its_pointer_its_hover_and_a_chevron_that_turns(serve):

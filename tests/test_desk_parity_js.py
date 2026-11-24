@@ -170,7 +170,7 @@ def test_the_page_heads_mondays_columns_by_their_monday_names_and_lays_out_the_r
     assert {k: heads[k] for k in ("received", "receipt", "to_refund", "refunded", "credit_ref", "invoice", "method",
                                   "refund_date", "asked", "last_day", "planned", "demand", "amount", "paid_so_far",
                                   "account", "course", "status", "payment", "open")} == {
-        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי", "refunded": "סכום החזר",
+        "received": "סכום ששולם", "receipt": "שליחת קבלה", "to_refund": "סכום לזיכוי", "refunded": "הוחזרו",
         "credit_ref": "אסמכתת זיכוי", "invoice": "אסמכתת חשבונית", "method": "אופן החזר", "refund_date": "תאריך החזר",
         "asked": "תאריך בקשת ביטול", "last_day": fd.LAST_DAY_LABEL, "planned": fd.PLANNED_LABEL,
         "demand": "מועד דרישת תשלום", "amount": 'סכום לחיוב (ללא מע"מ)', "paid_so_far": 'סכום ששולם (כולל מע"מ)',
@@ -534,7 +534,7 @@ def test_lists_and_details_call_mondays_columns_by_their_titles_and_the_desks_st
         accounts=[acct("A1"), acct("A2")], deals=[dict(deal("D1", value="96000"), **{fd.DL["stage"]: "בהרצה ללא חוזה"})])
     assert '<th class="k-date">תאריך תקבול</th>' in all_sc and '<th class="k-state">שיבוץ</th>' in all_sc
     assert '<td class="k-date">04.10.26</td>' in all_sc
-    assert '<td class="k-date">06.10.26 <span class="fin-subtle">יום היצירה</span></td>' in all_sc
+    assert '<td class="k-date">06.10.26 <span class="fin-subtle">(לפי יום היצירה)</span></td>' in all_sc
     # "ליד מקור" was added by QA 2.5 and left on 17.11 (Nadav: "זה לא אומר לה כלום ולא משנה")
     assert "<dt>ליד מקור</dt>" not in all_sc and "שם מהליד" not in all_sc
     assert "<b>סכום לזיכוי <bdi>1,000.00 ₪</bdi></b>" in refund and "להחזיר" not in refund
@@ -682,7 +682,7 @@ def test_every_label_the_page_draws_is_mondays_title_or_in_the_legend():
 # contradiction between two columns) and to WARN (its sentence in the details). Until then a row that carries it is in
 # "חריג, לבדיקה" with no chip for it on the page, while the Excel file says it. The tests below skip only its absence: once
 # the page draws it, its text and its place are held like every other chip's. Empty the set when the page has it.
-PAGE_OWES = {"receipt_no_money"}
+PAGE_OWES: set = set()  # every chip the server can flag, the page draws (receipt_no_money: QA 24.11)
 
 
 def test_every_chip_the_page_can_show_is_explained_in_its_tabs_legend():
