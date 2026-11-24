@@ -8,14 +8,41 @@
  * 3. what the server no longer sends is read in the browser, as the person, through mondayCall when its detail is
  *    shown (the ID number already was): a refund's bank account in its details, a company's ח.פ in its billing details
  *    (liveEntry). The list "החזר לביצוע" lost its column "פרטי חשבון": filling it would read every refund's account;
- * 4. a company's billing details are shown read only: their edit went through analiza-metrics' server (its account
- *    route, which this service does not have), and comes back from the browser;
+ * 4. a company's billing details were shown read only at the port: their edit went through analiza-metrics' server
+ *    (its account route, which this service does not have). Since D2's item 4 below they are edited from the browser;
  * 5. the usage batches (POST /api/usage, not in this service yet) stop quietly at the first failure;
  * 6. three sentences that would no longer be true: a guest is told so (this gate refuses one by name), the ID number's
  *    "no access" no longer sends her to the Excel file (whose server reads no ID number), and the chip "אין תנאי תשלום"
- *    opens the company's ledger without promising an edit there.
+ *    opens the company's ledger without promising an edit there (since D2's item 4, it promises one again to whoever
+ *    may write).
  * In the comments below, app/finance.py and app/finance_api.py are analiza-metrics' modules: their port to this
  * service is under way, and each rule named there is the one the port keeps.
+ *
+ * What changed after the move: D2's list (Analiza-Monday docs/design/analiza-finance-desk-move-plan.md §1b, approved
+ * 24.11), each item from the evidence of how Chava and Pini used the desk in 17-23.11, and why:
+ * 1.1 "שליחת קבלה: יצאה" and "סימון תשלום הוחזר" sit on the row itself, for one row or several picked at once (the box
+ *     at the row's start, up to BATCH_MAX): she made those two edits 30 times in monday, eight refunds within two
+ *     minutes, and never pressed them in a row's details. One press reads the rows live as the person and shows ONE
+ *     confirmation listing each row's write; a row monday changed since the desk's reading is not written. On "כתיבה"
+ *     each row is read again right before its write and checked after, as a single action (confirmAction), and the
+ *     result is said per row. One refresh after the batch, as after one action. The allowlist did not change; readRow
+ *     became readRows of one row, so one request reads a batch.
+ * 1.2 A search looks at every row of its tab, whatever tile, period or company is open, says so, and marks a row found
+ *     outside the open list with its own tile: her four searches all found nothing in the open list, three would have
+ *     found rows without its filters. Its Excel file and totals are asked with no tile, period or company, so the
+ *     server's filters pick what the screen shows.
+ * 2.1 "חיפוש ללא סינון" went out (pressed 0 times; 1.2 made it the default), with its helpers and its test hook.
+ * 2.2 "חסר כאן משהו? פנייה לנדב" went out with its link: no request came through its form since the desk was built.
+ * 4   A company's billing details are edited again, FROM THE BROWSER, AS THE PERSON (ADR-0188), where analiza-metrics'
+ *     server wrote them: "עריכה" reads the four live, "המשך" checks what changed by that server's rules and shows
+ *     before and after, "שמירה" reads them again, writes only when monday still holds what was shown, and checks the
+ *     answer. The allowlist (WRITABLE, and the server's desk_writes alike) gained exactly the four Accounts columns,
+ *     each by its rule, and mondayWrite writes Accounts only for a company the desk shows (ITEM_GUARD). MON-41: the old
+ *     Update on the company is written by mondayUpdate - the page's second mutation - only when monday's context says
+ *     the app holds updates:write for the person (CAN_UPDATE); it is never asked for, and otherwise the confirmation
+ *     says monday's activity log keeps who wrote, the before and the after.
+ * And from the adversarial review of 62fd993: a reading whose view could not be built (`view_error`) is said as the
+ * server's fault, with no refresh offered as its fix; an item's link (href) goes through esc() like every other value.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
