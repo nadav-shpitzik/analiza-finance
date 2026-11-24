@@ -77,6 +77,8 @@
  *      table that fits its frame now scrolls with the page - one scroll, its header held at the top of the view (the
  *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
  *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
+ * QA 7 With a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב" and its
+ *      tiles - all its own. Its name heads the tab now, with the way back to every company ("כל החברות") beside it.
  * And with the server's QA 6 (24.11, Nadav's go): a payment of "ללא תקבול" whose "שליחת קבלה" is "יצאה" is in "חריג,
  *      לבדיקה" with the flag receipt_no_money. The page draws its chip in the server's words, red (a contradiction
  *      between two columns), at the server's place in FLAG_ORDER, and says it in the row's details (WARN); until then the
@@ -1027,6 +1029,10 @@
       "<button type=\"button\" class=\"fin-btn" + (f.view === "list" ? " on" : "") + "\" aria-pressed=\"" + (f.view === "list") + "\" data-b2view=\"list\">רשימה</button>" +
       "<button type=\"button\" class=\"fin-btn" + (f.view === "customers" ? " on" : "") + "\" aria-pressed=\"" + (f.view === "customers") + "\" data-b2view=\"customers\">לפי לקוח</button></div>";
     var mine = f.customer && b.by_customer[f.customer];
+    /* QA 7 (24.11): with a company open, its name was only in the list's heading, far below its figures, its "פרטי חיוב"
+       and its tiles - all of them its own. It heads the tab now, with the way back to every company */
+    var company = f.customer ? "<div class=\"fin-co\"><h2 class=\"fin-co-name\">" + esc((mine && mine.name) || who || "") + "</h2>" +
+      "<button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button></div>" : "";
     /* a chosen customer: its own figures and its aging, as a ledger card (כרטסת) opens with */
     var figures = mine ? figs([["יתרה פתוחה", money(mine.open)], ["מתוכה בפיגור", money(mine.overdue)],
       [stateLabel(b.states, "to_bill"), money(mine.to_bill)]], "הסכומים ללא מע\"מ") +
@@ -1071,7 +1077,7 @@
         /* no search, one company in one state: that company's every charge, its ledger */
         !q && f.customer && f.state !== "" ? "<button class=\"fin-linkbtn\" type=\"button\" data-b2state=\"\">כל החיובים של החברה</button>" : "");
     OUTSIDE = null;
-    return figures + b2Tiles(b) + panel(head + list);
+    return company + figures + b2Tiles(b) + panel(head + list);
   }
 
   /* ---------- actions from the desk (round 3, slice 3) ----------

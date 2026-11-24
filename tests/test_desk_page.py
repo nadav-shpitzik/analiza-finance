@@ -529,6 +529,24 @@ def test_a_row_that_opens_its_details_says_so_with_a_chevron_at_its_start():
     assert "tr.fin-rowbtn.open .fin-more svg { transform: rotate(180deg); }" in css
 
 
+def test_an_open_company_heads_its_tab_with_its_name_and_the_way_back():
+    """QA 7 (24.11): with a company open, its name was only in the list's heading, far down; the sums, "פרטי חיוב" and the
+    tiles above it are that company's alone, with no name. Its name heads the tab now, with the way back, above them; with
+    no company open there is no such head."""
+    got = drive(answer(), [{"show": LEDGER}, {"show": {"tab": "b2b", "b2": {"state": "overdue", "view": "list",
+                                                                               "customer": "7701", "open": {}}}},
+                           {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}},
+                           {"show": {"tab": "b2b", "b2": {"state": "", "view": "customers", "customer": "", "open": {}}}}],
+                monday=world(), board=B2_BOARD)
+    ledger, one_tile, every, customers = [s["html"] for s in got["steps"]]
+    head = ('<div class="fin-co"><h2 class="fin-co-name">חברה ג</h2><button class="fin-linkbtn" type="button" '
+            'data-customer="">כל החברות</button></div>')
+    assert head in ledger and ledger.index(head) < ledger.index('class="fin-figs"') < ledger.index("פרטי חיוב")
+    assert ledger.index("פרטי חיוב") < ledger.index('class="fin-states"')
+    assert '<h2 class="fin-co-name">חברה א</h2>' in one_tile
+    assert "fin-co" not in every and "fin-co" not in customers
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of

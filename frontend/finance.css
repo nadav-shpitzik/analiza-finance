@@ -265,6 +265,9 @@ body[data-theme="dark"] #screen-finance {
   #screen-finance .fin-state.anchor { grid-column: 1 / -1; }
   #screen-finance .fin-state.anchor .n { font-size: 26px; }
 }
+/* QA 7 (24.11): an open company heads its tab - its name, and the way back to every company beside it */
+#screen-finance .fin-co { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 12px; }
+#screen-finance .fin-co-name { margin: 0; font-size: 19px; font-weight: 600; }
 /* the companies tab: the list / by-customer switch */
 #screen-finance .fin-seg { display: inline-flex; }
 #screen-finance .fin-seg .fin-btn { border-radius: 0; }
