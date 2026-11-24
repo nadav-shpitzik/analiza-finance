@@ -52,6 +52,11 @@
  * QA 2 "ייצוא לאקסל" said nothing on the page. When the file's link opens, the page says the file is on its way and how
  *      many rows it holds: the rows of the list exported, counted as the screen shows them (exportedCount; the companies'
  *      list is one function, b2Rows, for the screen and the count). The file's name is the server's and is not said.
+ * QA 3 A search with a row outside the open list kept the open list's columns, so a payment found from "החזר לביצוע"
+ *      showed a refund's "-" where its own date, channel and receipt are. With any row outside the open list the search
+ *      is drawn with the general columns, on both tabs; with every row inside, the open list's own stay (1.4). And a row
+ *      found by a field its list does not show says which, and what it holds there ("נמצא לפי סכום החזר: 976.19 ₪",
+ *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -224,7 +229,7 @@
   function termsMark(terms) { return terms ? " <bdi class=\"fin-subtle\">" + esc(terms) + "</bdi>" : " " + NO_TERMS; }
   var COLS = {
     date: { h: "תאריך תקבול", c: function (r) { return paidDate(r); } },
-    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r); } },
+    student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
     /* Student Charge's "נציג מכירות" (17.11): the Owner of the payment's lead, read with the lead (app/finance.py lead_rep) */
     rep: { h: "נציג מכירות", xs: 1, c: function (r) { return r.rep ? esc(r.rep) : NOT_SET; } },
     cohort: { h: "מחזור", xs: 1, c: function (r) { return r.cohort_code ? "<span title=\"" + esc(r.cohort_title) + "\">" + ltr(r.cohort_code) + "</span>" : "<span class=\"fin-subtle\">-</span>"; } },
@@ -262,7 +267,7 @@
     } },
     account: { h: "חברה", c: function (r) { return esc(r.ctx.account); } },
     deal: { h: "עסקה", xs: 1, c: function (r) { return esc(r.ctx.deal); } },
-    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r); } },
+    charge: { h: "חיוב", c: function (r) { return nameLink(r, label(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
     course: { h: "קוד קורס", xs: 1, c: function (r) { return ltr(r.course); } },
     amount: { h: "סכום לחיוב (ללא מע\"מ)", n: 1, t: "amount", c: function (r) {
       if (!num(r.amount)) { return "-"; }
@@ -383,7 +388,10 @@
   }
   function table(rows, cols, detail, opened, totals) {
     cols = cols.filter(function (k) { return !COLS[k].opt || rows.some(COLS[k].opt); });
-    return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t\"><thead><tr>" + cols.map(function (k) {
+    /* a searched list's columns, while its rows are drawn: what a row shows, for the mark of what found it (QA 3) */
+    DRAWN = null;
+    if (searching()) { DRAWN = {}; cols.forEach(function (k) { DRAWN[k] = true; }); }
+    var html = "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t\"><thead><tr>" + cols.map(function (k) {
       return "<th" + cls(k) + ">" + (COLS[k].hh ? COLS[k].hh(rows) : esc(COLS[k].h)) + "</th>";
     }).join("") + "</tr></thead><tbody>" + rows.map(function (r) {
       var open = detail && (opened || state.sc.open)[r.id];
@@ -391,6 +399,8 @@
       return "<tr" + attrs + ">" + cols.map(function (k) { return "<td" + cls(k) + ">" + COLS[k].c(r) + "</td>"; }).join("") + "</tr>" +
         (open ? "<tr class=\"fin-detail\"><td colspan=\"" + cols.length + "\">" + detail(r) + "</td></tr>" : "");
     }).join("") + "</tbody>" + (totals ? totalsRow(cols, totals.body, totals.what) : "") + "</table></div>";
+    DRAWN = null;
+    return html;
   }
 
   /* ---------- students: one list by state ---------- */
@@ -431,15 +441,36 @@
     var v = Number(m[2]) * 100 + Number(((m[3] || "") + "00").slice(0, 2));
     return m[1] ? -v : v;
   }
-  function scMatch(r, q) {
-    q = String(q || "").trim().toLowerCase();
-    if (!q) { return true; }
+  /* the search box's fields, by board: an amount within a shekel (in agorot) of any of `nums`, or the text inside `texts`
+     joined - app/finance.py b2c_matches and b2b_matches. One list for the rule and for the mark that says which field
+     found a row (QA 3, foundMark) */
+  var MATCH = {
+    sc: { nums: ["money_in", "refunded", "credit_approved"], texts: ["name", "cohort_code", "cohort_title", "invoice", "credit_ref"] },
+    b2: { nums: ["amount", "paid_so_far", "balance"], texts: ["account", "deal", "course", "invoice", "name"] } };
+  function amountNear(a, n) { var x = a == null ? null : agorot(a); return !!x && Math.abs(x - n) < 100; }
+  /* the fields that find a row for a search (trimmed, lowercased), or null: its amounts near the number searched, else
+     its texts that hold the search - or, for a search the joined text holds across two of them, the ones it spans */
+  function matchedBy(r, q, m) {
     var numText = q.replace(/[,₪\s]/g, "");
     if (/^[0-9]+(\.[0-9]{1,2})?$/.test(numText)) {
-      var n = agorot(numText);
-      if ([r.money_in, r.refunded, r.credit_approved].some(function (a) { var x = agorot(a); return x && Math.abs(x - n) < 100; })) { return true; }
+      var n = agorot(numText), near = m.nums.filter(function (f) { return amountNear(r[f], n); });
+      if (near.length) { return near; }
     }
-    return [r.name, r.cohort_code, r.cohort_title, r.invoice, r.credit_ref].join(" ").toLowerCase().indexOf(q) !== -1;
+    var parts = m.texts.map(function (f) { return r[f] == null ? "" : String(r[f]); });
+    var at = parts.join(" ").toLowerCase().indexOf(q);
+    if (at === -1) { return null; }
+    var whole = m.texts.filter(function (f, i) { return parts[i].toLowerCase().indexOf(q) !== -1; });
+    if (whole.length) { return whole; }
+    var start = 0, spans = [];
+    parts.forEach(function (p, i) {
+      if (at < start + p.length && at + q.length > start) { spans.push(m.texts[i]); }
+      start += p.length + 1;
+    });
+    return spans.length ? spans : m.texts;
+  }
+  function scMatch(r, q) {
+    q = String(q || "").trim().toLowerCase();
+    return !q || !!matchedBy(r, q, MATCH.sc);
   }
   function scFilter(rows, b2c, st, periodKey, q) {
     var months = {}, tasks = {};
@@ -473,6 +504,27 @@
     if (!OUTSIDE || !OUTSIDE[r.id]) { return ""; }
     return " <span class=\"fin-where\" title=\"" + esc("מחוץ לרשימה הפתוחה") + "\">" +
       (r.board === "b2" ? stateChip(r.state, VIEW.b2b.states, B2_COLOR) : stateChip(r.state)) + "</span>";
+  }
+  /* QA 3 (24.11): a row a search found by a field its list does not show says which, and what that field holds - "976.19"
+     found a row by its "סכום החזר" while the row showed only "סכום ששולם" (₪1,000). The field is named by its column's
+     header; a field no column shows (a cohort's title, shown only on hover) by the column it belongs to */
+  var FOUND_COL = {
+    sc: { money_in: "received", refunded: "refunded", credit_approved: "to_refund", name: "student", cohort_code: "cohort",
+      cohort_title: "cohort", invoice: "invoice", credit_ref: "credit_ref" },
+    b2: { amount: "amount", paid_so_far: "paid_so_far", balance: "balance", account: "account", deal: "deal", course: "course",
+      invoice: "invoice", name: "charge" } };
+  var FOUND_HIDDEN = { cohort_title: 1 };       /* in a column that does not show it */
+  var FOUND_LTR = { cohort_code: 1, invoice: 1, credit_ref: 1, course: 1 };
+  var DRAWN = null;                              /* while a searched list's rows are drawn: its columns, by key */
+  function foundMark(r) {
+    var q = state.query.trim().toLowerCase(), m = MATCH[r.board], cols = FOUND_COL[r.board];
+    if (!DRAWN || !q || !m) { return ""; }
+    var by = matchedBy(r, q, m) || [];
+    if (!by.length || by.some(function (f) { return !FOUND_HIDDEN[f] && DRAWN[cols[f]]; })) { return ""; }
+    return " <span class=\"fin-found\">נמצא לפי " + by.map(function (f) {
+      var v = m.nums.indexOf(f) !== -1 ? money2(r[f]) : FOUND_LTR[f] ? ltr(r[f]) : esc(r[f]);
+      return esc(COLS[cols[f]].h) + ": " + v;
+    }).join(" · ") + "</span>";
   }
   /* the head of a searched list: how many it found, and how many of them are outside the open list, named */
   function searchHead(rows, words, openName) {
@@ -688,16 +740,19 @@
   function b2cHtml() {
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
-    /* the open list's columns stay with a search: what is shown where stays (§1b, 1.4); the box and the row's button of
-       1.1 at its edges, where a row offers one of the two */
-    var cols = withRowActions(SC_COLS[one] || SC_COLS[""]);
-    var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
-    var sum = one && !q ? " · " + money(p.states[one].money) : "";
     OUTSIDE = null;
     if (q) {
       var open = idsOf(scFilter(ROWS.sc, v, key, state.sc.period, ""));
       OUTSIDE = idsOf(rows.filter(function (r) { return !open[r.id]; }));
     }
+    /* the open list's columns stay with a search while every row it found is in that list: what is shown where stays
+       (§1b, 1.4). QA 3 (24.11): a row of another tile under a refund's columns showed "-" where its payment date, its
+       channel and its receipt are, so a search with a row outside the open list is drawn with the general columns, as a
+       search from "לטיפול" is. The box and the row's button of 1.1 at its edges, where a row offers one of the two */
+    var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
+    var cols = withRowActions(SC_COLS[outside ? "" : one] || SC_COLS[""]);
+    var what = key === "tasks" ? "לטיפול" : key ? stateLabel(v.states, key) : "כל התקבולים";
+    var sum = one && !q ? " · " + money(p.states[one].money) : "";
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
@@ -759,13 +814,7 @@
   /* ---------- companies: one list by state, and the customers' aging ---------- */
   function b2Match(r, q) {
     q = String(q || "").trim().toLowerCase();
-    if (!q) { return true; }
-    var numText = q.replace(/[,₪\s]/g, "");
-    if (/^[0-9]+(\.[0-9]{1,2})?$/.test(numText)) {
-      var n = agorot(numText);
-      if ([r.amount, r.paid_so_far, r.balance].some(function (a) { var x = a == null ? null : agorot(a); return x && Math.abs(x - n) < 100; })) { return true; }
-    }
-    return [r.account, r.deal, r.course, r.invoice, r.name].join(" ").toLowerCase().indexOf(q) !== -1;
+    return !q || !!matchedBy(r, q, MATCH.b2);
   }
   /* The SAME rule as app/finance.py filter_b2b (tests/test_finance_js.py runs both on the same rows). */
   function b2Filter(rows, b2b, st, customer, q) {
@@ -955,7 +1004,10 @@
     /* the ledger: oldest first, with the open money owed up to each charge. A search in a ledger finds every company's
        charges, so it is drawn as the list of every charge, with its company and its tile */
     var ledger = f.customer && !f.state && !q;
-    var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"] : (B2_COLS[key] || B2_COLS[""]);
+    /* QA 3: as on the students' tab, a search with a charge outside the open list is drawn with the general columns */
+    var outside = q && rows.some(function (r) { return OUTSIDE[r.id]; });
+    var bcols = ledger ? ["demand", "deal", "charge", "amount", "b2state", "due", "ledger", "invoice", "open"]
+      : (B2_COLS[outside ? "" : key] || B2_COLS[""]);
     var btot = { body: totalsFor({ tab: "b2b", state: q ? "" : f.state === "tasks" ? "tasks" : f.state, customer: q ? "" : f.customer,
       q: state.query.trim() }), what: ["חיוב אחד", "חיובים"] };
     var list = rows.length ? table(rows, bcols, b2Detail, state.b2.open, exportable() ? btot : null)

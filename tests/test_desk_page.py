@@ -326,6 +326,78 @@ def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_compan
     assert {"tab": "b2b", "state": "overdue", "customer": "7701", "q": ""} in totals
 
 
+def heads_of(html: str) -> list:
+    return [re.sub(r"<[^>]+>", "", x) for x in re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)]
+
+
+def cells_of(html: str, row_id: str) -> dict:
+    """A row's cells by their column key (k-...), as drawn."""
+    row = html[html.index('data-row="%s"' % row_id):]
+    row = row[:row.index("</tr>")]
+    return {m.group(1): m.group(2) for m in re.finditer(r'<td class="k-(\w+)[^"]*">(.*?)</td>', row)}
+
+
+def test_a_search_with_a_row_outside_the_open_list_is_drawn_with_the_general_columns():
+    """QA 3 (24.11): in "החזר לביצוע", a name from "הושלם" was found and marked "● הושלם", but under the refund's columns -
+    "תאריך בקשת ביטול" and "אופן החזר" with "-", and no payment date, channel or receipt. With any row outside the open list
+    the search is drawn with the general columns, as a search from "לטיפול" is; with every row inside, the open list's
+    own columns stay (§1b, 1.4). The same on the companies' tab."""
+    refund = {"tab": "b2c", "sc": {"state": "refund_to_execute", "period": "", "open": {}}}
+    got = drive(answer(), [{"show": dict(refund, query="תלמיד/ה 1")}, {"show": dict(refund, query="תלמיד/ה 3")},
+                           {"show": dict(refund, query="")},
+                           {"show": {"tab": "b2b", "query": "חיוב 3", "b2": {"state": "overdue", "view": "list", "customer": "",
+                                                                             "open": {}}}},
+                           {"show": {"tab": "b2b", "query": "חיוב 1", "b2": {"state": "overdue", "view": "list", "customer": "",
+                                                                             "open": {}}}}], monday=world())
+    outside, inside, plain, b2_outside, b2_inside = [s["html"] for s in got["steps"]]
+    general = ["תאריך תקבול", "סטודנט/ית", "נציג מכירות", "מחזור", "סכום ששולם", "ערוץ תשלום", "אסמכתת חשבונית",
+               "שליחת קבלה", "שיבוץ", "פתיחה במאנדיי"]
+    assert [h for h in heads_of(outside) if h] == general
+    assert cells_of(outside, "3101")["date"] == "03.11.26" and cells_of(outside, "3101")["receipt"] == "יצאה"
+    assert "fin-where" in cells_of(outside, "3101")["student"]
+    # every row found inside the open list: the refund's columns, as with no search
+    assert [h for h in heads_of(inside) if h] == [h for h in heads_of(plain) if h]
+    assert "תאריך בקשת ביטול" in heads_of(inside) and "ערוץ תשלום" not in heads_of(inside)
+    # the companies: a partly paid charge found from "בפיגור" is drawn under the general columns, with its tile
+    assert "שיבוץ" in heads_of(b2_outside) and "ימים בפיגור" not in heads_of(b2_outside)
+    assert "ימים בפיגור" in heads_of(b2_inside) and "שיבוץ" not in heads_of(b2_inside)
+
+
+def test_a_row_found_by_a_field_its_list_does_not_show_says_which_and_what_it_holds():
+    """QA 3 (24.11): a search "976.19" found a row by its refund amount while the row showed only what was paid (₪1,000).
+    Such a row says, under its name, which field found it and what that field holds - in the field's monday name; a row
+    whose list shows the field, or found by its name, says nothing more."""
+    import html as h
+    v = with_row(view(), sc_row("3107", "תלמיד/ה 7", "refunded", status="תשלום הוחזר", status_idx="4", money_in="1000",
+                                paid_typed="1000", net="23.81", refunded="976.19", refund_typed="976.19",
+                                refund_date="2026-11-10", credit_approved="976.19"))
+    v["b2b"]["rows"][2]["paid_so_far"] = "9000"
+    shows = lambda tab, st, q, **f: {"show": dict({"tab": tab, "query": q}, **({"sc": dict({"state": st, "period": "", "open": {}}, **f)}
+                                                                             if tab == "b2c" else
+                                                                             {"b2": dict({"state": st, "view": "list", "customer": "",
+                                                                                          "open": {}}, **f)}))}
+    got = drive(answer(v), [shows("b2c", "refund_to_execute", "976.19"), shows("b2c", "refunded", "976.19"),
+                            shows("b2c", "tasks", "סייבר"), shows("b2c", "refund_to_execute", "תלמיד/ה 7"),
+                            shows("b2b", "overdue", "9000"), shows("b2b", "partial", "9000"), shows("b2c", "tasks", "")],
+                monday=world())
+    pages = [h.unescape(s["html"]) for s in got["steps"]]
+    found = lambda page, rid: re.findall(r'<span class="fin-found">(.*?)</span>$', cells_of(page, rid).get(
+        "student", cells_of(page, rid).get("charge", "")))
+    # the general columns show what was paid, not the refund: which field found the row, and its value
+    assert found(pages[0], "3107") == ["נמצא לפי סכום החזר: <bdi>976.19 ₪</bdi> · סכום לזיכוי: <bdi>976.19 ₪</bdi>"]
+    # "החזר בוצע" shows "סכום החזר": nothing to say
+    assert found(pages[1], "3107") == [] and "fin-found" not in pages[1]
+    # a cohort's title shows only on hover: the row says it was found by its cohort
+    assert found(pages[2], "3101") == ["נמצא לפי מחזור: הגנת סייבר"]
+    # found by its name, which the row shows: nothing more
+    assert "fin-found" not in pages[3]
+    # the companies: "סכום ששולם (כולל מע"מ)" is not a column of the general list, and is one of "שולם חלקית"'s
+    assert found(pages[4], "9903") == ['נמצא לפי סכום ששולם (כולל מע"מ): <bdi>9,000.00 ₪</bdi>']
+    assert "fin-found" not in pages[5]
+    # no search, no mark
+    assert "fin-found" not in pages[6]
+
+
 def test_the_excel_file_says_on_the_page_that_it_is_on_its_way_with_the_number_of_rows_of_its_list():
     """QA 2 (24.11): after "ייצוא לאקסל" the page said nothing - no word, no count (the files themselves were right). When the
     link opens - through monday's new tab, or outside monday by the page's own link - the page says so, with the rows of
