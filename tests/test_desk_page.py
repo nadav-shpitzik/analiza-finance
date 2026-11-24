@@ -3,11 +3,12 @@ that mounts it. Needs node; skipped without it.
 
 Ported from analiza-metrics' tests/test_finance_js.py, test_finance_id_js.py and test_finance_actions_js.py: the tests
 that hold the page to itself - its words, its return rule, its house style, the ID number read as the person, the
-allowlist refusing before monday is asked - run here on the hand-made view of tests/desk_page_view.py. The tests that
-hold the page to the server wait for the server's port: the students' and the companies' filters against filter_b2c and
-filter_b2b, the exportable search alphabet against query_exportable, the refund labels, the return rule against the
-refresh gap, the legend against every label and chip, the aging headers against the Excel file, the usage events against
-app/usage.py, and the page's write allowlist (WRITABLE) against the server's actions (desk_writes).
+allowlist refusing before monday is asked - run here on the hand-made view of tests/desk_page_view.py. The usage events
+are held to the server's vocabulary (app/desk/usage.py) since its port: driven here, and statically in
+tests/test_desk_usage.py. The tests that hold the page to the rest of the server wait for its port: the students' and the
+companies' filters against filter_b2c and filter_b2b, the exportable search alphabet against query_exportable, the refund
+labels, the return rule against the refresh gap, the legend against every label and chip, the aging headers against the
+Excel file, and the page's write allowlist (WRITABLE) against the server's actions (desk_writes).
 
 New with the move: no path under /api/finance, every monday request through the one door, a refund's bank account and a
 company's ח.פ read as the person only when shown, the billing details read only, an answer with no view yet, and the
@@ -675,15 +676,66 @@ def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
 # --- D2: the usage batches -----------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("failure", [{"status": 404, "error": "http_404"}, {"status": 405, "error": "http_405"},
-                                     {"blocked": True, "error": "unauthorized"}, {"message": "Failed to fetch"}])
+                                     {"blocked": True, "error": "unauthorized"}, {"message": "Failed to fetch"},
+                                     {"status": 503, "error": "usage_unavailable"},
+                                     {"status": 429, "error": "rate_limited", "retryAfter": 60}])
 def test_the_usage_batches_stop_quietly_at_the_first_failure(failure):
-    """POST /api/usage is not in this service yet: the first batch fails and nothing more is sent this visit, and the
-    failure is never said on the screen."""
+    """The first batch that fails - nowhere to keep it (503 usage_unavailable), its own limit (429), a token monday no
+    longer honours, a server without the route (D2 before POST /api/usage came) - ends the sending for this visit, and
+    the failure is never said on the screen."""
     steps = [{"click": [{"bstate": "done"}]}, {"wait": 30}, {"click": [{"bstate": "refunded"}]}, {"wait": 30},
              {"click": [{"legend": "1"}]}, {"hide": True}, {"wait": 30}]
     got = drive(answer(), steps, monday=world(), useFlushMs=5, usageFails=failure)
     assert len(got["usage"]) == 1 and got["toasts"] == []
     assert all("usage" not in s["html"] and "http_" not in s["html"] for s in got["steps"])
+
+
+def test_the_page_sends_its_usage_in_closed_words_and_never_a_name_an_amount_a_search_or_an_id_number():
+    """Every event the page sends passes the server's check (app/desk/usage.py) untouched, and no batch holds the student's
+    name, the amount, the ID number or the text she searched for - only the search's shape (analiza-metrics
+    tests/test_finance_id_js.py at da671b2, on this view: payment 3101 named and paid as there, its lead 6101 holding
+    000000018)."""
+    from app.desk import usage
+
+    v = view()
+    v["b2c"]["rows"][0].update(name="דנה כהן", money_in="4321.5", paid_typed="4321.5", net="4321.5")
+    steps = [{"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}},
+             {"click": [{"bstate": "receipt_pending"}]},
+             {"click": [{"row": "3102"}]},
+             {"type": "דנה כהן", "wait": 400},                    # settles after the page's 250ms and the usage's 60ms
+             {"type": "000000018", "wait": 400},                  # an ID number typed into the search
+             {"type": "4321.50", "wait": 400},
+             {"click": [{"unfilter": "1"}]},
+             {"show": {"sc": {"open": {"3101": True}}}},          # the details read the ID number
+             {"click": [{"idCopy": "3101"}]},
+             {"click": [{"legend": "1"}]},
+             {"click": [{"open": "3101"}, ["fin-name"]]},
+             {"click": [{"export": "b2c"}]},
+             {"change": ["fin-period", "2026-11"]},
+             {"click": [{"fintab": "b2b"}]},
+             {"hide": True}]
+    got = drive(answer(v), steps, monday=world(), useSearchMs=60)
+    batches = got["usage"]
+    assert batches and batches[-1]["keep"] is True                       # the last one sent as the view went out of sight
+    events = [e for b in batches for e in b["body"]["events"]]
+    assert {b["body"]["desk"] for b in batches} == {"finance"} and len({b["body"]["session"] for b in batches}) == 1
+    kinds = [e["k"] for e in events]
+    for k in ("open", "state", "row", "search", "unfilter", "id_shown", "id_copied", "legend", "open_item", "export",
+              "period", "tab", "hide"):
+        assert k in kinds, (k, kinds)
+    # every event as the server checks it: none refused, each kept as it was sent
+    rows_kept, refused = usage.clean_batch(dict(batches[0]["body"], events=events), 7)
+    assert refused == 0 and [r["kind"] for r in rows_kept] == kinds
+    assert [r["detail"] for r in rows_kept] == [e.get("d", {}) for e in events]
+    searches = [e["d"] for e in events if e["k"] == "search"]
+    assert [s["kind"] for s in searches] == ["hebrew", "digits", "amount"] and [s["len"] for s in searches] == [7, 9, 7]
+    assert searches[0]["results"] == 0 and searches[0]["unfiltered"] == 1    # she searched inside a list that hid it
+    # the page's age (`t`) and the first drawing's `ms` are clocks, not values: left out, so a slow machine's 4321 ms is no
+    # false alarm
+    text = json.dumps([dict({k: x for k, x in e.items() if k != "t"}, d={k: x for k, x in e.get("d", {}).items() if k != "ms"})
+                       for e in events], ensure_ascii=False)
+    for secret in ("דנה", "כהן", "000000018", "4321", "6101", "3101"):
+        assert secret not in text, secret
 
 
 # --- D2: nothing from an answer, or from monday, is ever parsed as HTML unescaped ----------------------------------------
