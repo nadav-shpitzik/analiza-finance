@@ -21,8 +21,8 @@ kind's own details. Every kind and every detail key is in the lists below; anyth
 WHAT AN EVENT NEVER IS. A name, an amount, the search's text, an ID number, a bank account, an account or an item id.
 That is the page's rule, and this module makes it the table's too: a detail is a number in a range of its own, a yes or
 no, a period key, or a word that starts with a lowercase Latin letter and carries no number - so a number, a Hebrew name
-or a free text that a page tried to send is refused here, counted, and never written. A search is kept as its shape only: how many
-characters, which kind of characters, how many rows it found with the filters and without.
+or a free text that a page tried to send is refused here, counted, and never written. A search is kept as its shape only:
+how many characters, which kind of characters, how many rows it found with the filters and without.
 """
 from __future__ import annotations
 
