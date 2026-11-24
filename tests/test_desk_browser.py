@@ -530,6 +530,14 @@ def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_i
   out.steps[at + " scrolled"] = await page.evaluate(() => ({
     head: Math.round(document.querySelector(".fin-tw thead").getBoundingClientRect().top),
     frame: Math.round(document.querySelector(".fin-tw").getBoundingClientRect().top) }));
+  /* the view narrowed and widened again (monday's sidebar, a resize): the frame follows, with no new drawing */
+  const mode = () => page.$eval(".fin-tw", (tw) => getComputedStyle(tw).overflowY);
+  await page.setViewportSize({ width: 683, height: size[1] });
+  await page.waitForTimeout(150);
+  const narrowed = await mode();
+  await page.setViewportSize({ width: size[0], height: size[1] });
+  await page.waitForTimeout(150);
+  out.steps[at + " resized"] = [narrowed, await mode()];
 """, base, fake_sdk({}), sizes=((1280, 748), (683, 748)))
     assert got["errors"] == []
     wide, narrow = got["steps"]["1280x748"], got["steps"]["683x748"]
@@ -538,6 +546,8 @@ def test_one_scroll_a_table_that_fits_scrolls_with_the_page_and_one_wider_than_i
     assert not wide["inner"] and wide["overflowY"] == "visible" and not wide["sideways"], wide
     scrolled = got["steps"]["1280x748 scrolled"]
     assert scrolled["frame"] < 0 and scrolled["head"] == 0, scrolled
+    # the view narrowed, then widened back: the frame comes and goes with it
+    assert got["steps"]["1280x748 resized"] == ["auto", "visible"], got["steps"]["1280x748 resized"]
     # narrow: the table wider than its frame scrolls in a frame as tall as the view (it was 78% of it)
     assert narrow["sideways"] and narrow["overflowY"] == "auto" and narrow["frame"] >= 0.9 * narrow["view"], narrow
     # at its narrowest the totals' label wraps (QA 4) between "סה"כ" and its count, never inside "21 תקבולים"

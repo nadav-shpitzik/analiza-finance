@@ -2619,10 +2619,12 @@
       if (t && t.offsetWidth > el.clientWidth + 1) { el.classList.add("fin-tw-x"); }
     });
   }
-  var refit = 0;
+  var refit = false;
   function onResize() {
     if (refit || !VIEW) { return; }
-    refit = (window.requestAnimationFrame || setTimeout)(function () { refit = 0; fitFrames(); });
+    refit = true;
+    var again = function () { refit = false; fitFrames(); };
+    if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
   }
   function render() {
     if (!VIEW) { noReading(); return; }        /* D2: nothing read on the server yet */
