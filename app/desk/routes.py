@@ -179,11 +179,22 @@ def desk_sdk(request: Request):
 
 
 # ---- the route ----------------------------------------------------------------------------------------------------
-def _attempt(last: Any) -> Any:
+def _visible_complete(checks: dict, keys: list) -> bool:
+    """Complete for these boards: each was read and is whole. No board to show is not complete."""
+    return bool(keys) and all((checks.get(k) or {}).get("ok") is True for k in keys)
+
+
+def _attempt(last: Any, keys: list, both: bool) -> Any:
+    """The last attempt as this reader may see it: its time, its closed code, and whether the boards of their own tabs
+    were whole. The detail (board and column ids) only to a reader of both tabs (D1's review: a one-tab reader was told
+    of the other tab's boards)."""
     if last is None:
         return None
-    return {"read_at": last.get("read_at"), "complete": last.get("complete"), "error": last.get("error"),
-            "detail": last.get("detail")}
+    out = {"read_at": last.get("read_at"), "error": last.get("error"),
+           "complete": not last.get("error") and _visible_complete(last.get("checks") or {}, keys)}
+    if both:
+        out["detail"] = last.get("detail")
+    return out
 
 
 @router.get("/api/desk")
@@ -200,15 +211,16 @@ def desk_api(request: Request) -> JSONResponse:
     got = gate(request, cfg.monday_client_secret, st.members, st.limiter, "desk", STUDENT_CHARGE, B2B_CHARGE)
     if isinstance(got, JSONResponse):
         return got
+    # True, False, or None when the board's members could not be read: only True opens the tab
     tabs = {"b2c": got.b2c, "b2b": got.b2b}
+    keys = [key for tab, seen in tabs.items() if seen is True for key in TAB_BOARDS[tab]]
     reading, last = st.reading.get()
     shown = None
     if reading is not None:
         checks = reading.get("checks") or {}
-        boards = {key: checks[key] for tab, seen in tabs.items() if seen for key in TAB_BOARDS[tab] if key in checks}
         shown = {"read_at": reading.get("read_at"), "age_seconds": st.reading.age_s(),
-                 "complete": all(c.get("ok") for c in boards.values()) and bool(boards),
-                 "seconds": reading.get("seconds"), "calls": reading.get("calls"), "boards": boards}
+                 "complete": _visible_complete(checks, keys), "seconds": reading.get("seconds"),
+                 "calls": reading.get("calls"), "boards": {k: checks[k] for k in keys if k in checks}}
     ident = got.identity
     audit(ident, "desk", "ok" if shown and shown["complete"] else ("incomplete" if shown else "no_reading"),
           sum(int(c.get("rows") or 0) for c in (shown or {}).get("boards", {}).values()))
@@ -217,5 +229,5 @@ def desk_api(request: Request) -> JSONResponse:
                  "claims": list(ident.claim_names)},
         "tabs": tabs,
         "reading": shown,
-        "last_attempt": _attempt(last),
+        "last_attempt": _attempt(last, keys, got.b2c is True and got.b2b is True),
     })

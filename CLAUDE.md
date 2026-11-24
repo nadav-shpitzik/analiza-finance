@@ -81,8 +81,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   is pinned and nothing unpins it), refuses a guest, and gates each tab by membership of its charge board, fail closed
   (`app/desk/gate.py`). It answers counts only. The desk's reading (`app/desk/reading.py`) has the old `read()`'s shape for
   D2; the reader refuses every `NEVER_READ` column for every caller (an ID number, a bank account, an account's business
-  number), and a linked row answered from another board is a stranger, counted and dropped. The SDK is analiza-metrics'
-  copy (its sha256 is pinned by a test). uvicorn's access line never carries a sessionToken (`NoTokenInAccessLog`).
+  number, and every mirror of one: three, read live 24.11), keeps only the cells it asked for, and a linked row answered
+  from another board is a stranger, counted and dropped. The SDK is analiza-metrics' copy (its sha256 is pinned by a test). uvicorn's access line never carries a sessionToken (`NoTokenInAccessLog`).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

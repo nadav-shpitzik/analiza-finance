@@ -236,8 +236,9 @@
     var u = b.user || {}, tabs = b.tabs || {};
     setLine("identity", "ok", ["משתמש " + u.id, "צפייה בלבד: " + yesNo(u.view_only), "אורח: " + yesNo(u.guest),
       "שדות הזהות: " + ((u.claims || []).join(", ") || "אין")]);
-    setLine("boards", "ok", ["בלוח Student Charge: " + (tabs.b2c ? "חבר" : "לא חבר"),
-      "בלוח B2B Charge: " + (tabs.b2b ? "חבר" : "לא חבר")]);
+    function member(v) { return v === true ? "חבר" : (v === false ? "לא חבר" : "לא ידוע: חברי הלוח לא נקראו עכשיו"); }
+    var unknown = (tabs.b2c !== true && tabs.b2c !== false) || (tabs.b2b !== true && tabs.b2b !== false);
+    setLine("boards", unknown ? "info" : "ok", ["בלוח Student Charge: " + member(tabs.b2c), "בלוח B2B Charge: " + member(tabs.b2b)]);
     var r = b.reading, last = b.last_attempt;
     if (!r) {
       setLine("reading", "no", "אין קריאה: " + readingWords(last && last.error) + (last && last.detail ? " (" + last.detail + ")" : ""));

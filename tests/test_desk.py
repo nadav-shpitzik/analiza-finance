@@ -152,6 +152,9 @@ class World:
         self.fail: list = []
         self.queries: list = []
         self.delay = 0.0
+        self.drop_cells: set = set()  # columns left out of by-id answers only (a column gone after the columns check)
+        self.subscribers_of: dict = {}  # board -> the board id monday's members answer names instead
+        self.extra_cells: dict = {}  # item id -> cells monday answers unasked
         self._lock = threading.Lock()
 
     def add(self, board: str, item_id: int, name: str, state: str = "active", **cells) -> None:
@@ -196,7 +199,8 @@ class World:
             if board in self.members_fail:
                 return httpx.Response(500, text="no")
             return httpx.Response(200, json={"data": {"boards": [
-                {"id": board, "subscribers": [{"id": u} for u in sorted(self.members.get(board, ()))]}]}})
+                {"id": self.subscribers_of.get(board, board),
+                 "subscribers": [{"id": u} for u in sorted(self.members.get(board, ()))]}]}})
         if "columns(ids:" in query:
             data = {}
             for k in [k for k in var if k.startswith("b")]:
@@ -225,9 +229,10 @@ class World:
                 if item is None:
                     continue  # monday leaves out an id it does not know
                 own = self.own_columns(item["board"])
+                cells = [self.cell(item, c) for c in var["cols"] if c in own and c not in self.drop_cells]
+                cells += [{"id": c, **v} for c, v in self.extra_cells.get(str(i), {}).items()]
                 out.append({"id": str(i), "name": item["name"], "state": item["state"], "created_at": "2026-11-01T00:00:00Z",
-                            "board": {"id": item["board"]},
-                            "column_values": [self.cell(item, c) for c in var["cols"] if c in own]})
+                            "board": {"id": item["board"]}, "column_values": cells})
             return httpx.Response(200, json={"data": {"items": out}})
         raise AssertionError("an unexpected query: " + query[:80])
 
@@ -563,10 +568,10 @@ def test_members_that_could_not_be_read_are_503_not_403(desk):
     assert resp.status_code == 503 and resp.json() == {"error": "members_unavailable"}
 
 
-def test_a_board_whose_members_could_not_be_read_counts_as_not_a_member(desk):
+def test_a_board_whose_members_could_not_be_read_opens_nothing_and_is_said_unknown(desk):
     desk.w.members_fail = {SC}
     body = desk.get(session_token(1)).json()  # on both, but Student Charge cannot be read
-    assert body["tabs"] == {"b2c": False, "b2b": True}
+    assert body["tabs"] == {"b2c": None, "b2b": True}  # unknown, never "not a member" (review 24.11)
     assert set(body["reading"]["boards"]) == set(rd.TAB_BOARDS["b2b"])
 
 
@@ -701,3 +706,262 @@ def test_the_access_log_never_carries_a_session_token():
         assert all(f.filter(record) for f in logging.getLogger("uvicorn.access").filters)
         line = record.getMessage()
         assert tok not in line and "[redacted]" in line and ("boardId=1" in line or "boardId" not in path)
+
+
+
+# ---- the review of 24.11 (on d019e9e): its five findings, and the mutants the suite let through ------------------------
+ID_MIRRORS = ("lookup_mm8b1jzy", "lookup_mm2kg3gw", "lookup_mm3y7rwr")  # ת.ז, ID, ח.פ: mirrors of an ID number (read 24.11)
+
+
+def test_the_mirrors_of_an_id_number_are_never_read_either():
+    w = world()
+    reader = reader_of(w)
+    for col in ID_MIRRORS + ("text_mm0skfxr",):
+        assert col in NEVER_READ
+        with pytest.raises(MondayError) as e:
+            reader.read_items([(["101"], [rd.SC["paid"]]), (["101"], [col])])  # in the second job, not the first
+        assert e.value.code == "never_read"
+    assert w.queries == []
+
+
+def test_a_read_by_id_must_name_its_columns():
+    w = world()
+    with pytest.raises(MondayError):
+        reader_of(w).read_items([(["101"], [])])
+    assert w.queries == []
+
+
+def test_a_cell_monday_answers_unasked_is_not_kept_and_a_never_read_one_never():
+    w = world()
+    w.extra_cells["302"] = {"text_mkzvem4": {"text": "012345678"}, "text_unasked": {"text": "x"}}
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None
+    rows = [x for k in ("enrollments", "leads", "cohorts", "deals", "accounts") for x in r[k]]
+    assert not any("text_mkzvem4" in x or "text_unasked" in x for x in rows)
+    assert monday.flatten({"id": 1, "column_values": [{"id": "lookup_mm8b1jzy", "display_value": "012345678"}]}) == {
+        "id": "1", "name": "", "created_at": "", "state": "active", "board_id": ""}
+
+
+def test_requests_refused_at_the_gate_never_spend_a_members_budget(desk, monkeypatch):
+    monkeypatch.setattr(dr, "DESK_PER_DAY", 3)
+    for tok in (session_token(9), session_token(9), session_token(9), session_token(1, is_guest=True), "a.b.c"):
+        assert desk.get(tok).status_code in (401, 403)
+    assert desk.get(session_token(1)).status_code == 200
+    assert desk.get(session_token(2)).status_code == 200
+    assert desk.get(session_token(3)).status_code == 200
+    resp = desk.get(session_token(1))  # the fourth member request of the day
+    assert resp.status_code == 429 and int(resp.headers["Retry-After"]) > 0
+
+
+@pytest.mark.parametrize("exp", [float("nan"), float("inf"), float("-inf")])
+def test_an_exp_that_is_not_a_finite_number_is_refused(exp):
+    with pytest.raises(AuthError):
+        verify_session_token(forge(good_payload(exp=exp)), SECRET, now=NOW + 10 ** 9)
+
+
+def test_an_id_is_an_integer_or_its_digits_never_a_float_rounded_into_one():
+    for dat in ({"user_id": 7.9, "account_id": ACCOUNT}, {"user_id": 7, "account_id": ACCOUNT + 0.5},
+                {"user_id": 7, "account_id": float(ACCOUNT)}, {"user_id": "7.0", "account_id": ACCOUNT},
+                {"user_id": "٧", "account_id": ACCOUNT}):
+        with pytest.raises(AuthError):
+            verify_session_token(forge(good_payload(dat=dat)), SECRET, now=NOW)
+    ident = verify_session_token(forge(good_payload(dat={"user_id": "7", "account_id": str(ACCOUNT)})), SECRET, now=NOW)
+    assert (ident.user_id, ident.account_id) == (7, ACCOUNT)
+
+
+def test_a_member_of_one_board_hears_only_of_their_own_tab(desk):
+    desk.w.count_off[B2] = 1  # B2B Charge reads short; the students' tab is whole
+    inna = desk.get(session_token(2)).json()  # Student Charge only
+    assert inna["reading"]["complete"] is True and set(inna["reading"]["boards"]) == set(rd.TAB_BOARDS["b2c"])
+    assert inna["last_attempt"] == {"read_at": inna["last_attempt"]["read_at"], "error": None, "complete": True}
+    both = desk.get(session_token(1)).json()
+    assert both["reading"]["complete"] is False and both["last_attempt"]["complete"] is False
+    assert "detail" in both["last_attempt"]
+
+
+def test_a_failed_reading_tells_its_detail_only_to_a_reader_of_both_tabs(desk):
+    desk.w.columns_missing[rd.ACCOUNTS_BOARD] = {rd.AC["terms"]}
+    inna = desk.get(session_token(2)).json()
+    assert inna["last_attempt"] == {"read_at": inna["last_attempt"]["read_at"], "error": "unknown_column", "complete": False}
+    assert rd.ACCOUNTS_BOARD in desk.get(session_token(1)).json()["last_attempt"]["detail"]
+
+
+def test_a_member_removed_during_an_outage_does_not_keep_the_old_grant():
+    clock, answers = Clock(), [{"1", "2"}, MondayError("http", "x")]
+
+    def read(board):
+        got = answers.pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    m = dg.Members(read, clock=clock)
+    assert m.member(2, "b") is True
+    clock.t += dg.MEMBERS_TTL_S + 1
+    assert m.member(2, "b") is None  # unknown now, not the list of five minutes ago
+    # and the failure is what is kept: said as failed, and not asked again on every open for thirty seconds
+    assert m.state() == {"b": "failed: http"}
+    clock.t += dg.MEMBERS_FAIL_TTL_S - 1
+    assert m.member(2, "b") is None and answers == []
+
+
+def test_a_board_that_answers_no_member_is_a_failed_read_and_is_asked_again():
+    clock, reads = Clock(), []
+    m = dg.Members(lambda board: reads.append(board) or set(), clock=clock)
+    assert m.member(1, "b") is None and m.state() == {"b": "failed: ValueError"}
+    clock.t += dg.MEMBERS_FAIL_TTL_S + 1
+    m.member(1, "b")
+    assert len(reads) == 2
+
+
+def test_members_of_a_cold_board_are_read_once_however_many_ask_at_once():
+    reads = []
+
+    def slow(board):
+        reads.append(board)
+        time.sleep(0.05)
+        return {"1"}
+
+    m = dg.Members(slow)
+    threads = [threading.Thread(target=m.member, args=(1, "b")) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert reads == ["b"]
+
+
+def test_members_answered_for_another_board_are_not_this_boards():
+    w = world()
+    w.subscribers_of[SC] = B2
+    with pytest.raises(MondayError) as e:
+        reader_of(w).board_subscribers(SC)
+    assert e.value.code == "not_visible"
+
+
+def test_the_instances_budget_refuses_once_spent():
+    limiter = dg.RateLimiter(per_user_hour=100, global_day=2)
+    assert limiter.check(1, now=0) is None and limiter.check(2, now=1) is None
+    assert limiter.check(3, now=2) == 86398
+    assert limiter.check(3, now=86401) is None
+
+
+def test_no_audit_line_carries_the_bearer(desk, caplog):
+    forged, expired = session_token(1, secret="other"), session_token(1, exp=time.time() - 3600)
+    with caplog.at_level(logging.INFO, logger="analiza_finance.desk"):
+        for tok in (forged, expired, "Bearer-looking-garbage"):
+            desk.get(tok)
+    lines = [r.getMessage() for r in caplog.records if r.name == "analiza_finance.desk"]
+    assert len(lines) == 3 and any("outcome=token_expired" in x for x in lines)
+    for tok in (forged, expired):
+        assert not any(part in x for part in tok.split(".") for x in lines)
+
+
+def test_the_access_log_keeps_no_piece_of_the_token():
+    tok = session_token(1)
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+                               ("1.2.3.4:5", "GET", f"/desk/?sessionToken={tok}&x=1", "1.1", 200), None)
+    for f in logging.getLogger("uvicorn.access").filters:
+        f.filter(record)
+    line = record.getMessage()
+    assert not any(part in line for part in tok.split(".")) and "x=1" in line
+
+
+def test_the_security_headers_are_exactly_these(desk):
+    for path in ("/desk/", "/api/desk", "/health"):
+        h = desk.client.get(path).headers
+        assert h["Content-Security-Policy"] == "frame-ancestors 'self' https://*.monday.com; object-src 'none'; base-uri 'none'"
+        assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "no-referrer"
+
+
+def test_a_validly_signed_token_past_the_size_cap_is_refused():
+    big = forge(good_payload(dat={"user_id": 7, "account_id": ACCOUNT, "pad": "x" * auth.TOKEN_MAX_CHARS}))
+    with pytest.raises(AuthError):
+        verify_session_token(big, SECRET, now=NOW)
+
+
+def test_the_leeway_is_sixty_seconds_to_the_second():
+    assert verify_session_token(forge(good_payload(exp=NOW - 60)), SECRET, now=NOW).user_id == 7
+    with pytest.raises(AuthError) as e:
+        verify_session_token(forge(good_payload(exp=NOW - 61)), SECRET, now=NOW)
+    assert e.value.error_key == "token_expired"
+
+
+def test_only_the_bearer_scheme_carries_the_token(desk):
+    tok = session_token(1)
+    for header in (tok, "Basic " + tok, "Token " + tok, "Bearer"):
+        assert desk.client.get("/api/desk", headers={"Authorization": header}).status_code == 401
+    assert desk.client.get("/api/desk", headers={"Authorization": "bearer " + tok}).status_code == 200
+
+
+def test_without_the_monday_token_the_desk_says_so(desk, monkeypatch):
+    monkeypatch.delenv("MONDAY_TOKEN")
+    resp = desk.get(session_token(1))
+    assert resp.status_code == 503 and resp.json() == {"error": "app_not_configured", "missing": ["MONDAY_TOKEN"]}
+
+
+def test_a_new_monday_token_makes_the_desks_state_again(desk, monkeypatch):
+    from app import config
+
+    first = dr.desk_state(main.app.state, config.load())
+    assert dr.desk_state(main.app.state, config.load()) is first
+    monkeypatch.setenv("MONDAY_TOKEN", TOKEN + "-new")
+    assert dr.desk_state(main.app.state, config.load()) is not first
+
+
+def test_a_charge_boards_row_answered_from_another_board_is_not_kept():
+    w = world()
+    w.items["102"]["board"] = OTHER_BOARD  # an id the board's pages gave, answered by id from another board
+    r = rd.read_desk(reader_of(w))
+    assert [x["id"] for x in r["student_charge"]["rows"]] == ["101", "103"]
+    assert r["checks"]["student_charge"]["strangers"] == 1 and r["complete"] is False
+
+
+def test_a_linked_row_of_the_right_board_without_a_column_fails_the_reading():
+    w = world()
+    w.drop_cells = {rd.CO["code"]}  # the cohorts' code, there at the check and gone by the read
+    r = rd.read_desk(reader_of(w))
+    assert r["checks"]["cohorts"]["short_rows"] == 2 and r["checks"]["cohorts"]["ok"] is False
+    assert r["complete"] is False
+
+
+def test_a_crashed_reading_is_never_complete():
+    class Broken(MondayReader):
+        def read_items(self, jobs):
+            raise KeyError("x")
+
+    r = rd.read_desk(Broken(TOKEN, client=httpx.Client(transport=world().transport()), sleep=lambda s: None))
+    assert r["error"] == "crashed" and r["complete"] is False and r["checks"] == {}
+
+
+def test_the_held_reading_gives_its_reader_a_deadline():
+    made = []
+
+    def make():
+        reader = reader_of(world())
+        made.append(reader)
+        return reader
+
+    rd.HeldReading(make, deadline_s=7).get()
+    assert made[0].deadline is not None and 0 < made[0].deadline - made[0].clock() <= 7
+
+
+def test_a_reading_exactly_a_minute_old_is_read_again():
+    w, clock = world(), Clock()
+    held = rd.HeldReading(lambda: reader_of(w), clock=clock)
+    held.get()
+    clock.t += rd.HELD_TTL_S
+    held.get()
+    assert len(w.queries_of("columns(ids:")) == 2
+
+
+def test_an_asset_asked_by_another_version_is_revalidated(desk):
+    assert desk.client.get("/desk/desk.js?v=000000000000").headers["Cache-Control"] == "no-cache"
+
+
+def test_the_pages_etag_follows_its_bytes(desk, tmp_path):
+    (tmp_path / "index.html").write_text("<p>a</p>", encoding="utf-8")
+    main.app.state.frontend_dir = str(tmp_path)
+    first = desk.client.get("/desk/").headers["ETag"]
+    (tmp_path / "index.html").write_text("<p>b</p>", encoding="utf-8")
+    assert desk.client.get("/desk/").headers["ETag"] != first

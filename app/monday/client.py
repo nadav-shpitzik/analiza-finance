@@ -60,15 +60,23 @@ CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_colu
          "never_read")
 DETAIL_MAX = 200
 
-# What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the vouchers board's `ת.ז`, and Accounts' business number,
-# which for a sole proprietor is the person's ID number (ADR-0173 §1: an ID number is never stored server side) - and a
-# refund's bank account on Student Charge.
+# What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the Directory's, the vouchers board's, and Accounts' business
+# number, which for a sole proprietor is the person's ID number (ADR-0173 §1: an ID number is never stored server side) -
+# every mirror of one of them on a board this service reads, and a refund's bank account on Student Charge. The mirrors
+# were read live on 24.11 (D1's review: a mirror carries its source's value, so refusing the source alone was not enough):
+# every mirror column of the seven boards the desk reads and of the vouchers board, with the column each one displays.
 NEVER_READ = frozenset({
     "text_mm8cxm9y", "text_mm8cv3v3", "text_mm8cgc0d", "text_mm8ckgh8",  # Student Charge: a refund's bank account
     "text_mkzvem4",  # Leads: ת.ז
+    "text_mm0skfxr",  # the Directory (5090589061): ID Number
     "text_mm0kgsx9",  # the vouchers board: ת.ז
     "text_mm3y3gm7",  # Accounts: the business number, a sole proprietor's ID number
+    "lookup_mm8b1jzy",  # Student Charge: "ת.ז", the mirror of Leads' text_mkzvem4
+    "lookup_mm2kg3gw",  # Enrollments: "ID", the mirror of the Directory's text_mm0skfxr
+    "lookup_mm3y7rwr",  # B2B Charge: "ח.פ", the mirror of Accounts' text_mm3y3gm7
 })
+# What a row is besides its cells: never dropped by the answer's filter (`flatten`'s `keep`)
+ROW_KEYS = ("id", "name", "created_at", "state", "board_id")
 
 _AUTH_RE = re.compile(r"unauthor|unauthenticated|not authenticated|invalid token", re.IGNORECASE)
 _RATE_RE = re.compile(r"complexity|rate.?limit", re.IGNORECASE)
@@ -124,17 +132,21 @@ def _text(value) -> str:
     return str(value or "").replace("\x00", "")
 
 
-def flatten(item: dict) -> dict:
+def flatten(item: dict, keep: Optional[Iterable[str]] = None) -> dict:
     """One item as a row: a status cell's label under the column id and its index under `id#` (a label is matched by its
     index, never its text), a relation's ids as a list, a mirror's display text, any other cell's text; and the board the
-    item answered from (`board_id`)."""
+    item answered from (`board_id`). With `keep`, a cell monday answered without being asked for it is dropped; a cell in
+    NEVER_READ is dropped always, asked or not (D1's review: the answer was kept whole)."""
     board = item.get("board") if isinstance(item.get("board"), dict) else {}
     row = {"id": str(item["id"]), "name": _text(item.get("name")), "created_at": _text(item.get("created_at")),
            "state": str(item.get("state") or "active"), "board_id": str(board.get("id") or "")}
+    wanted = None if keep is None else {str(k) for k in keep}
     for c in item.get("column_values") or []:
         if not isinstance(c, dict):
             continue
         cid = str(c.get("id"))
+        if cid in NEVER_READ or cid in ROW_KEYS or (wanted is not None and cid not in wanted):
+            continue
         if "linked_item_ids" in c:
             row[cid] = [str(x) for x in c.get("linked_item_ids") or []]
         elif "display_value" in c:
@@ -316,6 +328,9 @@ class MondayReader:
         order. A deleted item is dropped; an archived one is kept, its `state` saying so. A job that asks for a column
         in NEVER_READ is refused before anything is sent (rule 8)."""
         for _ids, cols in jobs:
+            if not list(cols):
+                # never an empty list: what monday answers to `column_values(ids: [])` is not verified, and may be everything
+                raise MondayError("graphql", "a read by id names its columns")
             asked = NEVER_READ.intersection(str(c) for c in cols)
             if asked:
                 raise MondayError("never_read", f"columns that are never read were asked: {sorted(asked)}")
@@ -332,8 +347,8 @@ class MondayReader:
             with ThreadPoolExecutor(max_workers=CHUNK_WORKERS, thread_name_prefix="monday-chunk") as pool:
                 answers = list(pool.map(one, pieces))
         out: list = [[] for _ in jobs]
-        for (j, _ids, _cols), items in zip(pieces, answers):
-            out[j] += [flatten(x) for x in items if isinstance(x, dict) and x.get("state") != "deleted"]
+        for (j, _ids, cols), items in zip(pieces, answers):
+            out[j] += [flatten(x, cols) for x in items if isinstance(x, dict) and x.get("state") != "deleted"]
         return out
 
     def read_boards(self, boards: list) -> list:

@@ -7,16 +7,19 @@ THE GATE, in order:
 1. no Client Secret here: 503 `app_not_configured` (a missing secret must not pass for "every token is forged");
 2. the sessionToken (app/desk/auth.py): 401 `unauthorized`, or 401 `token_expired`, which the page answers by asking
    monday for a fresh token once;
-3. the reader's budget: 429 `rate_limited` with Retry-After;
-4. a guest (`dat.is_guest` true): 403 `guest`. New here: the desk joins names and money from boards a guest is not on
+3. a guest (`dat.is_guest` true): 403 `guest`. New here: the desk joins names and money from boards a guest is not on
    (the leads, the cohorts, the deals, the accounts). In monday a guest reaches only shareable boards, so today's member
    check already keeps one out; this keeps it so if a charge board is ever shared. The claim's name is not verified live
    (auth.py rule 5): until it is, the membership check is what holds;
-5. membership of each charge board: the students' tab for Student Charge's members, the companies' tab for B2B
+4. membership of each charge board: the students' tab for Student Charge's members, the companies' tab for B2B
    Charge's (ACC-34: Inna is on the first and not the second), so nobody is shown a row their own board would not show
    them. Neither: 403 `not_a_board_member`. A board whose members could not be read counts as not a member (fail
    closed), and when neither answered yes and one could not be read the answer is 503 `members_unavailable`, not 403:
-   whether this reader may see the desk is not known yet, and a 403 would tell Inna she has no access at all.
+   whether this reader may see the desk is not known yet, and a 403 would tell Inna she has no access at all. The tab
+   of a board that could not be read is said as unknown (None), never as "not a member" (D1's review);
+5. the reader's budget, a member's only: 429 `rate_limited` with Retry-After. After the membership, so a request refused
+   at the gate costs nothing (D1's review: before it, anyone in the account could spend the day's budget and lock the
+   finance team out; analiza-metrics had the same order).
 
 A viewer (`dat.is_view_only`) passes: a viewer of Student Charge sees its rows in monday too. What a viewer may not do is
 write, and every write of the new desk is the person's own, in the browser (ADR-0188), where monday refuses it itself.
@@ -159,9 +162,11 @@ class Members:
 
 @dataclass(frozen=True)
 class Visitor:
+    """Who passed the gate. Each tab is True (a member), False (not), or None (the board's members could not be read):
+    only True opens a tab."""
     identity: SessionIdentity
-    b2c: bool  # a member of Student Charge: the students' tab
-    b2b: bool  # a member of B2B Charge: the companies' tab
+    b2c: Optional[bool]  # Student Charge: the students' tab
+    b2b: Optional[bool]  # B2B Charge: the companies' tab
 
 
 def gate(request: Request, client_secret: str, members: Members, limiter: RateLimiter, endpoint: str,
@@ -176,10 +181,6 @@ def gate(request: Request, client_secret: str, members: Members, limiter: RateLi
     except AuthError as exc:
         audit(None, endpoint, exc.error_key)
         return err(401, exc.error_key)
-    wait = limiter.check(identity.user_id)
-    if wait is not None:
-        audit(identity, endpoint, "rate_limited")
-        return err(429, "rate_limited", headers={"Retry-After": str(wait)}, retry_after_seconds=wait)
     if identity.guest is True:
         audit(identity, endpoint, "guest")
         return err(403, "guest")
@@ -191,4 +192,8 @@ def gate(request: Request, client_secret: str, members: Members, limiter: RateLi
             return err(503, "members_unavailable")
         audit(identity, endpoint, "not_a_member")
         return err(403, "not_a_board_member")
-    return Visitor(identity=identity, b2c=b2c is True, b2b=b2b is True)
+    wait = limiter.check(identity.user_id)
+    if wait is not None:
+        audit(identity, endpoint, "rate_limited")
+        return err(429, "rate_limited", headers={"Retry-After": str(wait)}, retry_after_seconds=wait)
+    return Visitor(identity=identity, b2c=b2c, b2b=b2b)

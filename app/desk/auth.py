@@ -10,9 +10,11 @@ tokens with the same Client Secret: `MONDAY_CLIENT_SECRET` here holds the value 
 The rules:
 1. the header's `alg` is exactly HS256;
 2. the signature matches the Client Secret, compared in constant time;
-3. `exp` is required and enforced with 60 s of leeway: a token without one would be a credential for ever;
+3. `exp` is required, a finite number, and enforced with 60 s of leeway: a token without one, or with NaN or Infinity
+   (which `json.loads` accepts; D1's review), would be a credential for ever;
 4. `dat.account_id` is Analiza's account, pinned here. No setting unpins it (in analiza-metrics an explicit "0" did);
-5. who it is comes from the verified payload only: the user, the account, and whether monday says a viewer or a guest.
+5. who it is comes from the verified payload only: the user, the account (each an integer, or a string of digits; never
+   a float rounded into one, D1's review), and whether monday says a viewer or a guest.
    `dat.is_view_only` and `dat.is_guest` are read as booleans when they are booleans, and as "not said" (None) otherwise:
    their names are not verified live yet (analiza-metrics `docs/monday-app-setup.md` §3ב item 4), and the skeleton's page
    shows which claims a real token carried, so D1 settles it.
@@ -24,6 +26,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -62,6 +65,17 @@ def _flag(value) -> Optional[bool]:
     return value if isinstance(value, bool) else None
 
 
+def _whole(value) -> Optional[int]:
+    """An id as monday sends it: an integer, or a string of ASCII digits. Anything else (a float, a bool) is None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 20:
+        return int(value)
+    return None
+
+
 def verify_session_token(token: str, client_secret: str, account_id: int = ANALIZA_ACCOUNT_ID,
                          now: Optional[float] = None) -> SessionIdentity:
     if not client_secret or not account_id:
@@ -89,7 +103,7 @@ def verify_session_token(token: str, client_secret: str, account_id: int = ANALI
     if not isinstance(payload, dict):
         raise AuthError("unauthorized")
     exp = payload.get("exp")
-    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
         raise AuthError("unauthorized")
     current = time.time() if now is None else now
     if current > float(exp) + EXP_LEEWAY_SECONDS:
@@ -98,12 +112,8 @@ def verify_session_token(token: str, client_secret: str, account_id: int = ANALI
     dat = payload.get("dat")
     if not isinstance(dat, dict):
         raise AuthError("unauthorized")
-    try:
-        user_id = int(dat.get("user_id"))
-        token_account = int(dat.get("account_id"))
-    except (TypeError, ValueError):
-        raise AuthError("unauthorized") from None
-    if isinstance(dat.get("user_id"), bool) or isinstance(dat.get("account_id"), bool) or user_id <= 0:
+    user_id, token_account = _whole(dat.get("user_id")), _whole(dat.get("account_id"))
+    if user_id is None or token_account is None or user_id <= 0:
         raise AuthError("unauthorized")
     if token_account != int(account_id):
         raise AuthError("unauthorized")
