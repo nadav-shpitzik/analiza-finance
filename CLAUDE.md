@@ -112,7 +112,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   also says `refused` and `group`) judges every Student Charge row of the desk's reading, and three buckets are marks on the row
   (`books_ref_invalid`, `books_amount_differs`, `books_receipt_unpaid`): a red chip with its words filled on the server, under
   the row's state and in "מה לבדוק" (no column added: QA 4's widths), a sentence in the details, the chip in the files. A
-  cited number past the last of its series (`not_yet_read`) is not yet in the copy (read hourly): no mark, a note in the details. A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
+  cited number past the last of its series (`not_yet_read`) is not yet in the copy (read hourly): no mark, a note in the details.
+  `books_receipt_unpaid` is read off the row's group (`receipt_unpaid_facts`: A1 matched it, `RECEIPT_BUCKETS` by name; sums
+  within the tolerance; invoice-receipts only; a status that says no money), not off A1's order of buckets (`dates_differ` comes before the status). A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
   too (`books_task`: filter_b2c and the page's scFilter alike). Under "לטיפול", the documents of the era no charge row cites:
   the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
   companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted

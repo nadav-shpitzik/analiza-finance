@@ -187,30 +187,38 @@ def marks(part) -> dict:
 
 
 def test_every_mark_is_a1s_bucket_and_every_other_bucket_gives_none():
-    """The invariant of the marks: for the same rows and the same copy, a row is marked exactly when A1 put it in a bucket
-    of MARK_OF_BUCKET (and `status_not_money_in` only when its group holds an invoice-receipt), with that bucket's mark."""
+    """The invariant of the marks, for the same rows and the same copy: `books_ref_invalid` only on a row A1 refused for its
+    numbers (MARK_OF_BUCKET), `books_amount_differs` only on `amount_mismatch`, `books_receipt_unpaid` only on a matched
+    group (RECEIPT_BUCKETS: here `dates_differ`, `status_not_money_in`) whose facts say so - and no mark on any other bucket.
+    A1's buckets are what they were."""
     docs = [doc(62500), doc(62501), doc(62600), doc(62600), doc(70100, doc_type=3), doc(50400, doc_type=1, total="-4000"),
             doc(63109, total="4000"), doc(62800, total="3347.46"), doc(62502), doc(50401, doc_type=1),
-            doc(62990, day="2025-12-28"), doc(62700, missing=True), doc(62510, total="10000")]
+            doc(62990, day="2025-12-28"), doc(62700, missing=True), doc(62510, total="10000"),
+            doc(62503, day="2026-11-03"), doc(62504, day="2026-11-05"), doc(62505, day="2026-11-03"),
+            doc(62506, day="2026-11-05")]
     rows = [pay(1, "62500"), pay(2, "10500"), pay(3, "62600"), pay(4, "70100"), pay(5, "50400"), pay(6, "63109"),
             pay(7, "63109"), pay(8, "62800", paid="3350"), pay(9, "62502", st="0"), pay(10, "50401", st="0"),
             pay(11, "62990"), pay(12, "62700"), pay(13, ""), pay(14, "62,5O1"), pay(15, "62510", paid="4000"),
-            pay(16, "62510", paid="6000"), pay(17, "62501", paid="")]
+            pay(16, "62510", paid="6000"), pay(17, "62501", paid=""), pay(18, "62503, 62504", paid="8000", st="0"),
+            pay(19, "62505, 62506", paid="8000")]
     part, view, reading = run(rows, docs)
     buckets = a1.analyse(reading["student_charge"]["rows"], docs)["rows"]
-    got = {i: [m["kind"] for m in ms] for i, ms in part["marks"].items()}
-    for item_id, entry in buckets.items():
-        want = db.MARK_OF_BUCKET.get(entry["bucket"])
-        if entry["bucket"] == "status_not_money_in":
-            want = want if any(a1.role(d.get("doc_type")) == "invoice_receipt"
-                               for n in entry["group"]["documents"] for d in a1.index_documents(docs)[n]) else None
-        assert got.get(item_id, [None]) == [want], (item_id, entry["bucket"])
+    got = {int(i): [m["kind"] for m in ms] for i, ms in part["marks"].items()}
+    assert got == {2: ["books_ref_invalid"], 3: ["books_ref_invalid"], 4: ["books_ref_invalid"], 5: ["books_ref_invalid"],
+                   6: ["books_amount_differs"], 7: ["books_amount_differs"], 9: ["books_receipt_unpaid"],
+                   18: ["books_receipt_unpaid"]}
+    for item_id, kinds in got.items():
+        bucket = buckets[str(item_id)]["bucket"]
+        allowed = {"books_ref_invalid": db.REF_BUCKETS, "books_amount_differs": ("amount_mismatch",),
+                   "books_receipt_unpaid": db.RECEIPT_BUCKETS}[kinds[0]]
+        assert bucket in allowed, (item_id, bucket)
     assert part["buckets"] == {i: e["bucket"] for i, e in buckets.items()}
+    assert (buckets["18"]["bucket"], buckets["19"]["bucket"]) == ("dates_differ", "dates_differ")
     # the buckets this set reaches, so the test is not vacuous
     seen = {e["bucket"] for e in buckets.values()}
     assert {"ref_not_in_books", "ref_ambiguous", "ref_not_an_invoice", "amount_mismatch", "rounding_band",
             "status_not_money_in", "invoice_needs_receipt", "out_of_window", "document_missing", "no_ref",
-            "ref_unreadable", "filled_same", "amount_unreadable"} <= seen
+            "ref_unreadable", "filled_same", "amount_unreadable", "dates_differ"} <= seen
 
 
 def test_books_ref_invalid_names_each_number_and_why():
@@ -287,6 +295,61 @@ def test_an_invoice_receipt_on_a_row_whose_status_says_no_money_came_is_marked_t
                   3: [("books_receipt_unpaid", 'בחשבשבת חשבונית מס/קבלה 62504, והסטטוס "מלגת אנליזה"')]}
     assert part["marks"]["1"][0]["text"] == ('בחשבשבת חשבונית מס/קבלה 62502 מ-03.11.2026 על 4,000.00 ₪ כולל מע"מ, כלומר הכסף '
                                              'התקבל, וסטטוס התשלום בשורה "לא שולם".')
+
+
+def test_the_case_of_23_11_is_read_off_the_group_whatever_a1s_order_of_buckets():
+    """`books_receipt_unpaid` does not depend on A1's order of buckets: A1 judges a group's days (`dates_differ`) before a
+    row's status, so a "לא שולם" row citing two invoice-receipts of different days had no mark. The mark is read off the
+    group itself (A1's `group`): matched (its bucket from `dates_differ` on), its two sums within the tolerance, an
+    invoice-receipt in it, and a status that does not say the money came in. A1's buckets do not change; a group out of the
+    window (FR-7), one waiting for its receipt, one in the rounding band and one whose sums differ are no such case."""
+    docs = [doc(62502, day="2026-11-03"), doc(62503, day="2026-11-05"), doc(62504, day="2026-11-03"),
+            doc(62505, day="2026-11-06"), doc(62506, day="2026-11-03"), doc(62507, day="2026-11-04"),
+            doc(62508, total="3000", day="2026-11-03"), doc(62509, day="2026-11-08"), doc(50401, doc_type=1),
+            doc(62510, day="2026-11-03"), doc(62511, day="2025-12-30")]
+    rows = [pay(1, "62502, 62503", paid="8000", st="0"),   # "לא שולם", two days: the case - marked
+            pay(2, "62504, 62505", paid="8000", st="1"),   # "שולם", the same shape: the money came in, no mark
+            pay(3, "62506, 62507", paid="8100", st="0"),   # the sums differ: the amount's mark, not this one
+            pay(4, "62508, 62509", paid="7005", st="0"),   # 5 past 7,000 over two documents: the rounding band, no mark
+            pay(5, "50401, 62510", paid="8000", st="0"),   # a tax invoice in it: it waits for its receipt, no mark
+            pay(6, "62511", st="2")]                       # out of the window (FR-7): never a gap
+    part, _v, reading = run(rows, docs)
+    buckets = {int(i): e["bucket"] for i, e in a1.analyse(reading["student_charge"]["rows"], docs)["rows"].items()}
+    assert buckets == {1: "dates_differ", 2: "dates_differ", 3: "amount_mismatch", 4: "rounding_band",
+                       5: "invoice_needs_receipt", 6: "out_of_window"}
+    assert {int(i): [(m["kind"], m["chip"]) for m in ms] for i, ms in part["marks"].items()} == {
+        1: [("books_receipt_unpaid", 'בחשבשבת חשבונית מס/קבלה 62502, 62503, והסטטוס "לא שולם"')],
+        3: [("books_amount_differs", "בשורה 8,100.00 ₪, בחשבשבת 8,000.00 ₪")]}
+    assert part["marks"]["1"][0]["text"] == ('בחשבשבת חשבונית מס/קבלה 62502, 62503 מ-03.11.2026, 05.11.2026 על 8,000.00 ₪ '
+                                             'כולל מע"מ, כלומר הכסף התקבל, וסטטוס התשלום בשורה "לא שולם".')
+    assert part["marks"]["1"][0]["documents"] == ["62502", "62503"]
+
+
+def test_the_receipts_mark_reads_its_facts_off_the_group_and_names_its_buckets():
+    """The facts are the group's and the row's, not the bucket's: a matched bucket alone is no mark. Each fact is broken
+    on its own on the same group (sums past the tolerance, a tax invoice in it, a status that says the money came, a
+    bucket of a group A1 did not match). RECEIPT_BUCKETS are named; today they are A1's order from `dates_differ` on, so a
+    bucket A1 adds or moves fails here and is judged instead of changing a mark in silence."""
+    assert db.RECEIPT_BUCKETS == a1.BUCKETS[a1.BUCKETS.index("dates_differ"):]
+    docs = [doc(62502, day="2026-11-03"), doc(62503, day="2026-11-05"), doc(50401, doc_type=1)]
+    by_number = a1.index_documents(docs)
+
+    def entry(bucket="status_not_money_in", numbers=("62502", "62503"), paid="8000", total="8000"):
+        return {"bucket": bucket, "group": {"rows": ["1"], "documents": list(numbers), "paid": Decimal(paid),
+                                            "total": Decimal(total)}}
+
+    unpaid, paid = {"status_idx": "0"}, {"status_idx": "1"}
+    assert db.receipt_unpaid_facts(entry(), unpaid, by_number) == ["62502", "62503"]
+    assert db.receipt_unpaid_facts(entry("dates_differ"), unpaid, by_number) == ["62502", "62503"]
+    assert db.receipt_unpaid_facts(entry(), {"status_idx": ""}, by_number) == ["62502", "62503"]
+    assert db.receipt_unpaid_facts(entry(paid="8001"), unpaid, by_number) == ["62502", "62503"]   # 1 ₪ a document
+    assert db.receipt_unpaid_facts(entry(paid="8003"), unpaid, by_number) == []                  # past it
+    assert db.receipt_unpaid_facts(entry(numbers=("50401", "62502")), unpaid, by_number) == []   # a tax invoice in it
+    assert db.receipt_unpaid_facts(entry(), paid, by_number) == []
+    for bucket in ("group_tangled", "out_of_window", "document_missing", "amount_mismatch", "rounding_band",
+                   "invoice_needs_receipt"):
+        assert db.receipt_unpaid_facts(entry(bucket), unpaid, by_number) == [], bucket
+    assert db.receipt_unpaid_facts({"bucket": "status_not_money_in", "group": None}, unpaid, by_number) == []
 
 
 def test_a_mark_moves_no_row_changes_no_sum_and_joins_tasks_only_from_the_era():
