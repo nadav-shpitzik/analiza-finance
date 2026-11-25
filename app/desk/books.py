@@ -181,7 +181,8 @@ KEYS_DEADLINE_S = 20
 STORE_FAIL_GAP_S = 30
 # the same reading asks again whether the copy moved (its last finished run) at most this often: a tick is hourly
 RUN_CHECK_S = 15
-# a request that finds the part being computed waits at most this long, then is answered with the last part
+# a request that may read and finds the part being computed waits at most this long, then is answered with the last
+# part; an answer at once (D2's `refreshing`) never waits for it
 WAIT_S = 30
 
 
@@ -729,7 +730,7 @@ class DeskBooks:
     """The books part of the desk, one per instance: `answer(cfg, reading, view)` is the part for the reading shown,
     computed when the reading or the copy changed (the cache's key: the reading's time and the last finished run of the
     copy), else the part already computed. One computation at a time; a request that waits longer than WAIT_S gets the
-    last part. `current()` is the part last answered (the totals and the files use it: they never read). `health()`: its
+    last part, and an answer at once does not wait at all. `current()` is the part last answered (the totals and the files use it: they never read). `health()`: its
     state, its copy's time and its reasons, and the Accounts' keys' time - never a count."""
 
     def __init__(self, make_store: Callable[[str], Any], make_reader: Callable[[], MondayReader],
@@ -750,13 +751,17 @@ class DeskBooks:
 
     def answer(self, cfg: Any, reading: dict, view: dict, may_read: bool = True) -> dict:
         """The part for this reading. `may_read` false (an answer at once, D2's `refreshing`): monday is never read for it -
-        with no Account's key held, the part says `pending` and is not kept, and the page's next request computes it."""
+        with no Account's key held, the part says `pending` and is not kept, and the page's next request computes it - and
+        it never waits for another request's computation: with the lock taken it is answered with the part held, or
+        `pending` (the review of dfa967b: it waited up to WAIT_S behind a computation that may read the whole Accounts
+        board and the copy, on a cold instance the common case)."""
         off = self._off(cfg)
         if off is not None:
             self.part = off
             return off
-        if not self._lock.acquire(timeout=WAIT_S):
-            return self.part or self._made("none", ["busy"])
+        got = self._lock.acquire(timeout=WAIT_S) if may_read else self._lock.acquire(blocking=False)
+        if not got:
+            return self.part or self._made("none", ["busy" if may_read else "pending"])
         try:
             return self._answer(cfg, reading, view, may_read)
         finally:

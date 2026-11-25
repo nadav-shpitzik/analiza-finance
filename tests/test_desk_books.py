@@ -622,6 +622,9 @@ def test_a_common_name_shows_ten_candidates_and_how_many_more():
 
 
 # ---- only a whole copy on a whole reading changes what is shown (spec §6.1.5) ------------------------------------------------
+import threading  # noqa: E402
+import time  # noqa: E402
+
 from app.books.store import BooksStoreError  # noqa: E402
 
 
@@ -774,6 +777,84 @@ def test_a_database_that_fails_is_said_by_class_and_not_asked_again_for_a_while(
     store.fail = None
     tick.t += 2
     assert b.answer(CFG, reading, view)["state"] == "ok" and store.runs == asked + 1
+
+
+class SlowKeys(FakeKeys):
+    """The Accounts board read slowly: `get` that may read blocks until released (a read of monday in progress)."""
+
+    def __init__(self, keys):
+        super().__init__(keys)
+        self.started, self.release = threading.Event(), threading.Event()
+
+    def get(self, may_read=True):
+        self.asked += 1
+        if may_read:
+            self.started.set()
+            self.release.wait(10)
+        return self.keys
+
+
+def test_an_answer_at_once_does_not_wait_for_another_requests_computation(monkeypatch):
+    """The review of dfa967b, finding 4 (tests/test_review_d3_at_once_waits.py, ported): D2's answer at once (`refreshing`)
+    is the fast path of an open, and it waited up to WAIT_S behind another request's computation - which may read the whole
+    Accounts board and the copy; on a cold instance, the page's own `?fresh=1` computing while a second open arrives, the
+    common case. It takes the lock without waiting, and is answered with what is held: here nothing yet, so `pending`.
+    WAIT_S is shortened so the test is quick; the code waits the same way at 30 s."""
+    monkeypatch.setattr(db, "WAIT_S", 3)
+    store = FakeCopy(copy(DOCS))
+    b = holder(store)
+    b.keys = SlowKeys({})
+    reading, view = reading_view(ROWS, n=1)
+    other, view2 = reading_view(ROWS, n=2)
+    t = threading.Thread(target=lambda: b.answer(CFG, reading, view, may_read=True), daemon=True)
+    t.start()
+    assert b.keys.started.wait(5)                                            # the first request computes, holding the lock
+    try:
+        t0 = time.monotonic()
+        got = b.answer(CFG, other, view2, may_read=False)                    # an open answered at once
+        waited = time.monotonic() - t0
+    finally:
+        b.keys.release.set()
+        t.join(10)
+    assert waited < 1.0, "the answer at once waited %.1f s for another request's computation" % waited
+    assert (got["state"], got["reasons"]) == ("none", ["pending"])
+    # with a part held, an answer at once while another computes is that part
+    b.keys.started.clear()
+    b.keys.release.clear()
+    third, view3 = reading_view(ROWS, n=3)
+    t = threading.Thread(target=lambda: b.answer(CFG, third, view3, may_read=True), daemon=True)   # a new reading
+    t.start()
+    try:
+        assert b.keys.started.wait(5)
+        assert b.answer(CFG, other, view2, may_read=False) is b.part and b.part["state"] == "ok"
+    finally:
+        b.keys.release.set()
+        t.join(10)
+
+
+def test_a_request_that_may_read_waits_for_the_computation_in_progress_and_answers_its_part(monkeypatch):
+    """The other side (C04 of the review's mutants): a request that may read and finds the part being computed waits for
+    it, up to WAIT_S, and is answered with the part that computation made - never `busy` at once."""
+    monkeypatch.setattr(db, "WAIT_S", 5)
+    store = FakeCopy(copy(DOCS))
+    b = holder(store)
+    b.keys = SlowKeys({})
+    reading, view = reading_view(ROWS)
+    first, second = {}, {}
+    t1 = threading.Thread(target=lambda: first.update(part=b.answer(CFG, reading, view)), daemon=True)
+    t1.start()
+    assert b.keys.started.wait(5)
+    t2 = threading.Thread(target=lambda: second.update(part=b.answer(CFG, reading, view)), daemon=True)
+    t2.start()
+    t2.join(0.3)
+    try:
+        assert t2.is_alive() and "part" not in second                       # it waits for the computation
+    finally:
+        b.keys.release.set()
+        t1.join(10)
+        t2.join(10)
+    assert first["part"]["state"] == "ok" and second["part"] is first["part"]
+    assert store.snapshots == 1                                              # computed once, by the first
 
 
 def test_without_the_accounts_keys_nothing_is_computed():
