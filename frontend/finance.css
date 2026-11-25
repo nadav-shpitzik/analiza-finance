@@ -413,3 +413,11 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-billing-form .fin-input, #screen-finance .fin-billing-form .fin-select { width: 100%; min-width: 0; }
 #screen-finance .fin-billing-form small { font-size: 12px; line-height: 1.4; }
 #screen-finance .fin-billing-note { color: var(--fin-ink); background: var(--fin-q); border-radius: 6px; padding: 4px 8px; margin-top: 2px; }
+
+/* D3: what the books say that monday does not (frontend/finance.js booksChips, booksHtml) - a mark under the row's state,
+   and the books' lists under "לטיפול", each a panel of its own with the copy's time */
+#screen-finance .fin-books-chips { margin-top: 4px; }
+#screen-finance .fin-panel.fin-books { margin-top: 16px; }
+#screen-finance .fin-books-asof { margin: 6px 0 0; max-width: 760px; font-size: 13px; line-height: 1.5; }
+#screen-finance .fin-books .fin-cand + .fin-cand { margin-top: 3px; }
+#screen-finance table.fin-books-t td { vertical-align: top; }

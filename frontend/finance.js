@@ -120,6 +120,24 @@
  *      below it otherwise, never over it, so the pointer that pressed is never on "כתיבה"; it follows a scroll and a resize
  *      (placePop). The focus still goes to its box, never to "כתיבה", and scrolls nothing. A row's details' own plan is as
  *      it was: under its button, which does not move.
+ * D3 (25.11, Analiza-Monday backlog 0301 D3; the desk move plan §1a.2): what the books (Hashavshevet) say that monday does
+ * not, read only - every word, number and list from the server (app/desk/books.py), drawn here, nothing computed:
+ * D3 1 Three chips of the books on a Student Charge row, from A1's own judgement of it: "מספר החשבונית שבשורה לא נמצא
+ *      בחשבשבת כמסמך תקף: ...", "בשורה X, בחשבשבת Y" and "בחשבשבת חשבונית מס/קבלה N, והסטטוס ...". Red (BAD: the row
+ *      contradicts the books), in FLAG_ORDER right after the contradictions between two columns, their words filled on the
+ *      server (flagText takes them from the row's `books`), and said again in the row's details, in a sentence (WARN). A
+ *      mark moves no row: its state, its tile and every sum stay the server's, as before.
+ * D3 2 "לטיפול" on the students' tab holds a marked row from 25.10.2026 on (`books_task`, the same rule as the server's
+ *      filter_b2c) beside the rows of its task states, and the tile counts what the server counted (each period's
+ *      `tasks`). A row's marks sit under its state wherever a list shows "שיבוץ" ("לטיפול", "הכל" and the rest), and in
+ *      "מה לבדוק" where a list has it: no column was added, so QA 4's widths hold. An older marked row keeps its mark.
+ * D3 3 Under "לטיפול", on each tab, "מסמכים בחשבשבת בלי חיוב במאנדיי" (booksHtml): on the students' tab each document
+ *      with its candidates by name - rows of Student Charge named like the card, under "מועמדת לפי שם", each opening its
+ *      card in monday, never drawn as a match; on the companies' tab with the company whose key the card is, and the line
+ *      of the vouchers' card. The documents of a card whose side is not clear come only to a member of both charge
+ *      boards, and are drawn under both tabs. A search stays on the rows.
+ * D3 4 The books' state: "לפי הספרים נכון ל-..." above the lists and in the footer, or why not, in the server's sentence
+ *      (`view.books.said`). The totals of "לטיפול" are asked by the books' part on the screen (`books`), as by its reading.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -155,6 +173,10 @@
     refund_date_on_status: "תאריך החזר בסטטוס {status}", unlinked: "בלי הרשמה ובלי ליד מקור",
     /* a receipt that went out on a payment that brought no money in: in "חריג, לבדיקה" (QA 24.11, the server's rule 6) */
     receipt_no_money: "שליחת קבלה: יצאה, בסטטוס {status}",
+    /* D3: what the books contradict on the row - the server fills each "{...}" (the row's `books`; booksMark) */
+    books_ref_invalid: "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
+    books_amount_differs: "בשורה {row}, בחשבשבת {books}",
+    books_receipt_unpaid: "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -165,12 +187,13 @@
   var FLAG_ON = { b2: { amount_missing: "סכום לחיוב (ללא מע\"מ) לא הוקלד" } };
   var BAD = { refund_overdue: 1, refund_last_day_passed: 1, refund_exceeds_paid: 1, invoice_late: 1, no_contract: 1,
     over_deal_value: 1, status_unknown: 1, credit_on_status: 1, refund_amount_on_status: 1, refund_date_on_status: 1,
-    receipt_no_money: 1 };
+    receipt_no_money: 1, books_ref_invalid: 1, books_amount_differs: 1, books_receipt_unpaid: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
     billed_no_invoice: 1, terms_missing: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
-    "receipt_no_money", "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
+    "receipt_no_money", "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid", "refund_last_day_passed",
+    "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
     "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
@@ -268,7 +291,20 @@
   function chipClass(k) { return BAD[k] ? "fin-chip bad" : TASK[k] ? "fin-chip" : "fin-chip q"; }
   /* a row's "סטטוס תשלום" inside a sentence: quoted, as monday spells it, or "ריק" */
   function statusWord(r) { return r.status ? "\"" + r.status + "\"" : "ריק"; }
-  function flagText(k, r) { return (((FLAG_ON[r.board] || {})[k]) || FLAG[k]).replace("{status}", statusWord(r)); }
+  /* D3: a mark of the books on the row, its words filled on the server (app/desk/books.py): its chip and its sentence */
+  function booksMark(r, k) { return (r.books || []).filter(function (m) { return m.kind === k; })[0] || null; }
+  /* the row's marks as chips, in FLAG_ORDER: where a list shows "שיבוץ" (every general list, "לטיפול" among them) they sit
+     under the state; a list with "מה לבדוק" says them there, among the row's other chips */
+  function booksChips(r) {
+    var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); });
+    return keys.length ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
+      return "<span class=\"" + chipClass(k) + "\">" + esc(booksMark(r, k).chip) + "</span>";
+    }).join("") + "</div>" : "";
+  }
+  function flagText(k, r) {
+    var m = booksMark(r, k);
+    return m ? m.chip : (((FLAG_ON[r.board] || {})[k]) || FLAG[k]).replace("{status}", statusWord(r));
+  }
   /* what to look at in a row, as chips: its flags in FLAG_ORDER, at most five and "ועוד N" */
   function rowChips(r) {
     var keys = FLAG_ORDER.filter(function (k) { return r.flags.indexOf(k) !== -1; });
@@ -302,7 +338,8 @@
     /* Student Charge's "נציג מכירות" (17.11): the Owner of the payment's lead, read with the lead (app/finance.py lead_rep) */
     rep: { h: "נציג מכירות", xs: 1, c: function (r) { return r.rep ? esc(r.rep) : NOT_SET; } },
     cohort: { h: "מחזור", xs: 1, c: function (r) { return r.cohort_code ? "<span title=\"" + esc(r.cohort_title) + "\">" + ltr(r.cohort_code) + "</span>" : "<span class=\"fin-subtle\">-</span>"; } },
-    state: { h: "שיבוץ", c: function (r) { return stateChip(r.state); } },
+    /* D3: beside its state, the row's marks of the books - red, in the server's words; the mark moves no row */
+    state: { h: "שיבוץ", c: function (r) { return stateChip(r.state) + booksChips(r); } },
     credit_ref: { h: "אסמכתת זיכוי", xs: 1, c: function (r) { return ltr(r.credit_ref) || "<span class=\"fin-subtle\">-</span>"; } },
     /* "סכום ששולם" as monday holds it: counted where the status brought money in, struck through where it did not */
     received: { h: "סכום ששולם", n: 1, t: "money_in", c: function (r) {
@@ -559,7 +596,8 @@
     (periodKey ? periodKey.split("+") : []).forEach(function (m) { months[m] = 1; });
     b2c.states.forEach(function (x) { if (x.task) { tasks[x.key] = 1; } });
     var out = rows.filter(function (r) {
-      var keep = st === "tasks" ? !!tasks[r.state] : (!st || st === r.state);
+      /* D3: "לטיפול" holds a row the books mark from 25.10.2026 on, in its own state (`books_task`) */
+      var keep = st === "tasks" ? !!tasks[r.state] || !!r.books_task : (!st || st === r.state);
       return keep && (!periodKey || !!months[r.month]) && scMatch(r, q);
     });
     var one = st && st !== "tasks" ? st : "";
@@ -632,7 +670,8 @@
   }
   function statesHtml(p) {
     var tasks = VIEW.b2c.states.filter(function (s) { return s.task; }), rest = VIEW.b2c.states.filter(function (s) { return !s.task; });
-    var open = tasks.reduce(function (a, s) { return a + p.states[s.key].count; }, 0);
+    /* D3: the server counts "לטיפול" itself (its task states and the rows the books mark from 25.10.2026 on) */
+    var open = p.tasks != null ? p.tasks : tasks.reduce(function (a, s) { return a + p.states[s.key].count; }, 0);
     return "<div class=\"fin-states\" role=\"group\" aria-label=\"שיבוץ התקבולים\"><div class=\"fin-stategroup\">" +
       tile("tasks", "לטיפול", open, null, true) +
       tasks.map(function (s) { var x = p.states[s.key]; return tile(s.key, s.label, x.count, money(x.money), true); }).join("") +
@@ -731,8 +770,13 @@
       return (r.enrollment_linked ? "בהרשמה אין תאריך בקשת ביטול" : "התקבול לא מקושר להרשמה") + ", ולכן " + LAST_DAY_LABEL + " לא ידוע";
     },
     refund_exceeds_paid: "סכום החזר גדול מסכום ששולם (נספר עד סכום ששולם)",
-    refund_amount_missing: "סטטוס התשלום אומר שהוחזר, וסכום החזר לא הוקלד", unlinked: "התקבול לא מקושר להרשמה או לליד מקור"
+    refund_amount_missing: "סטטוס התשלום אומר שהוחזר, וסכום החזר לא הוקלד", unlinked: "התקבול לא מקושר להרשמה או לליד מקור",
+    /* D3: the server's sentence of each mark of the books (which number and why, the two sums, the document) */
+    books_ref_invalid: function (r) { return booksText(r, "books_ref_invalid"); },
+    books_amount_differs: function (r) { return booksText(r, "books_amount_differs"); },
+    books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
   };
+  function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
   var WARN_ON = { b2: { amount_missing: FLAG_ON.b2.amount_missing } };
   function warnings(r) {
     var w = r.flags.filter(function (f) { return WARN[f]; }).map(function (f) {
@@ -857,14 +901,15 @@
       ["סטודנטים", NF.format(p.students)]], "הסכומים כולל מע\"מ", periodSelect());
     /* an asterisk is explained under the list that shows it, and only when it does */
     var guessed = cols.indexOf("refunded") !== -1 && rows.some(refundGuessed);
-    /* a search's totals are of every payment it found, as its Excel file (exportList) */
-    var tot = { body: totalsFor({ tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() }),
-      what: ["תקבול אחד", "תקבולים"] };
+    /* a search's totals are of every payment it found, as its Excel file (exportList); D3: of the books' part on the screen */
+    var tp = { tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() };
+    if (VIEW.books && VIEW.books.key) { tp.books = VIEW.books.key; }
+    var tot = { body: totalsFor(tp), what: ["תקבול אחד", "תקבולים"] };
     var list = rows.length ? table(rows, cols, detailHtml, null, exportable() ? tot : null) + listNotes([
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
     OUTSIDE = null;
-    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list);
+    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + (key === "tasks" && !q ? booksHtml("b2c") : "");
   }
   /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
      count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
@@ -899,6 +944,76 @@
       var a = document.createElement("a"); a.href = url; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove();
       said();
     }).catch(function (e) { flash(errorText(e)); });
+  }
+
+  /* ---------- D3: what the books say that monday does not (app/desk/books.py) ----------
+     Under "לטיפול", a list of its own on each tab: the books' documents of the era that no charge row cites. Everything is
+     the server's - the documents, their candidates, the sentences; nothing is counted or matched here. A candidate by name
+     is said as one, never as a match: its name opens its own card in monday, and nothing links or fills anything */
+  var BOOKS_AS_OF = "לפי הספרים";
+  var BOOKS_HEADS = { number: "מספר מסמך", type: "סוג מסמך", date: "תאריך מסמך", card: "שם בכרטיס",
+    incl: "סכום בחשבשבת (כולל מע\"מ)", excl: "סכום בחשבשבת (ללא מע\"מ)", candidates: "מועמדת לפי שם", accounts: "חברה",
+    why: "למה לא ברור" };
+  var BOOKS_COLS = { b2c: ["number", "type", "date", "incl", "card", "candidates"],
+    b2b: ["number", "type", "date", "excl", "incl", "card", "accounts"],
+    unclear: ["number", "type", "date", "excl", "incl", "card", "why"] };
+  /* a time as the page writes it: the reading's (asOf), and the books' copy's */
+  function stamp(iso) {
+    return iso ? new Date(iso).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  }
+  /* "לפי הספרים נכון ל-..." and, when what is shown is not fresh or there is none, why (the server's sentence) */
+  function booksSaid() {
+    var b = VIEW.books;
+    if (!b) { return ""; }
+    var at = stamp(b.as_of);
+    return (at ? BOOKS_AS_OF + " נכון ל-" + at + "." : "") + (b.said ? (at ? " " : "") + b.said : "");
+  }
+  function booksCalm() { var b = VIEW.books; return !b || b.state === "ok" || b.state === "off"; }
+  function candidatesHtml(e) {
+    var c = e.candidates || [];
+    if (!c.length) { return NOT_SET; }
+    return c.map(function (x) {
+      return "<div class=\"fin-cand\">" + nameLink({ board: "sc", id: x.id }, esc(x.name)) + " " + stateChip(x.state) +
+        " <span class=\"fin-subtle\">" + esc(x.status || "ריק") + "</span></div>";
+    }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "");
+  }
+  function booksCell(k, e) {
+    if (k === "number") { return ltr(e.number) || NOT_SET; }
+    if (k === "type") { return esc(e.type_name); }
+    if (k === "date") { return e.date ? d(e.date) : NOT_SET; }
+    if (k === "incl") { return e.total_incl != null ? money2(e.total_incl) : NOT_SET; }
+    if (k === "excl") { return e.total_excl != null ? money2(e.total_excl) : NOT_SET; }
+    if (k === "card") { return e.card ? esc(e.card) : NOT_SET; }
+    if (k === "accounts") { return (e.accounts || []).length ? e.accounts.map(esc).join(" · ") : NOT_SET; }
+    if (k === "why") { return esc(e.why_text || ""); }
+    return candidatesHtml(e);
+  }
+  function booksTable(kind, docs) {
+    var cols = BOOKS_COLS[kind], at = function (k) { return " class=\"b-" + k + (k === "incl" || k === "excl" ? " n" : "") + "\""; };
+    return "<div class=\"fin-tw\" data-list=\"" + esc(listKey() + "|books|" + kind) + "\"><table class=\"fin-t fin-books-t\"><thead><tr>" +
+      cols.map(function (k) { return "<th" + at(k) + ">" + esc(BOOKS_HEADS[k]) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      docs.map(function (e) {
+        return "<tr>" + cols.map(function (k) { return "<td" + at(k) + ">" + booksCell(k, e) + "</td>"; }).join("") + "</tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+  /* one list: its title, how many, its sentence and the books' state; its table, or that it is empty; the vouchers' line */
+  function booksPanel(kind, part) {
+    var docs = part.documents || [], none = VIEW.books.state === "none";
+    var said = booksSaid();
+    var head = "<div class=\"fin-listhead\"><div><h2>" + esc(part.title) + "</h2>" +
+      (none ? "" : "<div class=\"fin-subtle\">" + plural(docs.length, "מסמך אחד", "מסמכים") + "</div>") +
+      "<p class=\"fin-about\">" + esc(part.about) + "</p>" +
+      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div></div>";
+    var body = docs.length ? booksTable(kind, docs) : none ? "" : "<div class=\"fin-empty\"><p>אין מסמכים כאלה.</p></div>";
+    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body +
+      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + "</div>";
+  }
+  /* under "לטיפול" of a tab: its list, and the unclear documents when the server sent them (a member of both boards) */
+  function booksHtml(tab) {
+    var part = VIEW[tab] && VIEW[tab].books;
+    if (!VIEW.books || VIEW.books.state === "off" || !part) { return ""; }
+    var unclear = VIEW.books_unclear;
+    return booksPanel(tab, part) + (unclear && (unclear.documents || []).length ? booksPanel("unclear", unclear) : "");
   }
 
   /* ---------- companies: one list by state, and the customers' aging ---------- */
@@ -1119,7 +1234,7 @@
         /* no search, one company in one state: that company's every charge, its ledger */
         !q && f.customer && f.state !== "" ? "<button class=\"fin-linkbtn\" type=\"button\" data-b2state=\"\">כל החיובים של החברה</button>" : "");
     OUTSIDE = null;
-    return company + figures + b2Tiles(b) + panel(head + list);
+    return company + figures + b2Tiles(b) + panel(head + list) + (f.state === "tasks" && !f.customer && !q ? booksHtml("b2b") : "");
   }
 
   /* ---------- actions from the desk (round 3, slice 3) ----------
@@ -2616,6 +2731,9 @@
     else if (BODY && BODY.last_attempt && BODY.last_attempt.ok === false) {
       line += " <span class=\"fin-badtext\">הקריאה האחרונה נכשלה, ומוצגים הנתונים הקודמים.</span>";
     }
+    /* D3: which copy of the books the marks and the lists are of, or why there is none */
+    var books = booksSaid();
+    if (books) { line += " <span class=\"" + (booksCalm() ? "fin-subtle" : "fin-badtext") + "\">" + esc(books) + "</span>"; }
     Object.keys(LOUD).forEach(function (k) {
       if (n[k]) { line += "<div class=\"fin-badtext\">" + (n[k] === 1 ? NOTE[k][0] : NF.format(n[k]) + " " + NOTE[k][1]) + ".</div>"; }
     });
@@ -2626,11 +2744,7 @@
     }).join("") + "</ul>" : "";
     return "<section class=\"fin-health\">" + line + more + list + "</section>";
   }
-  function asOf() {
-    var at = (BODY && BODY.taken_at) || VIEW.read_at;
-    if (!at) { return ""; }
-    return new Date(at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  }
+  function asOf() { return stamp((BODY && BODY.taken_at) || VIEW.read_at); }
   var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
     "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
     "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
