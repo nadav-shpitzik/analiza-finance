@@ -31,8 +31,8 @@ AS_OF = "2026-11-25T08:00:00+00:00"
 
 # the rows: 1 cites invoice-receipt 62502 and says "לא שולם" (marked, of the era); 2 cites 40000, below every series
 # (marked "not found", made before the era, so it keeps its mark and stays out of "לטיפול"); 3 waits for its receipt (a
-# task state); 4 is done, unmarked, and named like the card of 62503; 5 cites 62504, past the last of its series: not yet in
-# the copy, no mark, said in its details
+# task state); 4 is done, unmarked, and named like the card of 62503; 5 cites 62504, just past the end of its series: not
+# yet in the copy, no mark, said in its details
 ROWS = [pay(1, "62502", st="0", receipt="0"), pay(2, "40000", on="2026-10-01"), pay(3, "", receipt="0"),
         pay(4, "", name="תלמיד גימל"), pay(5, "62504", on="2026-10-02")]
 DOCS = [doc(62502), doc(62503, card="20002", name="גימל תלמיד"),
@@ -42,12 +42,13 @@ DOCS = [doc(62502), doc(62503, card="20002", name="גימל תלמיד"),
 KEYS = {"77001": ["חברה בדויה"]}
 
 
-def books_view(state: str = "ok", reasons=(), b2c: bool = True, b2b: bool = True, rows=ROWS, docs=DOCS) -> tuple:
+def books_view(state: str = "ok", reasons=(), b2c: bool = True, b2b: bool = True, rows=ROWS, docs=DOCS,
+               keys=None) -> tuple:
     """(the view the server sends this reader, the whole merged view): computed from the rows and the copy, then laid over
     the view and cut for the reader exactly as GET /api/desk does."""
     reading = reading_of(snap(list(rows), [b2(1, invoice="")]))
     view = fd.build_view(reading, TODAY)
-    part = db.compute(reading, view, copy(docs), KEYS)
+    part = db.compute(reading, view, copy(docs), KEYS if keys is None else keys)
     part.update(state=state, reasons=list(reasons), as_of=AS_OF if state in ("ok", "held") else None, key="k-1")
     if state in ("none", "off"):
         part.update(marks={}, students=[], companies=[], unclear=[], vouchers=0)
@@ -256,6 +257,45 @@ def test_every_chip_the_books_draw_for_a_group_of_rows_is_in_the_legend():
     missing = [x for x in _labels(html) if x not in known and not re.fullmatch(r"ועוד \d+", x)
                and not any(p.match(x) for p in patterns) and not all(w in known for w in _words_of(x))]
     assert not missing, missing
+
+
+def test_a_marks_chip_in_what_to_check_is_the_servers_filled():
+    """J10 of the review's mutants: in a list that shows "מה לבדוק" (here "חריג, לבדיקה": "לא שולם" with "שליחת קבלה:
+    יצאה"), a mark of the books is said in the server's filled words - its document and the row's status - never the
+    legend's template."""
+    view, merged = books_view(rows=[pay(1, "62502", st="0", receipt="1")], docs=DOCS)
+    row = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]
+    assert row["state"] == "exception" and row["books"][0]["kind"] == "books_receipt_unpaid"
+    html = draw(view, [{"tab": "b2c", "sc": {"state": "exception", "period": "", "open": {}}}])[0]
+    notes = cell(html, "1", "notes")
+    assert "בחשבשבת חשבונית מס/קבלה 62502, והסטטוס &quot;לא שולם&quot;" in notes and "{doc}" not in notes
+
+
+def test_what_the_books_and_monday_name_is_drawn_as_text():
+    """J06, J07, J09, J14 and J15 of the review's mutants: a card's name (the books'), a candidate's name and an Account's
+    name (monday's), a row's note and an unclear document's why (the server's words) are drawn escaped - markup in any of
+    them is text, never an element of the page."""
+    mark = "<marquee>שם</marquee>"
+    docs = [doc(62502), doc(62503, card="20002", name=mark),
+            doc(50500, doc_type=1, card="77001", name=mark, total="11800", excl="10000"),
+            doc(50501, doc_type=1, card="20009", name=mark, total="5900", excl="5000")]
+    rows = [pay(1, "62502", st="0", receipt="0"), pay(4, "", name=mark), pay(5, "62504", on="2026-10-02")]
+    view, _m = books_view(rows=rows, docs=docs, keys={"77001": [mark]})
+    for r in view["b2c"]["rows"]:
+        if r["id"] == "5":
+            r["books_note"] = mark
+    for e in view["books_unclear"]["documents"]:
+        e["why_text"] = mark
+    tasks, b2_tasks, details = draw(view, [TASKS, B2_TASKS, {"tab": "b2c", "sc": {"state": "", "period": "",
+                                                                                  "open": {"5": True}}}])
+    lists = tasks[tasks.index('data-books="b2c"'):] + b2_tasks[b2_tasks.index('data-books="b2b"'):]
+    assert "<marquee>" not in tasks + b2_tasks + details
+    shown = h.escape(mark, quote=False)
+    assert '<td class="b-card">%s</td>' % shown in lists                                  # the card's name
+    assert ">%s</a>" % shown in lists                                                  # the candidate's name, its link
+    assert '<td class="b-accounts">%s</td>' % shown in lists                            # the Account's name
+    assert '<td class="b-why">%s</td>' % shown in lists                                 # why it is unclear
+    assert '<p class="fin-dx-books">%s</p>' % shown in details                           # the row's note
 
 
 def test_the_chips_are_the_legends_words_red_and_after_the_contradictions_between_two_columns():

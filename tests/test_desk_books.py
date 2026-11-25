@@ -124,6 +124,22 @@ def test_last_finished_run_is_bounded_like_the_snapshot(pg):
     assert got == {"error": "57014"}                                         # query_canceled: by its SQLSTATE, no text
 
 
+@needs_pg
+def test_the_desks_snapshot_leaves_out_a_gone_document_and_a_run_in_progress_is_no_finished_run(pg):
+    """S04 and S07 of the review's mutants: a document the books deleted (`gone_at`) is no document of the copy, and a run
+    still in progress (no `finished_at`) is not the copy's last finished run - the desk names its copy by that run."""
+    seed(pg, [doc(62500), doc(62501)])
+    with psycopg.connect(pg, autocommit=True) as conn:
+        conn.execute("UPDATE books_documents SET gone_at = now() WHERE company = %s AND stock_id = 62501", (ANALIZA,))
+        conn.execute("INSERT INTO books_sync_runs (company, trigger) VALUES (%s, 'tick')", (ANALIZA,))   # in progress
+    store = BooksStore(pg)
+    snapshot = store.desk_snapshot(ANALIZA)
+    assert [d["stock_id"] for d in snapshot["documents"]] == [62500]
+    run = store.last_finished_run(ANALIZA)
+    assert run is not None and run == (snapshot["last_run_id"], snapshot["last_run_finished_at"])
+    assert run[1] is not None
+
+
 def test_a_database_that_cannot_be_reached_is_a_books_store_error_by_class():
     from app.books.store import BooksStoreError
 
@@ -515,6 +531,19 @@ def test_a_mark_moves_no_row_changes_no_sum_and_joins_tasks_only_from_the_era():
     assert fd.row_reasons("b2c", after["1"])[0] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
 
 
+def test_a_marked_row_joins_tasks_and_stays_in_its_own_state_only():
+    """V02 of the review's mutants: a row the books mark joins "לטיפול" (`books_task`), and in every other list it is
+    where its own state puts it - never in another state's list."""
+    part, view, _r = run([pay(1, "62502", st="0", receipt="0"), pay(2, "", st="1", receipt="0")], [doc(62502)])
+    merged = db.merge(view, dict(part, state="ok", reasons=[], as_of=None, key="k"))
+    marked = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]
+    assert marked["books_task"] is True
+    assert "1" in [r["id"] for r in fd.filter_b2c(merged["b2c"], "tasks", "", "")]
+    for state in fd.B2C_STATES:
+        ids = [r["id"] for r in fd.filter_b2c(merged["b2c"], state, "", "")]
+        assert ("1" in ids) == (state == marked["state"]), state
+
+
 def test_a_card_is_a_companys_when_an_account_names_it_else_a_students_by_its_invoice_receipt_fr_6():
     """FR-6 until B3's sort codes (the plan §1a.2.3): an Account's "מפתח חשבשבת" is a company's card, whatever it holds; a card
     holding an invoice-receipt and no proforma is a student's (students are sent no proforma); an invoice-receipt beside a
@@ -641,6 +670,19 @@ def test_every_document_lands_in_exactly_one_place_and_each_list_holds_its_place
     for k in ("students", "companies", "unclear"):
         assert sorted(int(e["number"]) for e in part[k]) == sorted(s for s, p in places.items() if p == k), k
     assert part["vouchers"] == part["counts"]["vouchers"] == 1
+
+
+def test_a_document_of_the_eras_first_day_is_in_the_era_and_every_number_a_cell_cites_is_cited():
+    """B03 and C07 of the review's mutants: a document dated 25.10.2026 itself is of the era (ADR-0168 §5: from that day
+    on), the day before is not; and every number of a cell that cites several - on either charge board - is cited, so
+    none of them is listed as a document no charge cites."""
+    part, _v, _r = run([], [doc(62406, day="2026-10-25"), doc(62407, day="2026-10-24")])
+    assert [e["number"] for e in part["students"]] == ["62406"] and part["places"][62407] == "outside"
+    docs = [doc(62502), doc(62503), doc(50500, doc_type=1, card="30001"), doc(50501, doc_type=1, card="30001")]
+    part, _v, _r = run([pay(1, "62502, 62503", paid="8000")], docs, [b2(1, invoice="50500, 50501")],
+                       keys={"30001": ["חברה בדויה"]})
+    assert part["students"] == [] and part["companies"] == [] and part["counts"] == {"cited": 4}
+    assert db.cited_numbers([{a1.REF_COLUMN: "62502, 62503"}], a1.REF_COLUMN) == {"62502", "62503"}
 
 
 def test_a_name_is_only_ever_a_candidate():
@@ -880,6 +922,21 @@ def test_a_reading_read_short_shows_the_last_whole_result_and_never_asks_the_cop
     assert (held["state"], held["reasons"], set(held["marks"])) == ("held", ["reading_incomplete"], {"1"})
 
 
+def test_a_reading_is_whole_only_with_no_error_and_both_charge_boards_read_whole():
+    """B73 and B74 of the review's mutants: a reading with an error, or with either charge board read short, is not
+    matched to the books (a row missing from a board read short would turn its documents into documents no row cites):
+    `reading_incomplete`, and the copy is not asked."""
+    reading, view = reading_view(ROWS)
+    assert db.reading_whole(reading)
+    b2b_short = dict(reading, checks=dict(reading["checks"], b2b_charge=dict(reading["checks"]["b2b_charge"], ok=False)))
+    failed = dict(reading, error="read_failed")
+    for short in (b2b_short, failed):
+        assert not db.reading_whole(short)
+        store = FakeCopy(copy(DOCS))
+        part = holder(store).answer(CFG, short, view)
+        assert (part["state"], part["reasons"], store.snapshots) == ("none", ["reading_incomplete"], 0)
+
+
 def test_a_database_that_fails_is_said_by_class_and_not_asked_again_for_a_while():
     store, tick = FakeCopy(copy(DOCS)), Tick()
     b = holder(store, clock=tick)
@@ -1019,6 +1076,22 @@ def test_two_parts_computed_in_one_second_have_different_keys():
     second = b.answer(CFG, reading, view)
     assert (first["computed_at"], first["as_of"]) == (second["computed_at"], second["as_of"])
     assert len(second["students"]) == len(first["students"]) + 1 and first["key"] != second["key"]
+
+
+def test_the_merged_view_is_kept_per_reading_and_part():
+    """R06 of the review's mutants: one part laid over two readings (an `off` part has one key for every reading) is two
+    merged views - each of its own reading's rows - and the same reading and part is the merged view kept."""
+    from app.desk import routes
+
+    st = SimpleNamespace(view_lock=threading.Lock(), merged=None)
+    off = holder(FakeCopy(copy(DOCS)))._made("off", ["demo"])
+    r1, v1 = reading_view(ROWS, n=1)
+    r2, v2 = reading_view(ROWS[1:], n=2)
+    m1 = routes._merged(st, r1, v1, off)
+    m2 = routes._merged(st, r2, v2, off)
+    assert [r["id"] for r in m1["b2c"]["rows"]] == [r["id"] for r in v1["b2c"]["rows"]]
+    assert [r["id"] for r in m2["b2c"]["rows"]] == [r["id"] for r in v2["b2c"]["rows"]] != [r["id"] for r in m1["b2c"]["rows"]]
+    assert routes._merged(st, r2, v2, off) is m2
 
 
 def test_the_merged_view_says_the_reasons_of_the_part_it_is_merged_with():
@@ -1281,6 +1354,50 @@ def test_the_students_tasks_file_carries_the_marked_rows_and_its_list_and_the_un
     assert _file(booked, 1, "b2c", state="").sheetnames == ["תקבולים", "פרטים"]
 
 
+def test_the_file_carries_the_part_the_page_was_answered_and_reads_nothing_of_the_books(booked):
+    """R05 of the review's mutants: the Excel file of "לטיפול" is built from the books' part the instance last answered -
+    the page's - never computed again for it, even when the copy moved since: it says so (10(a)), and reads nothing."""
+    import io
+
+    import openpyxl
+
+    from app.desk.export import BOOKS_OTHER_SAID
+
+    body = booked.get(1).json()
+    assert [e["number"] for e in body["view"]["b2c"]["books"]["documents"]] == ["62503"]
+    booked.copy.snapshot = copy(ROUTE_DOCS + [doc(62504, card="20003", name="תלמיד-דלת")], last_run_id=8)
+    booked.client.app.state.desk.books._checked_at = None
+    asked = (booked.copy.runs, booked.copy.snapshots)
+    url = booked.client.post("/api/desk/export-link", headers={"Authorization": "Bearer " + session_token(1)},
+                             json={"tab": "b2c", "state": "tasks", "taken": body["taken_at"],
+                                   "books": body["view"]["books"]["key"]}).json()["url"]
+    wb = openpyxl.load_workbook(io.BytesIO(booked.client.get(url).content))
+    listed = [c.value for c in wb["מסמכים בלי חיוב"]["A"][1:] if c.value and str(c.value).isdigit()]
+    assert listed == ["62503"] and (booked.copy.runs, booked.copy.snapshots) == asked
+    assert BOOKS_OTHER_SAID not in [r[1].value for r in wb["פרטים"].iter_rows()]
+
+
+def test_the_lists_text_is_written_as_text_never_as_a_formula(booked):
+    """X01 of the review's mutants: a card's name, a candidate's name and an Account's name come from the books and from
+    monday - a name that opens with "=", "+", "-" or "@" is written as text, formatted as text, never as a formula (D2's
+    hostile review 10.11: a name became a live HYPERLINK formula)."""
+    names = ['=HYPERLINK("https://example.test","פתח")', "+1+2 כרטיס", "-3 כרטיס", "@SUM(1) כרטיס"]
+    booked.copy.snapshot = copy([doc(62502, card="20001", name="שם-בכרטיס-אחד"), doc(62503, card="20002", name=names[0]),
+                                 doc(50500, doc_type=1, card="77001", name=names[1]),
+                                 doc(50501, doc_type=1, card="20009", name=names[2])])
+    booked.w.items["103"]["name"] = names[0]                                  # a candidate by name of 62503
+    booked.w.items["701"]["name"] = names[3]                                  # the Account that names card 77001
+    cells = []
+    for user, tab in ((1, "b2c"), (1, "b2b")):
+        wb = _file(booked, user, tab)
+        for title in ("מסמכים בלי חיוב", "לא ברור של מי"):
+            cells += [c for line in wb[title].iter_rows(min_row=2) for c in line if isinstance(c.value, str)]
+    hits = [c for c in cells if c.value.startswith(("=", "+", "-", "@"))]
+    assert {c.value for c in hits} >= {names[0], names[1], names[2], names[3]} and any(
+        c.value.startswith(names[0] + " (") for c in hits)                     # the card, and the candidate
+    assert all(c.data_type == "s" and c.number_format == "@" for c in hits), [(c.value, c.data_type) for c in hits]
+
+
 def test_the_companies_tasks_file_carries_its_list_and_the_vouchers_line(booked):
     wb = _file(booked, 3, "b2b")
     assert wb.sheetnames == ["חיובים", "פרטים", "מסמכים בלי חיוב"]
@@ -1473,6 +1590,17 @@ def test_the_accounts_keys_are_read_whole_kept_ten_minutes_and_a_short_read_keep
     tick.t += 2
     assert keys.get() == {"77001": ["חברה-משלמת"], "77002": ["חברה-אם"]} and keys.error is None
     assert keys.get(may_read=False) == keys.keys
+
+
+def test_the_accounts_names_are_masked_as_the_desk_reads_them():
+    """B78 of the review's mutants: the companies' list shows the Accounts that name a card by their names, read with the
+    keys - masked as the desk's reading masks every name (`masked`), so an ID number typed into one never leaves."""
+    from tests.test_desk import reader_of
+
+    w = books_world()
+    w.items["701"]["name"] = "חברה-משלמת 039482716"
+    keys = db.AccountKeys(lambda: reader_of(w), clock=Tick())
+    assert keys.get() == {"77001": ["חברה-משלמת " + rd.ID_MARK]}
 
 
 def test_a_cold_instance_answers_at_once_without_reading_the_keys_and_its_next_request_computes(booked):
