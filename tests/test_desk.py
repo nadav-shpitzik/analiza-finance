@@ -754,9 +754,11 @@ def test_the_audit_line_names_the_user_and_never_the_token(desk, caplog):
 
 def test_health_says_the_desk_without_a_count_or_a_secret(desk):
     before = desk.client.get("/health").json()["desk"]
+    # D3: and the books' part, once the desk was answered on this instance (`books`)
     assert before == {"client_secret_set": True, "monday_token_set": True, "page": "/desk/", "last_reading": None,
                       "members": {}, "usage": {"batches": 0, "stored": 0, "refused": 0, "failed": 0, "last_at": None,
-                                               "last_error": None}}
+                                               "last_error": None},
+                      "books": None}
     desk.get(session_token(1))
     text = desk.client.get("/health").text
     after = json.loads(text)["desk"]
@@ -764,6 +766,8 @@ def test_health_says_the_desk_without_a_count_or_a_secret(desk):
     assert sorted(after["last_reading"]["boards_whole"]) == sorted(rd.BOARDS)
     assert after["members"] == {SC: "read", B2: "read"}
     assert "checks" not in after["last_reading"] and SECRET not in text and TOKEN not in text
+    # no database here: the books are off, and said so by a closed word - never a count
+    assert after["books"]["state"] == "off" and after["books"]["reasons"] == ["not_configured"]
 
 
 # ---- the page ---------------------------------------------------------------------------------------------------------

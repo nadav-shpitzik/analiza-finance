@@ -58,6 +58,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import config
 from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
+from .books import DeskBooks, merge as books_merge
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
 from .usage_store import UsageStoreError, append_events
@@ -133,11 +134,22 @@ def _store(state: Any, cfg: config.Config) -> Any:
     return None
 
 
+def _books_store(state: Any) -> Any:
+    """How the desk reaches the books copy (D3): `BooksStore` on the URL given, or the tests' own on `state.books_store`."""
+    given = getattr(state, "books_store", None)
+    if given is not None:
+        return lambda _url: given
+    from ..books.store import BooksStore
+
+    return BooksStore
+
+
 def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
     """One per instance, made again when the token, the database or the test transport changes (the config is read per
     request)."""
     key = (hashlib.sha256(cfg.monday_token.encode("utf-8")).hexdigest(), id(getattr(state, "monday_transport", None)),
-           hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), id(getattr(state, "desk_store", None)))
+           hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), id(getattr(state, "desk_store", None)),
+           id(getattr(state, "books_store", None)))
     with _state_lock:
         current = getattr(state, "desk", None)
         if current is not None and current.key == key:
@@ -152,12 +164,16 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
                 reader.close()
 
         # D2: `refresh`, the press's own limit (one forced reading per REFRESH_GAP_S on this instance, whoever presses);
-        # `view`, the view of the reading held, built once for it: (that reading, its view or None, None or "crashed")
+        # `view`, the view of the reading held, built once for it: (that reading, its view or None, None or "crashed").
+        # D3: `books`, what the books say of that reading (app/desk/books.py), and `merged`, the view with it laid over
+        # (that reading, the part's key, the merged view)
         made = SimpleNamespace(key=key, members=Members(subscribers),
                                reading=HeldReading(lambda: _reader(state, cfg.monday_token), store=_store(state, cfg)),
                                limiter=RateLimiter(DESK_PER_USER_HOUR, DESK_PER_DAY),
                                refresh=RateLimiter(1, 1, user_window=REFRESH_GAP_S, global_window=REFRESH_GAP_S),
-                               view=None, view_lock=threading.Lock())
+                               view=None, view_lock=threading.Lock(),
+                               books=DeskBooks(_books_store(state), lambda: _reader(state, cfg.monday_token)),
+                               merged=None)
         state.desk = made
         return made
 
@@ -210,6 +226,11 @@ def health_block(state: Any, cfg: config.Config, stored: Any = None, now: Option
             out["refresh"] = current.reading.health()
         except Exception as exc:  # noqa: BLE001 - /health never raises
             out["refresh"] = {"error": type(exc).__name__}
+    # D3: the books' part - its state, its copy's time and its reasons, never a count (the deployment is public)
+    try:
+        out["books"] = None if current is None else current.books.health()
+    except Exception as exc:  # noqa: BLE001 - /health never raises
+        out["books"] = {"error": type(exc).__name__}
     return out
 
 
@@ -370,6 +391,35 @@ def _view_of(st: Any, reading: dict) -> tuple:
         return built, error
 
 
+def _merged(st: Any, reading: dict, whole: dict, part: Optional[dict]) -> dict:
+    """The view of this reading with the books' part laid over it (D3, app/desk/books.py `merge`), built once per reading
+    and part, and kept beside them: the answer, its totals and its files are of one merged view."""
+    if part is None:
+        return whole
+    with st.view_lock:
+        if st.merged is not None and st.merged[0] is reading and st.merged[1] == part.get("key"):
+            return st.merged[2]
+        try:
+            got = books_merge(whole, part)
+        except Exception as exc:  # noqa: BLE001 - said by class: the desk is shown without the books, never a 500
+            logger.error("desk books not laid over the view (%s)", type(exc).__name__)
+            return whole
+        st.merged = (reading, part.get("key"), got)
+        return got
+
+
+def _with_books(cfg: config.Config, st: Any, reading: dict, whole: dict, may_read: bool = True) -> dict:
+    """The whole view with what the books say of it: the part for this reading (asked of the copy when the reading or the
+    copy changed) laid over it. `may_read` false for an answer at once (`refreshing`): monday is not read for it. A part
+    that cannot be made is said in /health, and the desk is drawn without it."""
+    try:
+        part = st.books.answer(cfg, reading, whole, may_read=may_read)
+    except Exception as exc:  # noqa: BLE001 - said by class, never a 500
+        logger.error("desk books not answered (%s)", type(exc).__name__)
+        return whole
+    return _merged(st, reading, whole, part)
+
+
 def _instant(text: Any) -> Optional[datetime]:
     """A reading's time as an instant, or None for one that is not a time: two readings are compared as instants, never as
     printed text (analiza-metrics, review 10.11)."""
@@ -397,7 +447,7 @@ def _unavailable(st: Any, reason: Optional[str] = None) -> JSONResponse:
     return err(503, "finance_unavailable", reason=reason or last.get("error") or "not_read")
 
 
-def _answer(st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = False) -> JSONResponse:
+def _answer(cfg: config.Config, st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = False) -> JSONResponse:
     """The desk for this reader. D1's counts (`user`, `tabs`, `reading`, `last_attempt`) and since D2 the desk itself:
     `view`, the tabs the reader may see (`visible_part`), its money as strings; `view_error`, "crashed" when the reading
     could not be built into one; `taken_at`, the reading's time, which the totals and the files are asked by; its
@@ -418,7 +468,9 @@ def _answer(st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = 
                  "calls": reading.get("calls"), "boards": {k: checks[k] for k in keys if k in checks}}
         whole, view_error = _view_of(st, reading)
         if whole is not None:
-            view = visible_part(whole, got.b2c is True, got.b2b is True)
+            # D3: what the books say, laid over the whole view before a reader's part is cut from it
+            view = visible_part(_with_books(cfg, st, reading, whole, may_read=not refreshing), got.b2c is True,
+                                got.b2b is True)
     ident = got.identity
     outcome = ("view_crashed" if view_error else "ok" if shown["complete"] else "incomplete") if shown else "no_reading"
     audit(ident, endpoint, outcome, sum(int(c.get("rows") or 0) for c in (shown or {}).get("boards", {}).values()))
@@ -448,8 +500,8 @@ def desk_api(request: Request, fresh: int = 0) -> JSONResponse:
     got = _gated(request, "desk")
     if isinstance(got, JSONResponse):
         return got
-    _cfg, st, visitor = got
-    return _answer(st, visitor, "desk", force=False, stale_ok=not fresh)
+    cfg, st, visitor = got
+    return _answer(cfg, st, visitor, "desk", force=False, stale_ok=not fresh)
 
 
 @router.post("/api/desk/refresh")
@@ -460,12 +512,12 @@ def desk_refresh(request: Request) -> JSONResponse:
     got = _gated(request, "desk-refresh")
     if isinstance(got, JSONResponse):
         return got
-    _cfg, st, visitor = got
+    cfg, st, visitor = got
     wait = st.refresh.check(visitor.identity.user_id)
     if wait is not None:
         audit(visitor.identity, "desk-refresh", "rate_limited")
         return err(429, "rate_limited", headers={"Retry-After": str(wait)}, retry_after_seconds=wait)
-    return _answer(st, visitor, "desk-refresh", force=True)
+    return _answer(cfg, st, visitor, "desk-refresh", force=True)
 
 
 def _filtered(whole: dict, tab: str, state: str, period: str, customer: str, q: str) -> list:
@@ -479,11 +531,12 @@ def _filtered(whole: dict, tab: str, state: str, period: str, customer: str, q: 
 
 @router.get("/api/desk/totals")
 def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str = "", customer: str = "", q: str = "",
-                taken: str = "") -> JSONResponse:
+                taken: str = "", books: str = "") -> JSONResponse:
     """The totals of a list exactly as the page filters it (Nadav 10.11 "תעשה את 6"): summed here, never in the page. The
     same gate and the same filters as the Excel file. Only from the reading the page shows (`taken`): this route never
     reads monday, and when this instance holds another reading it says so (`other_reading`) instead of a total that does
-    not belong to the rows on the screen (analiza-metrics `finance_totals`, review 10.11)."""
+    not belong to the rows on the screen (analiza-metrics `finance_totals`, review 10.11). D3: and of the books' part the
+    page shows (`books`, its key), since "לטיפול" holds the rows the books mark: another part is `other_reading` too."""
     got = _gated(request, "desk-totals")
     if isinstance(got, JSONResponse):
         return got
@@ -493,19 +546,22 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
     if not _opens(visitor, tab):
         audit(visitor.identity, "desk-totals", "not_a_member")
         return err(403, "not_a_board_member")
-    if not query_exportable(q) or len(period) > 32 or len(customer) > 32 or len(taken) > 40:
+    if not query_exportable(q) or len(period) > 32 or len(customer) > 32 or len(taken) > 40 or len(books) > 120:
         return err(400, "bad_filter")
     reading = st.reading.reading  # as held: a totals request reads nothing
     if reading is None:
         return _unavailable(st)
     taken_at = reading.get("read_at")
     shown = _instant(taken)
-    if shown is None or _instant(taken_at) is None or shown != _instant(taken_at):
+    part = st.books.current()  # the books' part as held: nothing is read
+    if shown is None or _instant(taken_at) is None or shown != _instant(taken_at) \
+            or (books and (part is None or books != part.get("key"))):
         audit(visitor.identity, "desk-totals", "other_reading")
         return JSONResponse(json_safe({"other_reading": True, "taken_at": taken_at}))
     whole, error = _view_of(st, reading)
     if whole is None:
         return _unavailable(st, error)
+    whole = _merged(st, reading, whole, part)
     try:
         rows = _filtered(whole, tab, state, period, customer, q)
     except ValueError:
@@ -613,13 +669,16 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     whole, error = _view_of(st, reading)
     if whole is None:
         return _unavailable(st, error)
+    # D3: the books' part the page shows, held; asked of the copy only on an instance that holds none for any reading
+    part = st.books.current()
+    whole = _merged(st, reading, whole, part) if part is not None else _with_books(cfg, st, reading, whole)
     try:
         rows = _filtered(whole, tab, state, period, customer, q)
     except ValueError:
         return err(400, "bad_filter")
     # openpyxl only here: a file is the one thing that needs it, and nothing else of the service waits for it
-    from .export import (b2b_file_names, b2b_workbook, b2c_file_names, b2c_workbook, customers_file_names,
-                         customers_workbook, download_headers)
+    from .export import (b2b_file_names, b2b_workbook, b2c_file_names, b2c_workbook, books_lines, books_sheet,
+                         customers_file_names, customers_workbook, download_headers)
 
     held, shown = _instant(reading.get("read_at")), _instant(taken)
     # compared as instants, not as printed minutes: two readings a second apart are two readings
@@ -632,13 +691,21 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     # analiza-metrics, whose reading could not come short and still be held)
     complete = bool(whole["checks"].get(side + "_ok")) and _visible_complete(reading.get("checks") or {}, TAB_BOARDS[side])
     about = {"taken_at": _local(held), "screen_taken_at": _local(shown) if other else "", "complete": complete,
-             "state_label": state_label, "q": q}
+             "state_label": state_label, "q": q, "books_lines": books_lines(whole.get("books"), _local)}
     today = today_in(DESK_TZ)
+    # D3: "לטיפול" of a tab carries its list of documents with no charge as a sheet of its own (the students', the
+    # companies' of every company), and the unclear documents only for a member of both charge boards (spec §6.4.1)
+    sheets: list = []
+    if state == "tasks" and not customer and tab in ("b2c", "b2b") and (whole.get(side) or {}).get("books"):
+        sheets.append(books_sheet(side, whole[side]["books"]))
+        other_board = B2B_CHARGE if side == "b2c" else STUDENT_CHARGE
+        if (whole.get("books_unclear") or {}).get("documents") and st.members.member(u, other_board) is True:
+            sheets.append(books_sheet("unclear", whole["books_unclear"]))
     # the file's name names its list, and its period or its company (QA 11.11, 2.12)
     if tab == "b2c":
         p = next((x for x in whole["b2c"]["periods"] if x["key"] == period), None)
         period_label = p["label"] if p else ("כל התקופה" if not period else period)
-        data = b2c_workbook(rows, dict(about, period_label=period_label))
+        data = b2c_workbook(rows, dict(about, period_label=period_label), sheets=sheets)
         name, ascii_name = b2c_file_names(state_label, state, period_label, period, today)
     elif tab == "b2b_customers":
         # a company is monday's "חברה" (round 3); only the view keeps its name "לפי לקוח"
@@ -646,7 +713,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         name, ascii_name = customers_file_names(today)
     else:
         who = next((x["account"] for x in whole["b2b"]["rows"] if x["account_id"] == customer), "") if customer else ""
-        data = b2b_workbook(rows, dict(about, period_label=("חברה: " + who) if who else "כל החברות"))
+        data = b2b_workbook(rows, dict(about, period_label=("חברה: " + who) if who else "כל החברות"), sheets=sheets)
         name, ascii_name = b2b_file_names(state_label, state, who, customer, today)
     _audit_link(u, "file", len(rows))
     return Response(content=data, headers=download_headers(name, ascii_name), media_type=XLSX)

@@ -276,11 +276,17 @@ B2C_STATES = OrderedDict([
 TASK_STATES = [k for k, v in B2C_STATES.items() if v["task"]]
 
 # "לטיפול" on each tab: the tile that sums her work, and the sentence above its list (QA 11.11, 2.1: it had none)
+# D3: a payment of 25.10.2026 on (ADR-0168 §5) whose row the books contradict (a red chip of the books, app/desk/books.py)
+# is in "לטיפול" too, in its own state - the mark moves no row and changes no state's sum
+BOOKS_ERA_SAID = "25.10.2026"
 TASKS_ABOUT = {
-    "b2c": "כל מה שמחכה לפעולה, יחד: %s. כל תקבול מופיע פעם אחת, ובעמודה שיבוץ כתוב באיזו משבצת הוא. מהחדש לישן."
-           % _quoted([B2C_STATES[k]["label"] for k in TASK_STATES], "ו"),
+    "b2c": "כל מה שמחכה לפעולה, יחד: %s, וגם תקבולים מ-%s ואילך שהספרים בחשבשבת אומרים עליהם אחרת: הם נשארים במשבצת "
+           "שלהם, וסימון אדום של חשבשבת מתחתיה. כל תקבול מופיע פעם אחת, ובעמודה שיבוץ כתוב באיזו משבצת הוא. מהחדש לישן. "
+           "מתחת לרשימה: מסמכים בחשבשבת בלי חיוב במאנדיי."
+           % (_quoted([B2C_STATES[k]["label"] for k in TASK_STATES], "ו"), BOOKS_ERA_SAID),
     "b2b": "כל מה שמחכה לפעולה, יחד: %s. כל חיוב מופיע פעם אחת, ובעמודה שיבוץ כתוב באיזו משבצת הוא. ממועד דרישת "
-           "התשלום הישן לחדש." % _quoted([B2B_STATES[k]["label"] for k in B2B_TASK_STATES], "ו"),
+           "התשלום הישן לחדש. מתחת לרשימה: מסמכים בחשבשבת בלי חיוב במאנדיי."
+           % _quoted([B2B_STATES[k]["label"] for k in B2B_TASK_STATES], "ו"),
 }
 # the students' two money figures, the desk's own words for what it counts (the legend says how): what came in, and how
 # much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
@@ -292,6 +298,27 @@ _RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפר�
 UNNAMED_LABEL, NO_TERMS = "תווית בלי שם", "אין תנאי תשלום"
 _UNNAMED_WORD = (UNNAMED_LABEL, "ערך בעמודת סטטוס שאין לו תווית במאנדיי: התווית נמחקה, או שאין לה שם, ובמאנדיי הוא "
                                  "נראה כמו תא ריק. פותחים את השורה במאנדיי ובוחרים תווית.")
+
+# D3 (app/desk/books.py): the books' list, its candidates and its state line, as the page and the legend name them
+BOOKS_LIST_TITLE = "מסמכים בחשבשבת בלי חיוב במאנדיי"
+BOOKS_UNCLEAR_TITLE = "מסמכים בחשבשבת שלא ברור אם הם של סטודנט/ית או של חברה"
+BOOKS_CANDIDATE = "מועמדת לפי שם"
+BOOKS_AS_OF_WORD = "לפי הספרים"
+# the list's columns: the document as the books hold it, and its total (the legend defines each)
+BOOKS_DOC_HEADS = ("מספר מסמך", "סוג מסמך", "תאריך מסמך", "שם בכרטיס")
+BOOKS_SUM_WORD = "סכום בחשבשבת"
+_BOOKS_LATE = "מסמך שהופק אחרי הקריאה האחרונה של חשבשבת מופיע רק אחרי הקריאה הבאה, פעם בשעה."
+_BOOKS_AS_OF = (BOOKS_AS_OF_WORD, "הסימונים של חשבשבת והרשימות של מסמכים בלי חיוב מחושבים מהעותק של חשבשבת שבשירות, "
+                                  "ורק כשהעותק שלם והקריאה ממאנדיי שלמה. ליד המילים: מתי נקרא העותק. כשאחד מהם לא שלם, "
+                                  "מוצג החישוב השלם האחרון, וכתוב למה.")
+_BOOKS_DOC = (" · ".join(BOOKS_DOC_HEADS), "פרטי המסמך כפי שהם בחשבשבת: המספר, הסוג, תאריך הערך, והשם בכרטיס שעליו "
+                                          "הופק (מספר זהות שהוקלד בשם מוסתר כבר בעותק).")
+_BOOKS_SUM = (BOOKS_SUM_WORD, "הסכום של המסמך בחשבשבת: כולל מע\"מ, וברשימה של החברות גם ללא מע\"מ.")
+BOOKS_UNCLEAR_WHY = "למה לא ברור"
+_BOOKS_UNCLEAR = (BOOKS_UNCLEAR_TITLE + " · " + BOOKS_UNCLEAR_WHY,
+                  "מסמכים בלי חיוב במאנדיי מ-%s ואילך, בכרטיס שלא ברור אם הוא של סטודנט/ית או של חברה: הוא אינו מפתח "
+                  "חשבשבת של חברה, ויש בו רק חשבוניות מס, או חשבונית מס/קבלה לצד חשבון עסקה (בעמודה %s: איזה מהשניים). "
+                  "מוצגים רק למי שחבר בשני לוחות החיובים, מתחת ל\"לטיפול\" בשתי הלשוניות." % (BOOKS_ERA_SAID, BOOKS_UNCLEAR_WHY))
 
 # The legend ("מקרא"), per tab, in four parts (QA 11.11, 2.2: words on the screen were missing from it). The page shows it
 # under the "מקרא" button. A term that holds several words separates them with " · ".
@@ -341,6 +368,15 @@ LEGEND = {
                    % ("%s: %s" % ("שליחת קבלה", _q(RECEIPT[R_SENT])), "סימון %s" % _q(PAY[P_REFUNDED]))),
         ("נכתב, מתעדכן", "ליד השם של שורה: היא נכתבה מכאן לפני רגע, והמסך מחכה לקריאה חדשה של הלוחות כדי לשבץ אותה "
                          "מחדש. עד אז היא מוצגת עם הערכים שנכתבו, עד שלוש דקות."),
+        # D3 (app/desk/books.py): what the books say that monday does not
+        (BOOKS_LIST_TITLE, "רשימה מתחת ל\"לטיפול\": חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ועד סוף 2026, בכרטיס של "
+                           "סטודנט/ית בחשבשבת, ששום שורה בלוחות החיובים לא מפנה אליהן באסמכתת חשבונית. כרטיס של "
+                           "סטודנט/ית: כרטיס שאינו מפתח חשבשבת של חברה בלוח החברות, ויש בו חשבונית מס/קבלה ואין בו חשבון "
+                           "עסקה. %s" % (BOOKS_ERA_SAID, _BOOKS_LATE)),
+        (BOOKS_CANDIDATE, "ליד מסמך ברשימה: שורה בלוח Student Charge ששמה זהה לשם בכרטיס בחשבשבת, באותן מילים ובכל סדר "
+                          "(מילים של שתי אותיות ומעלה, בלי ספרות). השם הוא רמז בלבד: התאמה נעשית רק לפי מספר המסמך "
+                          "באסמכתת חשבונית, ולכן המסך לא מקשר שורה למסמך לפי שם ולא ממלא דבר."),
+        _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
     ],
     "b2b": [
         ("חיוב", "שורה אחת בלוח B2B Charge. לחיצה על השם שלה פותחת אותה במאנדיי."),
@@ -397,6 +433,12 @@ LEGEND = {
                       "עריכה שלהן נכתבת מהדפדפן בשמך, בהרשאות שלך במאנדיי, כמו שאר הפעולות, ויומן הפעילות של לוח "
                       "החברות שומר מה היה ומה נכתב. עדכון על החברה, עם מה שהיה ומה שנכתב, נכתב בשמך רק כשלאפליקציה "
                       "יש הרשאה לכתוב עדכונים במאנדיי."),
+        # D3 (app/desk/books.py)
+        (BOOKS_LIST_TITLE, "רשימה מתחת ל\"לטיפול\": חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ואילך, בכרטיס שהוא מפתח "
+                           "חשבשבת של חברה בלוח החברות, ששום שורה בלוחות החיובים לא מפנה אליהן באסמכתת חשבונית. בעמודה "
+                           "חברה: החברה במאנדיי שהכרטיס הוא מפתח החשבשבת שלה. מסמכים בכרטיס 10091 (השוברים של משרד "
+                           "הביטחון) נספרים בנפרד, בשורה אחת. %s" % (BOOKS_ERA_SAID, _BOOKS_LATE)),
+        _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
     ],
 }
 
@@ -404,6 +446,9 @@ LEGEND = {
 # 3. "מה לבדוק": what each chip on a row says. The text is the chip's on the page (frontend/finance.js FLAG, held to this by
 #    tests/test_finance_js.py); "{status}" is the row's own "סטטוס תשלום", in quotes.
 _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
+# what every mark of the books says of where its row is (D3; spec §6.1.1, §6.4.2)
+_BOOKS_MARK_ROW = ("לא משנה את השיבוץ. תקבול מ-%s ואילך שיש בו סימון כזה מופיע גם ב\"לטיפול\"; תקבול ישן יותר נשאר "
+                   "במשבצת שלו עם הסימון." % BOOKS_ERA_SAID)
 LEGEND_FLAGS = {
     "b2c": [
         # "נבנה", not "נכתב", which is the word of the desk's own writes ("נכתב, מתעדכן"; QA 24.11)
@@ -418,6 +463,18 @@ LEGEND_FLAGS = {
          "הוקלד תאריך החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
         ("receipt_no_money", "שליחת קבלה: %s, בסטטוס {status}" % RECEIPT[R_SENT],
          "%s: קבלה יצאה על כסף שלא נכנס. אחד מהם לא נכון." % _RECEIPT_NO_MONEY),
+        # D3 (app/desk/books.py): what the books contradict on the row, from A1's judgement of it. The chip's "{...}" is
+        # filled on the server from the row (its sums, its document, its status)
+        ("books_ref_invalid", "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
+         "באסמכתת חשבונית יש מספר שאין בחשבשבת מסמך תקף שנושא אותו (\"לא נמצא\"), ששני מסמכים תקפים נושאים אותו (\"בשני "
+         "מסמכים\"), או של מסמך שאינו חשבונית מס או חשבונית מס/קבלה (סוג המסמך: חשבונית זיכוי, קבלה, חשבון עסקה, או "
+         "חשבונית מס בסכום שלילי). בפרטים, במשפט. %s" % _BOOKS_MARK_ROW),
+        ("books_amount_differs", "בשורה {row}, בחשבשבת {books}",
+         "סכום ששולם בשורה, או בכל השורות שמפנות לאותם מסמכים יחד, שונה מהסכום של המסמכים בחשבשבת כולל מע\"מ, ביותר "
+         "משקל למסמך ויותר מ-0.1%%. %s" % _BOOKS_MARK_ROW),
+        ("books_receipt_unpaid", "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+         "בחשבשבת יש חשבונית מס/קבלה במספר שבשורה, כלומר הכסף התקבל, וסטטוס התשלום בשורה אינו אומר שנכנס כסף. %s"
+         % _BOOKS_MARK_ROW),
         ("refund_last_day_passed", LAST_DAY_LABEL + " עבר", "היום האחרון להחזר לפי החוק עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_overdue", PLANNED_LABEL + " עבר", "מועד ההעברה שנקבע באישור עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
@@ -506,21 +563,24 @@ LEGEND_MONDAY = {
 }
 LEGEND_TITLES = ("מילים שהמסך מחשב", "השיבוצים", "מה לבדוק", "עמודות של מאנדיי, ומאיפה הן")
 WHAT_TO_CHECK = {
-    "b2c": "עמודה ב%s: מה המסך מצא בתקבול. נקודה אדומה: סתירה בין עמודות, או מועד שעבר." % _q(_EXCEPTION_LABEL),
+    "b2c": "עמודה ב%s: מה המסך מצא בתקבול. נקודה אדומה: סתירה בין עמודות, סתירה בין השורה לחשבשבת, או מועד שעבר. "
+           "סימון של חשבשבת מופיע גם מתחת למשבצת, בכל רשימה שיש בה שיבוץ." % _q(_EXCEPTION_LABEL),
     "b2b": "עמודה ב%s, %s ו%s: מה המסך מצא בחיוב. נקודה אדומה: סתירה בין עמודות, או מועד שעבר."
            % (_q(_EXCEPTION_LABEL), _q(TO_BILL_LABEL), _q(B2B_STATES["planned"]["label"])),
 }
 
 
 def flag_legend_term(text: str) -> str:
-    """A chip as the legend names it: the row's own status is shown as "...", since it changes from row to row."""
-    return text.replace("{status}", "\"...\"")
+    """A chip as the legend names it: the row's own status is shown as "...", since it changes from row to row - and so is
+    every other value a chip is filled with (D3: a sum, a document's number)."""
+    return re.sub(r"\{[a-z_]+\}", "...", text.replace("{status}", "\"...\""))
 
 
 # The order the page lists a row's chips in its "מה לבדוק" column (frontend/finance.js FLAG_ORDER, held to this by
 # tests/test_desk_parity_js.py): contradictions and deadlines first, then what is missing, then the rest. Every chip of
 # LEGEND_FLAGS is in it once. The Excel files list a row's reasons in this order and in the chips' words (`row_reasons`).
 FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
+              "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid",   # D3: contradictions with the books
               "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
               "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
               "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
@@ -534,10 +594,13 @@ def status_word(row: dict) -> str:
 
 def row_reasons(tab: str, row: dict) -> list[str]:
     """What the page's column "מה לבדוק" says of a row (finance.js rowChips): each of its chips, in FLAG_ORDER, in the
-    chip's own words - "{status}" the row's own status (`status_word`). The page shows five and "ועוד N"; this is all of
-    them, for the Excel files, which carry the column on every row (QA 24.11: a row in "חריג" said nothing there)."""
+    chip's own words - "{status}" the row's own status (`status_word`); a mark of the books (D3) in its own words, filled
+    on the server (the row's `books`). The page shows five and "ועוד N"; this is all of them, for the Excel files, which
+    carry the column on every row (QA 24.11: a row in "חריג" said nothing there)."""
     texts = {k: t for k, t, _x in LEGEND_FLAGS[tab]}
-    return [texts[k].replace("{status}", status_word(row)) for k in FLAG_ORDER if k in row["flags"] and k in texts]
+    filled = {m["kind"]: m["chip"] for m in row.get("books") or []}
+    return [filled.get(k) or texts[k].replace("{status}", status_word(row))
+            for k in FLAG_ORDER if k in row["flags"] and k in texts]
 
 
 # ---------------------------------------------------------------- actions from the desk (round 3, slice 3, 11.11)
@@ -1105,13 +1168,15 @@ def sort_b2c(rows: list[dict], state: str) -> list[dict]:
 
 
 def filter_b2c(b2c: dict, state: str, period: str, q: str) -> list[dict]:
-    """The list as the page shows it, in its order: a state ('' all, 'tasks' every task state, or one key), a
-    period key, and the search box. The Excel file is built from this."""
+    """The list as the page shows it, in its order: a state ('' all, 'tasks' every task state and every row the books
+    mark from 25.10.2026 on - `books_task`, D3 - or one key), a period key, and the search box. The Excel file is built
+    from this."""
     months = period_months(period)
     if state and state != "tasks" and state not in B2C_STATES:
         raise ValueError("unknown state")
     keep = set(TASK_STATES) if state == "tasks" else ({state} if state else set(B2C_STATES))
-    rows = [x for x in b2c["rows"] if x["state"] in keep and (not months or x["month"] in months) and b2c_matches(x, q)]
+    rows = [x for x in b2c["rows"] if (x["state"] in keep or (state == "tasks" and x.get("books_task")))
+            and (not months or x["month"] in months) and b2c_matches(x, q)]
     return sort_b2c(rows, state if state in B2C_STATES else "")
 
 
@@ -1599,6 +1664,10 @@ def visible_part(view: dict, b2c: bool, b2b: bool) -> dict:
         out["b2c"] = dict(view["b2c"], rows=[{k: v for k, v in x.items() if k != "id_number"} for x in view["b2c"]["rows"]])
     if not b2b:
         out["b2b"] = None
+    # D3: the books' documents whose card's side is not clear go to a member of both charge boards only (spec §6.4.1); the
+    # students' list and the marks are the students' tab's, the companies' list the companies' tab's, removed with them
+    if not (b2c and b2b):
+        out["books_unclear"] = None
     keep = set((B2C_NOTES if b2c else ()) + (B2B_NOTES if b2b else ()))
     out["data_notes"] = {k: v for k, v in view["data_notes"].items() if k in keep}
     visible_cols = (B2C_COLUMNS if b2c else set()) | (set(B2.values()) if b2b else set())

@@ -682,7 +682,8 @@ def test_every_label_the_page_draws_is_mondays_title_or_in_the_legend():
 # contradiction between two columns) and to WARN (its sentence in the details). Until then a row that carries it is in
 # "חריג, לבדיקה" with no chip for it on the page, while the Excel file says it. The tests below skip only its absence: once
 # the page draws it, its text and its place are held like every other chip's. Empty the set when the page has it.
-PAGE_OWES: set = set()  # every chip the server can flag, the page draws (receipt_no_money: QA 24.11)
+# D3 (25.11): the three marks of the books (app/desk/books.py), which the page draws in the commit after the server's
+PAGE_OWES: set = {"books_ref_invalid", "books_amount_differs", "books_receipt_unpaid"}
 
 
 def test_every_chip_the_page_can_show_is_explained_in_its_tabs_legend():

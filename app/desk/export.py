@@ -46,9 +46,11 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .view import (B2B_STATES, B2C_STATES, DUE_RULE, FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, NO_TERMS, P_PART,
-                   P_REFUNDED, PAY, PLANNED_LABEL, REFUND_DUE_DAYS, REFUNDED_WORD, UNNAMED_LABEL, aging_columns,
-                   aging_file_header, aging_value, day, is_refund_row, row_reasons)
+from .view import (B2B_STATES, B2C_STATES, BOOKS_AS_OF_WORD, BOOKS_CANDIDATE, BOOKS_DOC_HEADS, BOOKS_SUM_WORD,
+                   BOOKS_UNCLEAR_WHY, DUE_RULE,
+                   FLOW_LABEL, LAST_DAY_LABEL, LOCAL_TZ, MONEY_IN, NO_TERMS, P_PART, P_REFUNDED, PAY, PLANNED_LABEL,
+                   REFUND_DUE_DAYS, REFUNDED_WORD, UNNAMED_LABEL, aging_columns, aging_file_header, aging_value, day,
+                   is_refund_row, row_reasons)
 
 MONEY_FMT = "#,##0.00"
 DATE_FMT = "dd/mm/yyyy"
@@ -193,9 +195,64 @@ def _text(cell, v: Any) -> None:
     cell.number_format = "@"   # and a reference like 00123 stays a reference
 
 
-def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
+# D3 (app/desk/books.py): "לטיפול" of a tab carries its list of the books' documents with no charge on monday, as a sheet of
+# its own after "פרטים" - the students', the companies' (with the line of the vouchers' card), and the unclear documents for
+# a member of both charge boards only. The card's name is the books', cleaned of ID numbers before it was ever stored (spec
+# §3.4); there is no ID column, and a candidate by name is said as one, never as a match.
+_NUMBER_H, _TYPE_H, _DATE_H, _CARD_H = BOOKS_DOC_HEADS
+_SUM_INCL, _SUM_EXCL = BOOKS_SUM_WORD + " (כולל מע\"מ)", BOOKS_SUM_WORD + " (ללא מע\"מ)"
+
+
+def _candidates(e: dict) -> str:
+    """A document's candidates by name: each row's name, its state and its "סטטוס תשלום", and how many more."""
+    out = ["%s (%s, %s)" % (c.get("name") or "", B2C_STATES.get(c.get("state"), {}).get("label", c.get("state") or ""),
+                            c.get("status") or "ריק") for c in e.get("candidates") or []]
+    if e.get("candidates_more"):
+        out.append("ועוד %d" % e["candidates_more"])
+    return " · ".join(out)
+
+
+_DOC_COLUMNS = [(_NUMBER_H, lambda e: e["number"], "text", 12), (_TYPE_H, lambda e: e["type_name"], "text", 16),
+                (_DATE_H, lambda e: day(e["date"]), "date", 12)]
+BOOKS_SHEETS = {
+    "b2c": ("מסמכים בלי חיוב", _DOC_COLUMNS + [(_SUM_INCL, lambda e: e["total_incl"], "money", 16),
+                                             (_CARD_H, lambda e: e["card"], "text", 26),
+                                             (BOOKS_CANDIDATE, _candidates, "text", 50)]),
+    "b2b": ("מסמכים בלי חיוב", _DOC_COLUMNS + [(_SUM_EXCL, lambda e: e["total_excl"], "money", 16),
+                                             (_SUM_INCL, lambda e: e["total_incl"], "money", 16),
+                                             (_CARD_H, lambda e: e["card"], "text", 26),
+                                             ("חברה", lambda e: " · ".join(e.get("accounts") or []), "text", 26)]),
+    "unclear": ("לא ברור של מי", _DOC_COLUMNS + [(_SUM_EXCL, lambda e: e["total_excl"], "money", 16),
+                                               (_SUM_INCL, lambda e: e["total_incl"], "money", 16),
+                                               (_CARD_H, lambda e: e["card"], "text", 26),
+                                               (BOOKS_UNCLEAR_WHY, lambda e: e.get("why_text") or "", "text", 50)]),
+}
+
+
+def books_sheet(kind: str, part: dict) -> tuple:
+    """(title, columns, entries, lines under them) of one list of the books (the view's `books` of a tab, or its
+    `books_unclear`): its title and sentence under the rows, and the companies' line of the vouchers' card."""
+    title, columns = BOOKS_SHEETS[kind]
+    lines = [part.get("title") or "", part.get("about") or "", part.get("vouchers_said") or ""]
+    return title, columns, list(part.get("documents") or []), [x for x in lines if x]
+
+
+def books_lines(books: Any, local: Callable[[Any], str]) -> list:
+    """The line of "פרטים" that says which copy of the books the file's marks and lists are of: "נכון ל-" its time, and
+    why it is not newer; or why there is none. `local` writes a time as the file writes the reading's."""
+    if not isinstance(books, dict) or not books.get("state"):
+        return []
+    try:
+        at = local(datetime.fromisoformat(books["as_of"])) if books.get("as_of") else ""
+    except (TypeError, ValueError):
+        at = ""
+    text = ("נכון ל-%s" % at if at else "") + ((". " if at else "") + books["said"] if books.get("said") else "")
+    return [(BOOKS_AS_OF_WORD, text)] if text else []
+
+
+def b2c_workbook(rows: list[dict], about: dict[str, Any], sheets: list | None = None) -> bytes:
     """rows: the filtered student payments (view.filter_b2c). about: the filter and the reading, for sheet 2, whose head
-    says that the file carries no ID number."""
+    says that the file carries no ID number. sheets: the books' lists of "לטיפול" (D3, `books_sheet`)."""
     return _workbook("תקבולים", B2C_COLUMNS, rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
                      [("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
                       ("תאריך תקבול", "כפי שהוקלד בלוח; כשלא הוקלד, היום שבו נוצרה השורה במאנדיי, ואז במקור "
@@ -213,13 +270,14 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
                        % (REFUNDED_WORD, PAY[P_REFUNDED], PAY[P_PART], PAY[P_REFUNDED])),
                       _what_to_check("תקבול", B2C_STATES),
                       (LAST_DAY_LABEL, "תאריך בקשת ביטול בהרשמה ועוד %d יום, בשורות של החזר בלבד, ליד %s"
-                       % (REFUND_DUE_DAYS, PLANNED_LABEL))], head_lines=[("ת.ז", ID_NUMBERS_NOT_IN_FILE)])
+                       % (REFUND_DUE_DAYS, PLANNED_LABEL))], head_lines=[("ת.ז", ID_NUMBERS_NOT_IN_FILE)], sheets=sheets)
 
 
-def b2b_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
+def b2b_workbook(rows: list[dict], about: dict[str, Any], sheets: list | None = None) -> bytes:
     """rows: the filtered company charges (view.filter_b2b). Partly paid charges whose paid amount is not typed have no
     balance, and the page gives "סכום ששולם (כולל מע\"מ)" and "יתרה לגבייה" no total while one is in its list ("חסר ב-N",
-    view.list_totals): the file's totals of the two are without them, and its second sheet says so beside them."""
+    view.list_totals): the file's totals of the two are without them, and its second sheet says so beside them. sheets:
+    the books' lists of "לטיפול" (D3, `books_sheet`)."""
     unknown = sum(1 for r in rows if r["state"] == "partial" and r["balance"] is None)
     which = ("חיוב אחד", "בלעדיו") if unknown == 1 else ("%d חיובים" % unknown, "בלעדיהם")
     return _workbook("חיובים", B2B_COLUMNS, rows, about, "חיובי לקוחות עסקיים מתוך שולחן הכספים",
@@ -228,7 +286,7 @@ def b2b_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
                         % (which[0], B2B_STATES["partial"]["label"], which[1]))] if unknown else []) +
                      [("הסכומים", "סכום לחיוב (ללא מע\"מ), כמו בלוח B2B Charge; סכום ששולם (כולל מע\"מ) ויתרה "
                                   "לגבייה כולל מע\"מ (היתרה מניחה מע\"מ 18%)"),
-                      ("מועד פירעון", DUE_RULE), _what_to_check("חיוב", B2B_STATES)])
+                      ("מועד פירעון", DUE_RULE), _what_to_check("חיוב", B2B_STATES)], sheets=sheets)
 
 
 # The second sheet's totals (QA 24.11): the row under the list is a SUBTOTAL formula, which follows Excel's filter and which
@@ -245,9 +303,10 @@ def total_label(head: str) -> str:
 
 
 def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any], what: str, totals: list,
-              head_lines: list | None = None) -> bytes:
+              head_lines: list | None = None, sheets: list | None = None) -> bytes:
     """`head_lines`: lines said right under what the file is, before when it was read (the students' file: no ID
-    number). `totals`: the lines after the file's own totals (FILE_TOTALS), which this sums from its cells."""
+    number). `totals`: the lines after the file's own totals (FILE_TOTALS), which this sums from its cells. `sheets`: the
+    books' lists (D3), each a sheet of its own after "פרטים"."""
     wb = Workbook()
     ws = wb.active
     ws.title = title
@@ -295,6 +354,7 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
         ("הקובץ", what),
         *(head_lines or []),
         ("נקרא ממאנדיי", about.get("taken_at") or ""),
+        *(about.get("books_lines") or []),
         ("הופק", datetime.now(LOCAL_TZ).strftime("%d/%m/%Y %H:%M")),
         ("רשימה", about.get("state_label") or "הכל"),
         ("סינון", about.get("period_label") or "כל התקופה"),
@@ -314,9 +374,37 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
             _text(cell, v)
     info.column_dimensions["A"].width = 34   # a total's name, as long as its column's header
     info.column_dimensions["B"].width = 60
+    for sheet in sheets or []:
+        _list_sheet(wb, *sheet)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def _list_sheet(wb, title: str, columns: list, entries: list, lines: list) -> None:
+    """One list of the books as a sheet: right to left, its header frozen with a filter, dates as dates, amounts as
+    numbers, every text as text (`_text`), and under the rows its title and sentence."""
+    ws = wb.create_sheet(title)
+    _sheet_base(ws)
+    bold = Font(bold=True)
+    for c, (head, _fn, _kind, width) in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=c, value=head)
+        cell.font, cell.fill = bold, HEADER_FILL
+        cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(c)].width = width
+    for i, e in enumerate(entries, start=2):
+        for c, (_head, fn, kind, _width) in enumerate(columns, start=1):
+            cell = ws.cell(row=i, column=c)
+            v = fn(e)
+            if kind == "text":
+                _text(cell, v)
+                continue
+            cell.value = v
+            cell.number_format = {"money": MONEY_FMT, "date": DATE_FMT}[kind]
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = "A1:%s%d" % (get_column_letter(len(columns)), max(len(entries) + 1, 1))
+    for k, text in enumerate(lines, start=len(entries) + 3):
+        _text(ws.cell(row=k, column=1), text)
 
 
 def download_headers(name: str, ascii_name: str) -> dict[str, str]:
