@@ -75,6 +75,7 @@ from typing import Any, Callable, Iterable, Optional
 from ..books.clean import _numbers, _process, normalize
 from ..monday.client import NEVER_READ, MondayError, MondayReader
 from ..recon.reading import Board, check_board
+from ..recon.receipt_dates import parse_refs
 
 logger = logging.getLogger("analiza_finance.desk")
 
@@ -128,6 +129,12 @@ TEXT_CELLS = {key: tuple(c for c in cols if c.startswith(("text_", "multiple_per
 # an ID-like number in that text is replaced by ID_MARK (`mask_ids`)
 ID_DIGITS = 8
 ID_MARK = "#"
+# the two charge boards' "אסמכתת חשבונית": the documents a payment cites. A cell A1 reads as a list of numbers
+# (`parse_refs`) is kept as typed - "062894, 62914" is two documents, though the books' cleaning reads it as one number of
+# eleven digits and `mask_ids` would mask it whole, so A1 and the desk's marks lost both (the review of dfa967b) - and
+# only a number of REF_DIGITS digits or more in it is masked, as no document number is (`mask_refs`)
+INVOICE_CELLS = {"student_charge": SC["invoice"], "b2b_charge": B2["invoice"]}
+REF_DIGITS = 7
 
 # The reading's own limits: monday answers the whole of it in some seconds (R0: 6.1 s for five boards whole, 23.11).
 READ_DEADLINE_S = 50
@@ -300,17 +307,28 @@ def _mask_piece(text: str) -> str:
     return "".join(out) + norm[last:] if hit else text
 
 
+def mask_refs(text: Any) -> Any:
+    """An invoice cell (INVOICE_CELLS) as the desk keeps it: a cell A1 reads as a list of numbers (`parse_refs`) as typed,
+    each number of REF_DIGITS digits or more in it replaced by ID_MARK; any other cell as `mask_ids` masks every text."""
+    if not isinstance(text, str):
+        return text
+    if parse_refs(text) is None:
+        return mask_ids(text)
+    return re.sub(r"[0-9]{%d,}" % REF_DIGITS, ID_MARK, text)
+
+
 def masked(key: str, rows: list) -> list:
-    """The rows of board `key`, just read, with `mask_ids` applied to each item's name and its TEXT_CELLS, in place: so
-    the reading in memory, its stored copy (desk_readings), the page and the Excel file hold the same masked text, in a
-    full reading and in a refresh alike (Nadav 24.11). Only here, never in the reader's `_text`: the reconciliation (R0,
-    A1) matches short invoice numbers through the same reader."""
+    """The rows of board `key`, just read, with `mask_ids` applied to each item's name and its TEXT_CELLS (an invoice
+    cell, `mask_refs`), in place: so the reading in memory, its stored copy (desk_readings), the page and the Excel file
+    hold the same masked text, in a full reading and in a refresh alike (Nadav 24.11). Only here, never in the reader's
+    `_text`: the reconciliation (R0, A1) matches short invoice numbers through the same reader."""
     cells = ("name",) + TEXT_CELLS[key]
+    refs = INVOICE_CELLS.get(key)
     for row in rows:
         if isinstance(row, dict):
             for col in cells:
                 if isinstance(row.get(col), str):
-                    row[col] = mask_ids(row[col])
+                    row[col] = mask_refs(row[col]) if col == refs else mask_ids(row[col])
     return rows
 
 

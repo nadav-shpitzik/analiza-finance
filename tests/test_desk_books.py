@@ -1417,6 +1417,39 @@ def test_an_answer_at_once_with_no_key_held_does_not_read_the_copy():
     assert b.answer(CFG, reading, view)["state"] == "ok" and store.snapshots == 1   # the page's next request computes
 
 
+def test_the_invoice_columns_keep_a_list_of_document_numbers_and_mask_a_long_one():
+    """The review of dfa967b, 10(d): the desk masks an ID number typed into free text (`mask_ids`, judged by the books'
+    cleaning), which reads "062894, 62914" as one number of eleven digits and masked it whole - so A1 and the marks lost
+    the two documents the payment cites. In the two charge boards' invoice columns, a cell A1 reads as a list of numbers
+    (`parse_refs`) is kept as typed, each of at most six digits; a number of seven digits or more in it is still masked,
+    and a cell A1 cannot read is masked as every text is. Every other text column is masked as before."""
+    for text in ("062894, 62914", "62894, 62914", "123456, 50348", "50347", "0628, 1234", "62894,62914,62915",
+                 "62894\u200f, 62914", ""):
+        assert rd.mask_refs(text) == text, text
+    assert rd.mask_ids("062894, 62914") == rd.ID_MARK                      # the mask of every other text: one number
+    assert a1.parse_refs(rd.mask_refs("062894, 62914")) == ["62894", "62914"]
+    for text, want in (("62894, 1234567", "62894, #"), ("123456789", "#"), ("62894, 039482716", "62894, #"),
+                       ("0001234567, 62894", "#, 62894"), ("חשבונית 039 482 716", "חשבונית #")):
+        got = rd.mask_refs(text)
+        assert got == want.replace("#", rd.ID_MARK), (text, got)
+    assert rd.mask_refs(None) is None
+    # the two invoice columns only: a credit reference is masked as before
+    sc_rows = [{"name": "תלמידה", rd.SC["invoice"]: "062894, 62914", rd.SC["credit_ref"]: "062894, 62914"}]
+    b2_rows = [{"name": "חיוב", rd.B2["invoice"]: "062894, 62914", rd.B2["month"]: "062894, 62914"}]
+    rd.masked("student_charge", sc_rows)
+    rd.masked("b2b_charge", b2_rows)
+    assert (sc_rows[0][rd.SC["invoice"]], sc_rows[0][rd.SC["credit_ref"]]) == ("062894, 62914", rd.ID_MARK)
+    assert (b2_rows[0][rd.B2["invoice"]], b2_rows[0][rd.B2["month"]]) == ("062894, 62914", rd.ID_MARK)
+    # and as the desk reads monday
+    from tests.test_desk import reader_of
+
+    w = world()
+    w.set(101, invoice="062894, 62914", touch=False)
+    w.set(102, invoice="62894, 039482716", touch=False)
+    got = {x["id"]: x[rd.SC["invoice"]] for x in rd.read_desk(reader_of(w))["student_charge"]["rows"]}
+    assert (got["101"], got["102"]) == ("062894, 62914", "62894, " + rd.ID_MARK)
+
+
 def test_the_accounts_keys_are_read_whole_kept_ten_minutes_and_a_short_read_keeps_the_ones_held():
     """`AccountKeys`: the whole Accounts board, its one column and the names; kept KEYS_TTL_S; a read that comes short of
     the board's items_count is a failed read (a company's card missing would make its invoice-receipt a student's), and
