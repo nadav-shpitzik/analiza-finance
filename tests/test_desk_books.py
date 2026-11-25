@@ -936,6 +936,21 @@ def test_two_held_parts_with_different_reasons_have_different_keys():
     assert other["state"] == "ok" and other["as_of"] == ok["as_of"] and other["key"] != ok["key"]
 
 
+def test_two_parts_computed_in_one_second_have_different_keys():
+    """A part's key names the computation it comes from, not only its second: a copy whose run moved within the second the
+    part before was computed (here its finished time kept, as a fixture keeps it) is another part, with another list."""
+    store = FakeCopy(copy(DOCS))
+    b = db.DeskBooks(lambda _url: store, lambda: None, clock=Tick(), now=lambda: datetime(2026, 11, 25, 9, 0, tzinfo=timezone.utc))
+    b.keys = FakeKeys({})
+    reading, view = reading_view(ROWS)
+    first = b.answer(CFG, reading, view)
+    store.snapshot = copy(DOCS + [doc(62504, card="20003")], last_run_id=8)
+    b._checked_at = None
+    second = b.answer(CFG, reading, view)
+    assert (first["computed_at"], first["as_of"]) == (second["computed_at"], second["as_of"])
+    assert len(second["students"]) == len(first["students"]) + 1 and first["key"] != second["key"]
+
+
 def test_the_merged_view_says_the_reasons_of_the_part_it_is_merged_with():
     from app.desk import routes
 

@@ -751,6 +751,7 @@ class DeskBooks:
         self._key: Optional[tuple] = None  # what self.part was answered for
         self._store_failed_at: Optional[float] = None
         self._checked_at: Optional[float] = None  # when the last finished run was last asked for
+        self._computations = 0  # how many parts this instance computed: each names its own (the part's key)
         self.trace: dict = {"computed_at": None, "seconds": None, "error": None}
 
     def current(self) -> Optional[dict]:
@@ -785,11 +786,13 @@ class DeskBooks:
         part = dict(base or {}, state=state, reasons=list(reasons))
         if base is None:
             part.update(as_of=None, marks={}, notes={}, students=[], companies=[], unclear=[], vouchers=0)
-        # the key names the part (the merged view is kept by it, the totals and the files are asked by it): two parts of one
-        # reading differ in it whenever what they say differs - their state, their copy's time, when they were computed,
-        # and their reasons (the review of dfa967b: two `held` parts with other reasons had one key, so the page was shown
-        # the reason of the part before). Bounded by construction: the reasons are a closed list (BOOKS_KEY_MAX)
-        part["key"] = "%s|%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "", ",".join(reasons))
+        # the key names the part (the merged view is kept by it, the totals and the files are asked by it): two parts differ
+        # in it whenever what they say differs - their state, their copy's time, the computation they come from (when, and
+        # which of this instance's: two in one second, a copy whose run moved and kept its time, are two) and their reasons
+        # (the review of dfa967b: two `held` parts with other reasons had one key, so the page was shown the reason of the
+        # part before). Bounded by construction: the reasons are a closed list (BOOKS_KEY_MAX)
+        part["key"] = "%s|%s|%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "",
+                                          part.get("computation") or "", ",".join(reasons))
         return part
 
     def _not_ok(self, reasons: list) -> dict:
@@ -859,8 +862,9 @@ class DeskBooks:
             logger.error("desk books: the part was not computed (%s)", type(exc).__name__)
             self.trace["error"] = type(exc).__name__
             return self._not_ok(["store_error"])
+        self._computations += 1
         got.update(as_of=_iso(snapshot.get("last_run_finished_at")), computed_at=_iso(self.now()),
-                   reading_at=reading.get("read_at"))
+                   reading_at=reading.get("read_at"), computation=self._computations)
         part = self._made("ok", [], got)
         self.last_ok = part
         self.trace.update(computed_at=got["computed_at"], seconds=round(self.clock() - started, 2), error=None)
