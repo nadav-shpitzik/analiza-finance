@@ -108,6 +108,18 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   whole instead with nothing held, after `FULL_AFTER` (36 h), on ids that cannot be reconciled or a failed refresh (at most
   once per `FALLBACK_GAP`, never on `NO_FALLBACK` or a rate limit). A request, never a thread. `/health`: `desk.last_reading.kind`,
   `desk.refresh` (codes), with a database `desk.stored` (its age); never a count of rows. Tests: `tests/test_desk_mirror.py`.
+- **What the books say in the desk (D3, 25.11), read only:** `app/desk/books.py`. A1's `analyse` (reused, never forked; it now
+  also says `refused` and `group`) judges every Student Charge row of the desk's reading, and three buckets are marks on the row
+  (`books_ref_invalid`, `books_amount_differs`, `books_receipt_unpaid`): a red chip with its words filled on the server, under
+  the row's state and in "מה לבדוק" (no column added: QA 4's widths), a sentence in the details, the chip in the files. A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
+  too (`books_task`: filter_b2c and the page's scFilter alike). Under "לטיפול", the documents of the era no charge row cites:
+  the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
+  companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted
+  apart, the unclear ones to a member of both charge boards only (`visible_part`). Computed per reading and per books run
+  (`DeskBooks`), only on a whole reading and a whole copy (`BooksStore.desk_snapshot`, one repeatable-read snapshot, judged by
+  `not_ready`, A1's rule, now in app/books/store.py); else the last whole result `held`, or `none`, with closed reasons; `off`
+  on Demo or without a database; an answer at once never reads monday for the keys (`pending`). `/health` `desk.books`: state,
+  as_of, reasons, never a count. No schema change. Tests: `tests/test_desk_books.py`, `tests/test_desk_books_page.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
