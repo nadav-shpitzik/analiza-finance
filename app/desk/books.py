@@ -368,9 +368,12 @@ def _ref_reason(number: str, bucket: str, idx: dict) -> tuple:
         word, sentence = REF_WHY[bucket]
         return "%s %s" % (number, word), "%s: %s" % (number, sentence)
     doc = (by_number.get(number) or [{}])[0]
-    total, name = _money(doc.get("total_incl")), type_name(doc.get("doc_type"))
-    if role(doc.get("doc_type")) == INVOICE and total is not None and total < 0:
-        return "%s %s בסכום שלילי" % (number, name), "%s: %s בסכום שלילי, כלומר ביטול" % (number, name)
+    total, name, r = _money(doc.get("total_incl")), type_name(doc.get("doc_type")), role(doc.get("doc_type"))
+    if r in LISTED_ROLES and total is not None and total < 0:
+        # a negative sum, said as one - never as another type (A1 refuses a negative invoice-receipt as it refuses a
+        # negative tax invoice); FR-4 names a negative tax invoice a cancellation
+        return "%s %s בסכום שלילי" % (number, name), "%s: %s בסכום שלילי%s" % (
+            number, name, ", כלומר ביטול" if r == INVOICE else "")
     if role(doc.get("doc_type")) in LISTED_ROLES and total is None:
         return "%s %s בלי סכום" % (number, name), "%s: %s בלי סכום" % (number, name)
     return "%s %s" % (number, name), "%s: %s, ולא חשבונית מס או חשבונית מס/קבלה" % (number, name)

@@ -281,6 +281,21 @@ def test_books_ref_invalid_names_each_number_and_why():
     assert got[4]["documents"] == ["80500", "40505"]
 
 
+def test_a_negative_invoice_receipt_is_said_as_a_negative_sum_not_as_another_type():
+    """The review of dfa967b, finding 8 (tests/test_review_d3_ref_reason.py, ported): A1 refuses an invoice-receipt whose
+    total is negative as `ref_not_an_invoice`, exactly as a negative tax invoice, and its reason named the negative case
+    for tax invoices only - so the details read "62500: חשבונית מס/קבלה, ולא חשבונית מס או חשבונית מס/קבלה", a sentence
+    that contradicts itself (in the Excel file too), and the chip gave no reason. A negative sum is said as one; a credit
+    note's reason stays its type, whatever its sign."""
+    part, _v, _r = run([pay(1, "62500"), pay(2, "70100")], [doc(62500, total="-4000"), doc(70100, doc_type=3, total="-500")])
+    (mark,) = part["marks"]["1"]
+    assert mark["kind"] == "books_ref_invalid"
+    assert "ולא חשבונית מס או חשבונית מס/קבלה" not in mark["text"], mark["text"]
+    assert mark["chip"].endswith(": 62500 חשבונית מס/קבלה בסכום שלילי")
+    assert mark["text"].endswith(": 62500: חשבונית מס/קבלה בסכום שלילי.")
+    assert part["marks"]["2"][0]["chip"].endswith(": 70100 חשבונית זיכוי")
+
+
 def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
     """The copy is read every hour: a document issued and cited on monday since is just past the last number the copy holds
     in its series (status 1, by the rule of the copy's `series()`), and is no gap yet - no `books_ref_invalid` for it, and
