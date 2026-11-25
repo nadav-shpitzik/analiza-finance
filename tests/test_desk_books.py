@@ -92,6 +92,38 @@ def test_the_desks_snapshot_holds_no_run_lock_and_says_none_when_no_run_finished
     assert store.last_finished_run(ANALIZA) is None and not_ready(got) == "never_completed"
 
 
+@needs_pg
+def test_last_finished_run_is_bounded_like_the_snapshot(pg):
+    """The review of dfa967b, finding 6 (tests/test_review_d3_run_timeout.py, ported): the desk asks it first, inside a
+    person's request and inside DeskBooks' one lock; desk_snapshot bounds its statements, and last_finished_run did not, so
+    a query waiting behind a lock on books_sync_runs (a publish's schema change takes one) held the request and the lock
+    for as long as the lock was held. It is bounded the same way (STATEMENT_TIMEOUT), said by class. Takes about 15 s."""
+    import threading
+
+    from app.books.store import STATEMENT_TIMEOUT, BooksStoreError
+
+    seed(pg, [doc(62500)])
+    store = BooksStore(pg)
+    got: dict = {}
+
+    def ask():
+        try:
+            got["answer"] = store.last_finished_run(ANALIZA)
+        except BooksStoreError as exc:
+            got["error"] = exc.detail
+
+    with psycopg.connect(pg) as locker:                                      # one transaction, holding the table
+        locker.execute("LOCK TABLE books_sync_runs IN ACCESS EXCLUSIVE MODE")
+        t = threading.Thread(target=ask, daemon=True)
+        t.start()
+        t.join(int(STATEMENT_TIMEOUT.rstrip("s")) + 5)
+        hung = t.is_alive()
+        locker.rollback()                                                    # let it go, whatever happened
+    t.join(10)
+    assert not hung, "last_finished_run waited past its bound behind a lock"
+    assert got == {"error": "57014"}                                         # query_canceled: by its SQLSTATE, no text
+
+
 def test_a_database_that_cannot_be_reached_is_a_books_store_error_by_class():
     from app.books.store import BooksStoreError
 

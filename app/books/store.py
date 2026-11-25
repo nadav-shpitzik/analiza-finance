@@ -465,13 +465,18 @@ class BooksStore:
 
     def last_finished_run(self, company: str, connect_timeout_s: int = DESK_CONNECT_TIMEOUT_S) -> Optional[tuple]:
         """(run_id, finished_at) of the last finished run of this company, or None when none finished: the cheap question
-        the desk asks before it reads the copy again (D3). On a connection of its own, like desk_snapshot."""
+        the desk asks before it reads the copy again (D3). On a connection of its own, like desk_snapshot, and bounded as
+        desk_snapshot's statements are: a person's request waits for it, inside the desk's one lock (the review of dfa967b:
+        unbounded, a query waiting behind a lock on books_sync_runs - a publish's schema change takes one - held the
+        request and the lock for as long as the lock was held)."""
         with _guard():
             conn = self._connect(autocommit=True, connect_timeout_s=connect_timeout_s)
             try:
-                row = conn.execute(
-                    "SELECT run_id, finished_at FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL "
-                    "ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
+                with conn.transaction():
+                    conn.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+                    row = conn.execute(
+                        "SELECT run_id, finished_at FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL "
+                        "ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
             finally:
                 conn.close()
         return None if row is None else (row[0], row[1])
