@@ -403,11 +403,13 @@ def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
     if kind == "books_amount_differs" and group is not None:
         numbers = list(group["documents"])
         rows, paid, total = group["rows"], group["paid"], group["total"]
-        where = "בשורה" if len(rows) == 1 else "ב-%d השורות" % len(rows)
-        chip = _flag_text(kind).replace("{row}", money_text(paid)).replace("{books}", money_text(total))
-        if len(rows) > 1:
-            chip = chip.replace("בשורה", where, 1)
         own = a1.parse_amount(row.get("paid_raw")) if row.get("paid_raw") is not None else None
+        # several rows over the same documents: the row's own sum, and the rows' together in brackets - inside the legend's
+        # one term ("בשורה ..., בחשבשבת ..."), never a chip of other words (the review of dfa967b: "ב-2 השורות X" was a
+        # label neither monday's nor the legend's)
+        said_row = money_text(paid) if len(rows) == 1 else "%s(ב-%d השורות %s)" % (
+            money_text(own) + " " if own is not None else "", len(rows), money_text(paid))
+        chip = _flag_text(kind).replace("{row}", said_row).replace("{books}", money_text(total))
         text = "%s %s, ובחשבשבת %s כולל מע\"מ (%s): הפער גדול משקל למסמך ומ-0.1%%." % (
             "סכום ששולם בשורה" if len(rows) == 1 else "סכום ששולם ב-%d השורות שמפנות לאותם מסמכים, יחד," % len(rows),
             money_text(paid), money_text(total), _docs_said(numbers, by_number))

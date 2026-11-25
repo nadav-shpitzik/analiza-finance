@@ -222,6 +222,23 @@ def test_every_label_the_books_draw_is_mondays_title_or_in_the_legend():
     assert "רמז בלבד" in legend and "לא מקשר" in legend
 
 
+def test_every_chip_the_books_draw_for_a_group_of_rows_is_in_the_legend():
+    """The review of dfa967b, finding 9 (tests/test_review_d3_legend_chip.py, ported): the amount's chip of a group of
+    several rows was rewritten to "ב-2 השורות X, בחשבשבת Y", drawn red under the row's state while the legend's term for it
+    is "בשורה ..., בחשבשבת ..." - a label neither monday's nor the legend's (QA 11.11, 2.2). Its test drew one-row groups
+    only. One invoice-receipt of 4,000 cited by two rows of 4,000 (63109's shape): the chip stays inside the term."""
+    view, merged = books_view(rows=[pay(1, "63109"), pay(2, "63109")], docs=[doc(63109, total="4000")])
+    chips = [m["chip"] for r in merged["b2c"]["rows"] for m in r.get("books") or []]
+    assert chips and all("השורות" in c for c in chips)                      # the case is reached
+    html = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}])[0]
+    known = fd.legend_terms("b2c") | MONDAY_TITLES["b2c"] | CONTROLS
+    patterns = [re.compile("^" + re.escape(fd.flag_legend_term(t)).replace(re.escape("..."), ".+") + "$")
+                for _k, t, _x in fd.LEGEND_FLAGS["b2c"]]
+    missing = [x for x in _labels(html) if x not in known and not re.fullmatch(r"ועוד \d+", x)
+               and not any(p.match(x) for p in patterns) and not all(w in known for w in _words_of(x))]
+    assert not missing, missing
+
+
 def test_the_chips_are_the_legends_words_red_and_after_the_contradictions_between_two_columns():
     flags = node(LOAD + "console.log(JSON.stringify(F._flags()));", None)
     texts = {k: t for k, t, _x in fd.LEGEND_FLAGS["b2c"]}

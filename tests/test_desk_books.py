@@ -375,14 +375,15 @@ def test_a_number_the_copy_holds_as_a_draft_is_a_draft_not_missing_from_the_copy
 
 def test_amount_differs_says_the_groups_two_sums_and_the_rounding_band_is_no_mark():
     """FR-C1 and the contract §0.3: past 1 ₪ a document and 0.1% is a mark, "בשורה X, בחשבשבת Y" (students with VAT); one
-    document over two rows sums its rows (63109: 4,000 cited by two 4,000 rows); Haemek's 3,350 against 3,347.46 is the
-    rounding band, shown to a person by A1 and no mark here."""
+    document over two rows sums its rows (63109: 4,000 cited by two 4,000 rows), said inside the legend's one term - the
+    row's own sum, and in brackets the rows' together; Haemek's 3,350 against 3,347.46 is the rounding band, shown to a
+    person by A1 and no mark here."""
     docs = [doc(62700, total="3000"), doc(63109, total="4000"), doc(62800, total="3347.46")]
     rows = [pay(1, "62700", paid="4000"), pay(2, "63109"), pay(3, "63109"), pay(4, "62800", paid="3350")]
     part, _v, _r = run(rows, docs)
     by = {int(i): v for i, v in marks(part).items()}
     assert by[1] == [("books_amount_differs", "בשורה 4,000.00 ₪, בחשבשבת 3,000.00 ₪")]
-    assert by[2] == by[3] == [("books_amount_differs", "ב-2 השורות 8,000.00 ₪, בחשבשבת 4,000.00 ₪")]
+    assert by[2] == by[3] == [("books_amount_differs", "בשורה 4,000.00 ₪ (ב-2 השורות 8,000.00 ₪), בחשבשבת 4,000.00 ₪")]
     assert 4 not in by
     text = part["marks"]["2"][0]["text"]
     assert "8,000.00 ₪" in text and "4,000.00 ₪" in text and "חשבונית מס/קבלה 63109" in text and "בשורה הזאת 4,000.00 ₪" in text
