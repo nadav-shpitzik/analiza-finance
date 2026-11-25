@@ -223,7 +223,8 @@ def test_every_mark_is_a1s_bucket_and_every_other_bucket_gives_none():
 
 def test_books_ref_invalid_names_each_number_and_why():
     """FR-C1, FR-3, FR-4: not found, held by two valid documents, or not an invoice (its type); the chip says each in a
-    word, the row's details in a sentence. A draft's number is not a valid document (FR-2), here inside its series."""
+    word, the row's details in a sentence. A draft's number is not a valid document (FR-2), here inside its series: it is
+    said as a draft ("טיוטה"), since the copy does hold the number."""
     docs = [doc(62600), doc(62600), doc(70100, doc_type=3), doc(80500, doc_type=31), doc(40505, doc_type=78),
             doc(50400, doc_type=1, total="-4000"), doc(62610, status=0), doc(62611)]
     rows = [pay(1, "40000"), pay(2, "62600"), pay(3, "70100"), pay(4, "80500, 40505"), pay(5, "50400"), pay(6, "62610")]
@@ -232,39 +233,90 @@ def test_books_ref_invalid_names_each_number_and_why():
     got = {int(i) % 100: ms[0] for i, ms in part["marks"].items()}
     assert {n: m["chip"] for n, m in got.items()} == {
         1: head + "40000 לא נמצא", 2: head + "62600 בשני מסמכים", 3: head + "70100 חשבונית זיכוי",
-        4: head + "80500 קבלה; 40505 חשבון עסקה", 5: head + "50400 חשבונית מס בסכום שלילי", 6: head + "62610 לא נמצא"}
+        4: head + "80500 קבלה; 40505 חשבון עסקה", 5: head + "50400 חשבונית מס בסכום שלילי", 6: head + "62610 טיוטה"}
     assert part["notes"] == {}
     assert got[2]["text"] == "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 62600: שני מסמכים תקפים בחשבשבת נושאים את המספר הזה."
     assert "70100: חשבונית זיכוי, ולא חשבונית מס או חשבונית מס/קבלה" in got[3]["text"]
     assert "50400: חשבונית מס בסכום שלילי, כלומר ביטול" in got[5]["text"]
+    assert got[6]["text"] == head + "62610: בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף."
     assert got[4]["documents"] == ["80500", "40505"]
 
 
-def test_a_number_past_the_last_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
-    """The copy is read every hour: a document issued and cited on monday since is past the last number the copy holds in
-    its series (status 1, by the rule of the copy's `series()`), and is no gap yet - no `books_ref_invalid` for it, and the
-    row's details say "עוד לא בהעתק של הספרים". Both sides of the boundary: the last number of the series plus one is not
-    yet in the copy; a number not held at or below it, or below every series, is not found. A number's series is the one
-    it would continue (the highest first number not above it); another refused number of the row keeps its mark."""
+def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
+    """The copy is read every hour: a document issued and cited on monday since is just past the last number the copy holds
+    in its series (status 1, by the rule of the copy's `series()`), and is no gap yet - no `books_ref_invalid` for it, and
+    the row's details say "עוד לא בהעתק של הספרים". "Just past": at most NOT_YET_SPAN (20) past the last number of the series
+    nearest below it - both sides of each end: the last plus one and plus 20 are not yet in the copy, plus 21 is not found,
+    and so is a number not held at or below a series' last, or below every series. Another refused number of the row keeps
+    its mark."""
     docs = [doc(62500), doc(62501), doc(62503), doc(50400, doc_type=1), doc(70100, doc_type=3)]
     rows = [pay(1, "62504"), pay(2, "62502"), pay(3, "50401"), pay(4, "40000"), pay(5, "62504, 70100"),
-            pay(6, "62503, 62505"), pay(7, "50400, 62504")]
+            pay(6, "62503, 62505"), pay(7, "50400, 62504"), pay(8, "62523"), pay(9, "62524"), pay(10, "50420"),
+            pay(11, "50421")]
     part, view, _r = run(rows, docs)
-    assert db.series_ends(docs) == [(50400, 50400), (62500, 62503)]
+    assert db.series_ends(docs) == [(50400, 50400), (62500, 62503)] and db.NOT_YET_SPAN == 20
     head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
     assert {i: ms[0]["chip"] for i, ms in part["marks"].items()} == {
-        "2": head + "62502 לא נמצא", "4": head + "40000 לא נמצא", "5": head + "70100 חשבונית זיכוי"}
+        "2": head + "62502 לא נמצא", "4": head + "40000 לא נמצא", "5": head + "70100 חשבונית זיכוי",
+        "9": head + "62524 לא נמצא", "11": head + "50421 לא נמצא"}
     assert part["notes"] == {"1": "62504: עוד לא בהעתק של הספרים", "3": "50401: עוד לא בהעתק של הספרים",
                              "5": "62504: עוד לא בהעתק של הספרים", "6": "62505: עוד לא בהעתק של הספרים",
-                             "7": "62504: עוד לא בהעתק של הספרים"}
+                             "7": "62504: עוד לא בהעתק של הספרים", "8": "62523: עוד לא בהעתק של הספרים",
+                             "10": "50420: עוד לא בהעתק של הספרים"}
     assert part["marks"]["5"][0]["documents"] == ["70100"] and "62504" not in part["marks"]["5"][0]["text"]
     # the note is in the row's details only: no flag, no chip, and no place in "לטיפול"
     merged = db.merge(view, dict(part, state="ok", reasons=[], as_of=None, key="k"))
     row = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]
     assert row["books_note"] == "62504: עוד לא בהעתק של הספרים" and "books" not in row and "books_task" not in row
     assert not any(f.startswith("books_") for f in row["flags"])
-    assert db.not_yet_read("62504", db.series_ends(docs)) and not db.not_yet_read("62503", db.series_ends(docs))
-    assert not db.not_yet_read("40000", db.series_ends(docs)) and not db.not_yet_read("62504", [])
+    ends = db.series_ends(docs)
+    assert db.not_yet_read("62504", ends) and db.not_yet_read("62523", ends) and not db.not_yet_read("62524", ends)
+    assert not db.not_yet_read("62503", ends) and not db.not_yet_read("40000", ends) and not db.not_yet_read("62504", [])
+
+
+# The review of dfa967b, finding 1 (tests/test_review_d3_not_yet_read.py, ported): with no upper bound, every wrong number
+# above the lowest series was "not yet in the copy" - never marked, and its details said so at every later tick. On a whole
+# copy (no holes: the only copy the desk computes on), a number no valid document holds is outside every series.
+NOT_YET_DOCS = [doc(50400, doc_type=1), doc(50401, doc_type=1), doc(50402, doc_type=1),
+                doc(62500), doc(62501), doc(62502), doc(62503), doc(70100, doc_type=3), doc(70101, doc_type=3)]
+
+
+def test_a_typo_far_above_the_top_series_is_marked_not_found():
+    """99999 is 37,496 past the last invoice-receipt: no document issued in the hour since the last tick."""
+    assert not_ready(copy(NOT_YET_DOCS)) is None
+    part, _v, _r = run([pay(1, "99999")], NOT_YET_DOCS)
+    assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_ref_invalid"], (part["marks"], part["notes"])
+    assert "1" not in part["notes"]
+
+
+def test_a_number_thousands_past_its_series_is_marked_not_found():
+    """67503 is 5,000 past the last invoice-receipt (62503): a mistyped digit, not a document of the last hour."""
+    part, _v, _r = run([pay(1, "67503")], NOT_YET_DOCS)
+    assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_ref_invalid"], (part["marks"], part["notes"])
+
+
+def test_a_number_between_two_series_is_marked_not_found():
+    """52894 (a typo of 62894) sits between the tax invoices (last 50402) and the invoice-receipts (first 62500): 2,492
+    past the invoices' last. It is no tax invoice issued in the last hour."""
+    part, _v, _r = run([pay(1, "52894")], NOT_YET_DOCS)
+    assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_ref_invalid"], (part["marks"], part["notes"])
+
+
+def test_the_details_never_say_not_yet_in_the_copy_of_an_absurd_number():
+    part, _v, _r = run([pay(1, "99999"), pay(2, "52894")], NOT_YET_DOCS)
+    assert part["notes"] == {}, part["notes"]
+    assert not db.not_yet_read("99999", db.series_ends(NOT_YET_DOCS))
+
+
+def test_a_number_the_copy_holds_as_a_draft_is_a_draft_not_missing_from_the_copy():
+    """Spec §4.1: a draft carries its series' next number. A row citing a draft cites no valid document (FR-2: the mark),
+    and the copy does hold the number: it is said as a draft, never "עוד לא בהעתק של הספרים"."""
+    docs = NOT_YET_DOCS + [doc(62504, status=0)]                             # a draft, the next number of its series
+    assert not_ready(copy(docs)) is None
+    part, _v, _r = run([pay(1, "62504")], docs)
+    assert "1" not in part["notes"], part["notes"]
+    assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_ref_invalid"], part["marks"]
+    assert part["marks"]["1"][0]["chip"].endswith("62504 טיוטה")
 
 
 def test_amount_differs_says_the_groups_two_sums_and_the_rounding_band_is_no_mark():

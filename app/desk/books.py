@@ -5,9 +5,11 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
 1. **A mark on a Student Charge row** (spec §6.1.1), from A1's own judgement of every row (app/recon/receipt_dates.py
    `analyse`, reused as it is - its buckets are the rules FR-C1, FR-3 and FR-4; nothing here judges a row again):
    - `books_ref_invalid`: the bucket `ref_not_in_books`, `ref_ambiguous` or `ref_not_an_invoice` - a number in
-     "אסמכתת חשבונית" that is no valid document; the details say which number and why. **But a number past the last of its
-     series is not yet in the copy** (`not_yet_read`): the books are read every hour, and a document issued and cited
-     since is no gap - no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`);
+     "אסמכתת חשבונית" that is no valid document; the details say which number and why ("טיוטה" for a number the copy
+     holds as a draft). **But a number just past the end of a series is not yet in the copy** (`not_yet_read`: at most
+     NOT_YET_SPAN past the last number of the series nearest below it, and held by no document of the copy): the books are
+     read every hour, and a document issued and cited since is no gap - no mark for it, and the row's details say "עוד לא
+     בהעתק של הספרים" (`books_note`). A number further on, between two series or below every series is mistyped: marked;
    - `books_amount_differs`: `amount_mismatch` only (the rounding band is no mark) - "בשורה X, בחשבשבת Y", the group's two
      sums, including VAT;
    - `books_receipt_unpaid`: read off the row's group itself (A1's `group`), not off A1's order of buckets - A1 matched
@@ -61,7 +63,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
 
-from ..books.doctypes import INFERRED, VALID_STATUS, role
+from ..books.doctypes import DRAFT_STATUS, INFERRED, VALID_STATUS, role
 from ..books.store import BooksStoreError, not_ready, summarize_series
 from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
@@ -147,10 +149,16 @@ REF_WHY = {
     "ref_not_in_books": ("לא נמצא", "אין בחשבשבת מסמך תקף במספר הזה"),
     "ref_ambiguous": ("בשני מסמכים", "שני מסמכים תקפים בחשבשבת נושאים את המספר הזה"),
 }
+# a number the copy holds only as a draft (spec §4.1: a draft carries its series' next number): no valid document (FR-2)
+DRAFT_WHY = ("טיוטה", "בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף")
 CANDIDATES_MAX = 10  # a common name shows its first ten rows, and how many more there are
 REF_BUCKETS = ("ref_not_in_books", "ref_ambiguous", "ref_not_an_invoice")
-# what a row's details say of a number it cites that is past the last of its series (`not_yet_read`)
+# what a row's details say of a number it cites that is just past the end of its series (`not_yet_read`)
 NOT_YET_SAID = "עוד לא בהעתק של הספרים"
+# how far past the last number of a series a cited number may be and still be a document issued since the copy's last
+# tick (the copy is read every hour; a few dozen documents a day): further, it is a mistyped number (review of dfa967b:
+# unbounded, every wrong number above the lowest series was "not yet in the copy", and never marked)
+NOT_YET_SPAN = 20
 
 # The Accounts board's keys: read whole with one column, kept this long, and after a failed read not tried again sooner
 KEYS_TTL_S = 600
@@ -281,17 +289,34 @@ def series_ends(documents: list) -> list:
 
 
 def not_yet_read(number: str, ends: list) -> bool:
-    """Whether a number no valid document holds is past the last number of its series - the series it would continue, the
-    one whose first number is the highest not above it: a document issued since the copy's last tick (the books are read
-    every hour), not yet in the copy. A number below every series is no such number."""
+    """Whether a number no document of the copy holds is just past the end of a series - last < n <= last + NOT_YET_SPAN,
+    for the series of tax invoices or invoice-receipts whose last number is the nearest below it: a document issued since
+    the copy's last tick (the books are read every hour), not yet in the copy. A number further on, between two series, or
+    below every series is no such number: it is mistyped, and marked "לא נמצא"."""
     n = int(number)
-    lasts = [last for first, last in ends if first <= n]
-    return bool(lasts) and n > lasts[-1]
+    below = [last for _first, last in ends if last < n]
+    return bool(below) and n - max(below) <= NOT_YET_SPAN
 
 
-def _not_yet(entry: dict, ends: list) -> list:
-    """The numbers of a row that no valid document holds and that are past the last of their series."""
-    return [n for n, b in entry.get("refused") or [] if b == "ref_not_in_books" and not_yet_read(n, ends)]
+def index_copy(documents: list) -> dict:
+    """What the marks read of one copy: its valid documents by number (A1's `index_documents`), the numbers it holds as a
+    draft, every number it holds in any status, and the ends of its series of tax invoices and invoice-receipts."""
+    drafts, held = set(), set()
+    for d in documents:
+        number = _number(d)
+        if number is None:
+            continue
+        held.add(number)
+        if d.get("status") == DRAFT_STATUS:
+            drafts.add(number)
+    return {"by_number": a1.index_documents(documents), "drafts": drafts, "held": held, "ends": series_ends(documents)}
+
+
+def _not_yet(entry: dict, idx: dict) -> list:
+    """The numbers of a row that no document of the copy holds, in any status, and that are just past the end of a series
+    (`not_yet_read`). A number the copy holds as a draft is a draft, never "not yet in the copy"."""
+    return [n for n, b in entry.get("refused") or [] if b == "ref_not_in_books" and n not in idx["held"]
+            and not_yet_read(n, idx["ends"])]
 
 
 def _flag_text(kind: str) -> str:
@@ -299,8 +324,11 @@ def _flag_text(kind: str) -> str:
     return next(t for k, t, _x in LEGEND_FLAGS["b2c"] if k == kind)
 
 
-def _ref_reason(number: str, bucket: str, by_number: dict) -> tuple:
+def _ref_reason(number: str, bucket: str, idx: dict) -> tuple:
     """(the chip's word, the details' sentence) for one number of the row that is no valid document."""
+    if bucket == "ref_not_in_books" and number in idx["drafts"]:
+        return "%s %s" % (number, DRAFT_WHY[0]), "%s: %s" % (number, DRAFT_WHY[1])
+    by_number = idx["by_number"]
     if bucket in REF_WHY:
         word, sentence = REF_WHY[bucket]
         return "%s %s" % (number, word), "%s: %s" % (number, sentence)
@@ -317,18 +345,19 @@ def _docs_said(numbers: list, by_number: dict) -> str:
     return ", ".join("%s %s" % (type_name((by_number.get(n) or [{}])[0].get("doc_type")), n) for n in numbers)
 
 
-def mark_of(entry: dict, row: dict, by_number: dict, ends: list = ()) -> Optional[dict]:
+def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
     """The mark A1's judgement of one row gives, or None: {"kind", "chip" (the chip's words, filled), "text" (the sentence
     the row's details and the Excel file say), "documents" (the numbers it is about)}. `row` is the view's row (its
-    status's label, by index); `ends`, the copy's series (`series_ends`): a number past the last of its series is not yet
-    in the copy, and no mark is given for it."""
+    status's label, by index); `idx`, the copy (`index_copy`): a number just past the end of its series is not yet in the
+    copy, and no mark is given for it."""
+    by_number = idx["by_number"]
     kind = MARK_OF_BUCKET.get(entry["bucket"])
     if kind == "books_ref_invalid":
-        late = _not_yet(entry, ends)
+        late = _not_yet(entry, idx)
         refused = [(n, b) for n, b in entry.get("refused") or [] if n not in late]
         if not refused:
             return None
-        why = [_ref_reason(n, b, by_number) for n, b in refused]
+        why = [_ref_reason(n, b, idx) for n, b in refused]
         chip = _flag_text(kind).replace("{why}", "; ".join(w for w, _s in why))
         return {"kind": kind, "chip": chip, "documents": [n for n, _b in refused],
                 "text": "%s: %s." % (_flag_text(kind).split(":")[0], "; ".join(x for _w, x in why))}
@@ -390,18 +419,18 @@ def _dmy(iso: str) -> str:
     return "%s.%s.%s" % (iso[8:10], iso[5:7], iso[:4]) if len(iso) >= 10 else iso
 
 
-def marks_of(analysis: dict, rows_by_id: dict, by_number: dict, ends: list = ()) -> tuple:
+def marks_of(analysis: dict, rows_by_id: dict, idx: dict) -> tuple:
     """({item id: [its marks]} for every row A1 judged into a bucket that gives one, {item id: the note of its details}
-    for every row that cites a number not yet in the copy)."""
+    for every row that cites a number not yet in the copy). `idx`: the copy (`index_copy`)."""
     marks, notes = {}, {}
     for item_id, entry in analysis["rows"].items():
         row = rows_by_id.get(item_id)
         if row is None:
             continue
-        mark = mark_of(entry, row, by_number, ends)
+        mark = mark_of(entry, row, idx)
         if mark is not None:
             marks[item_id] = [mark]
-        late = _not_yet(entry, ends) if entry["bucket"] in REF_BUCKETS else []
+        late = _not_yet(entry, idx) if entry["bucket"] in REF_BUCKETS else []
         if late:
             notes[item_id] = "%s: %s" % (", ".join(late), NOT_YET_SAID)
     return marks, notes
@@ -479,9 +508,8 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     for r in view_rows:
         raw = raw_by_id.get(r["id"]) or {}
         rows_by_id[r["id"]] = dict(r, paid_raw=raw.get(a1.AMOUNT_COLUMN))
-    by_number = a1.index_documents(documents)
     analysis = a1.analyse(sc_raw, documents)
-    marks, notes = marks_of(analysis, rows_by_id, by_number, series_ends(documents))
+    marks, notes = marks_of(analysis, rows_by_id, index_copy(documents))
 
     cited = cited_numbers(sc_raw, a1.REF_COLUMN) | cited_numbers(b2_raw, B2["invoice"])
     sides = card_sides(documents, keys)
