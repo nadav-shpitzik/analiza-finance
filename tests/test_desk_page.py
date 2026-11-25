@@ -1176,6 +1176,38 @@ def test_every_row_picks_at_most_one_batchs_worth_and_a_pick_past_it_is_said():
     assert got["steps"][3]["picked"] == []                       # every row it can was picked: the second press lets go
 
 
+CARD_NOTE = ("נכתב במאנדיי, כפי שמוצג כאן. כרטיס הפריט בלשונית הזאת עשוי להציג את הערך שלפני הכתיבה, עד שהדף ייטען "
+             "מחדש בדפדפן.")
+
+
+def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_show_the_value_from_before_it():
+    """QA2 2 (24.11): after "שליחת קבלה: יצאה" was written from the desk, "פתיחה במאנדיי" still showed "טרם" - closed and
+    opened again, after "רענון" too - and only reloading the page showed "יצאה" (the item's page in a new tab showed it at
+    once). The write was right; monday's card in that tab keeps what it read before. Opening over the view the card of a
+    row written in this visit says so, once for that row, by any of the three ways to it - and never with the write
+    itself, nor for a row not written."""
+    only_3102 = copy.deepcopy(receipts_view())
+    [r for r in only_3102["b2c"]["rows"] if r["id"] == "3102"][0].update(state="done", receipt="יצאה", receipt_idx="1",
+                                                                          actions=[])
+    answers = {"GET /api/desk": [{"body": answer(receipts_view())}],
+               "POST /api/desk/refresh": [{"body": answer(only_3102, taken_at="2026-11-24T08:00:09+00:00")},
+                                          {"body": answer(receipts_done(), taken_at="2026-11-24T08:00:19+00:00")}]}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"open": "3106"}, ["fin-name"]]},              # not written: nothing said
+                       {"click": [{"rowAct": "sc:3102:receipt_sent"}]}, {"click": [{"batchGo": "1"}]},
+                       {"click": [{"open": "3102"}, ["fin-dx-open"]]},                           # written here: said
+                       {"click": [{"open": "3102"}, ["fin-name"]]},                              # once for the row
+                       {"act": ["sc:3106", "receipt_sent"]}, {"confirm": True},                  # the details' action
+                       {"click": [{"open": "3106"}]}],                                           # the quiet icon
+                monday=receipts_world(), context=WRITES, answers=answers)
+    assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
+    assert [e["args"]["itemId"] for e in got["executed"] if e["what"] == "openItemCard"] == [3106, 3102, 3102, 3106]
+    assert got["toasts"] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן.", CARD_NOTE,
+                             "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן.", CARD_NOTE]
+    # outside monday a row's link opens its page in a new tab, which shows the value at once: nothing to say
+    source = code_of(PAGE)
+    assert source.index("cardNote(el.dataset.open)") > source.index("if (deps.monday) {", source.index("if (el.dataset.open) {"))
+
+
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------
 
 def test_a_payments_details_show_its_leads_id_number_read_as_the_person_never_from_the_server():

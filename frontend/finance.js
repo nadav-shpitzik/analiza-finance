@@ -105,6 +105,12 @@
  *      when it had them (render, focusKey); every answer is drawn as one, "רענון"'s too (load); and a drawing that is not
  *      the person's own act - an answer, a return, the search settling - waits while a pointer is down on the desk and is
  *      drawn once after the click (landed; PRESS_MAX_MS at most, for a release the page never hears).
+ * QA2 2 After "שליחת קבלה: יצאה" was written from here, "פתיחה במאנדיי" still showed "טרם" - closed and opened again, after
+ *      "רענון" too - and only reloading the page showed "יצאה" (the item's page in a new tab showed it at once). The write
+ *      was right; monday's card in that tab keeps what it read before it. Opening over the view the card of a row written
+ *      in this visit (WROTE, kept for the visit as WRITTEN is not) says so, once for that row, in a flash that outlasts
+ *      the card closing (cardNote, CARD_NOTE_MS); never with the write itself, nor outside monday, where the link opens
+ *      the item's page in a new tab.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1193,6 +1199,10 @@
   var DRAFT = {};      /* what was typed into an action's box, by "sc:123:<column>" */
   var WRITTEN = {};    /* rows written from here, by "sc:123": { fields, until } - laid over the row until a reading shows them */
   var WRITTEN_FOR_MS = 180000;
+  /* QA2 2 (24.11): the items written from here in this visit, by item id: "written", and "told" once the note on monday's
+     card was said for it (cardNote). Unlike WRITTEN, kept for the visit: monday's card in this tab stays behind after a
+     reading has caught up */
+  var WROTE = {};
 
   function later(fn, ms) { return ((deps && deps.later) || setTimeout)(fn, ms); }
   function rowKey(r) { return r.board + ":" + r.id; }
@@ -1445,6 +1455,8 @@
     return out;
   }
   function noteWritten(rk, cells, before) {
+    var id = rk.slice(rk.indexOf(":") + 1);
+    WROTE[id] = WROTE[id] || "written";
     var cols = Object.keys(cells), fields = rowFields(cells, cols);
     if (!Object.keys(fields).length) { return; }
     WRITTEN[rk] = { fields: fields, before: rowFields((before && before.cells) || {}, cols), until: Date.now() + WRITTEN_FOR_MS };
@@ -2856,10 +2868,23 @@
       if (BODY && BODY.refreshing) { followUp(BODY); }
     });
   }
-  function flash(text) {
+  function flash(text, ms) {
     var t = document.createElement("div"); t.className = "fin-toast"; t.setAttribute("role", "alert"); t.textContent = text;
     document.body.appendChild(t);
-    setTimeout(function () { t.remove(); }, 6000);
+    setTimeout(function () { t.remove(); }, ms || 6000);
+  }
+  /* QA2 2 (24.11): "פתיחה במאנדיי" after "שליחת קבלה: יצאה" was written from here showed "טרם" - closed and opened again, and
+     after "רענון" too - and only reloading the page showed "יצאה"; the item's page in a new tab showed it at once. monday's
+     card in this tab keeps what it read before the write, and the write was right (read back from monday's answer), so
+     whoever checks the card would think it failed. Opening over the view the card of a row written in this visit says so,
+     once for that row, never with the write itself; for long enough to be read once the card over the view is closed */
+  var CARD_NOTE = "נכתב במאנדיי, כפי שמוצג כאן. כרטיס הפריט בלשונית הזאת עשוי להציג את הערך שלפני הכתיבה, עד שהדף ייטען " +
+    "מחדש בדפדפן.";
+  var CARD_NOTE_MS = 12000;
+  function cardNote(id) {
+    if (WROTE[id] !== "written") { return; }
+    WROTE[id] = "told";
+    flash(CARD_NOTE, CARD_NOTE_MS);
   }
 
   /* ---------- events ---------- */
@@ -2946,6 +2971,8 @@
       if (deps.monday) {
         ev.preventDefault();
         var href = el.getAttribute("href");
+        /* the card over the view may be behind a write from here (QA2 2); a page in a new tab is not */
+        cardNote(el.dataset.open);
         try {
           Promise.resolve(deps.monday.execute("openItemCard", { itemId: Number(el.dataset.open) }))
             .catch(function () { window.open(href, "_blank", "noopener"); });
