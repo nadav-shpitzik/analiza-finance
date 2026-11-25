@@ -579,12 +579,11 @@ def test_a_part_that_cannot_be_computed_is_said_by_class_never_by_its_text(caplo
 # ---- who sees what (spec §6.4.1): the server never sends what the reader may not see ------------------------------------------
 import json  # noqa: E402
 
-import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import main  # noqa: E402
 from app.desk import reading as rd  # noqa: E402
-from tests.test_desk import SECRET, TOKEN, World, rel, session_token, status, world  # noqa: E402
+from tests.test_desk import SECRET, TOKEN, World, session_token, status, world  # noqa: E402
 from tests.test_desk_mirror import MemoryStore  # noqa: E402
 
 
@@ -726,7 +725,7 @@ def _merged_b2c() -> dict:
 
 
 # ---- the Excel files: "לטיפול" carries the marks and its tab's list --------------------------------------------------------------
-def _file(booked, user: int, tab: str, state: str = "tasks") -> "openpyxl.Workbook":
+def _file(booked, user: int, tab: str, state: str = "tasks"):
     import io
 
     import openpyxl
