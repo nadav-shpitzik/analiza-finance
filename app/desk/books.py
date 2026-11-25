@@ -21,7 +21,11 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
 3. **The side of a card** (FR-6, the plan §1a.2.3, until B3's sort codes): an Account's "מפתח חשבשבת" (read from the whole
    Accounts board, `AccountKeys`) is a company's card; otherwise a card that holds an invoice-receipt and no proforma
    (type 78: students are sent none) is a student's; anything else is `unclear`, and its documents are shown only to a
-   member of both charge boards (spec §6.4.1).
+   member of both charge boards (spec §6.4.1). **A key that is empty or masked names no card** (`card_of`): the copy cleans
+   a key like any text, so a key of six digits or more - a student's card keyed by an ID number, a company's by its ח.פ - is
+   stored "#", and every such card would pool into one. Such a document is judged alone, by its own type - an
+   invoice-receipt a student's, as FR-6's interim rule; a tax invoice unclear (`key_masked`, `key_empty`) - and never an
+   Account's.
 
 EVERY DOCUMENT OF THE ERA LANDS IN ONE PLACE (spec §6.3.1), the first that fits in PLACES: outside (another status or
 type, a cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row, answered
@@ -84,7 +88,14 @@ PLACES = ("outside", "cited", "missing", "vouchers", "students", "companies", "u
 UNCLEAR_WHY = {
     "no_invoice_receipt": "בכרטיס אין חשבונית מס/קבלה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
     "invoice_receipt_and_proforma": "בכרטיס יש חשבונית מס/קבלה וגם חשבון עסקה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
+    # a key that names no card (`card_of`): the document alone, and a tax invoice alone says no side
+    "key_masked": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ), ולכן החשבונית "
+                  "נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
+    "key_empty": "למסמך אין מפתח כרטיס בעותק של הספרים, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
 }
+# the books' cleaning masks a number of six digits or more that has no known shape (app/books/clean.py): a key holding it
+# names no card
+KEY_MASK = "#"
 
 # The states of the part, and the closed reasons a part is not `ok` - each with the sentence the page and the files say
 STATES = ("ok", "held", "none", "off")
@@ -190,13 +201,27 @@ def name_words(text: Any) -> frozenset:
 
 def account_keys_of(rows: list) -> dict:
     """{card key: [the names of the Accounts whose "מפתח חשבשבת" names it]}. A cell may name more than one card,
-    separated by commas, slashes or spaces (MON-43: it should not, and the desk does not lose one that does)."""
+    separated by commas, slashes or spaces (MON-43: it should not, and the desk does not lose one that does). A key the
+    desk's reading masked (an ID-like number, `mask_ids`) names no card, as in the books."""
     out: dict = defaultdict(list)
     for r in rows:
         for key in re.split(r"[,;/\s]+", norm_key(r.get(AC["hash_key"]))):
-            if key:
+            if key and KEY_MASK not in key:
                 out[key].append(str(r.get("name") or ""))
     return dict(out)
+
+
+def card_of(doc: dict) -> Optional[str]:
+    """The card a document is on, by its key - or None when the key names no card: empty, or masked by the copy's cleaning
+    ("#": every key of six digits or more that has no known shape reads so, and pooled they would be one card of many
+    people's documents)."""
+    key = norm_key(doc.get("account_key"))
+    return None if not key or KEY_MASK in key else key
+
+
+def no_card_why(doc: dict) -> str:
+    """Why a document's key names no card: `key_empty`, or `key_masked`."""
+    return "key_empty" if not norm_key(doc.get("account_key")) else "key_masked"
 
 
 def cited_numbers(rows: list, column: str) -> set:
@@ -213,14 +238,16 @@ def cited_numbers(rows: list, column: str) -> set:
 def card_sides(documents: list, keys: dict) -> dict:
     """{card key: (side, why)} for every card that holds a valid document: ("company", "account_key"), ("student",
     "invoice_receipt"), or ("unclear", one of UNCLEAR_WHY). A draft is no evidence; a document that answered "not found"
-    stays in every figure until a person confirms it gone (spec §4.2.5), so it is."""
+    stays in every figure until a person confirms it gone (spec §4.2.5), so it is. A document whose key names no card
+    (`card_of`) is on no card here: it is judged alone (`place_of`)."""
     roles: dict = defaultdict(set)
     for d in documents:
-        if d.get("status") == VALID_STATUS:
-            roles[norm_key(d.get("account_key"))].add(role(d.get("doc_type")))
+        card = card_of(d)
+        if card is not None and d.get("status") == VALID_STATUS:
+            roles[card].add(role(d.get("doc_type")))
     out = {}
     for card, held in roles.items():
-        if card and card in keys:
+        if card in keys:
             out[card] = ("company", "account_key")
         elif INVOICE_RECEIPT in held and PROFORMA not in held:
             out[card] = ("student", "invoice_receipt")
@@ -336,10 +363,14 @@ def place_of(doc: dict, cited: set, sides: dict) -> tuple:
         return "cited", ""
     if doc.get("missing"):
         return "missing", ""
-    card = norm_key(doc.get("account_key"))
+    card = card_of(doc)
     if card == VOUCHER_CARD:
         return "vouchers", ""
-    side, why = sides.get(card, ("unclear", "no_invoice_receipt"))
+    if card is None:
+        # a key that names no card: the document alone, by its own type (FR-6's interim rule), never pooled with another's
+        side, why = ("student", "invoice_receipt") if r == INVOICE_RECEIPT else ("unclear", no_card_why(doc))
+    else:
+        side, why = sides.get(card, ("unclear", "no_invoice_receipt"))
     if side == "student":
         return ("students", "") if day.year == STUDENT_WINDOW_YEAR else ("outside", "student_window")
     if side == "company":

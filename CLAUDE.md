@@ -115,7 +115,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   too (`books_task`: filter_b2c and the page's scFilter alike). Under "לטיפול", the documents of the era no charge row cites:
   the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
   companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted
-  apart, the unclear ones to a member of both charge boards only (`visible_part`). Computed per reading and per books run
+  apart, the unclear ones to a member of both charge boards only (`visible_part`). A card key that is masked ("#": the copy's
+  cleaning masks a key of six digits or more) or empty names no card (`card_of`): its document is judged alone, by its type. Computed per reading and per books run
   (`DeskBooks`), only on a whole reading and a whole copy (`BooksStore.desk_snapshot`, one repeatable-read snapshot, judged by
   `not_ready`, A1's rule, now in app/books/store.py); else the last whole result `held`, or `none`, with closed reasons; `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`). `/health` `desk.books`: state,
