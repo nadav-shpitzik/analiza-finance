@@ -122,7 +122,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
   companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted
   apart, the unclear ones to a member of both charge boards only (`visible_part`). A card key that is masked ("#": the copy's
-  cleaning masks a key of six digits or more) or empty names no card (`card_of`): its document is judged alone, by its type. Computed per reading and per books run
+  cleaning masks a key of six digits or more) or empty names no card (`card_of`): its side is judged by the card's name
+  (`side_card`: NFKC, case folded, spaces collapsed; evidence only, never matched to an Account or a row), so a proforma beside
+  a company's masked invoice-receipts makes them unclear (FR-C4, 18.11); with neither a key nor a name, alone, by its type. Computed per reading and per books run
   (`DeskBooks`), only on a whole reading and a whole copy (`BooksStore.desk_snapshot`, one repeatable-read snapshot, judged by
   `not_ready`, A1's rule, now in app/books/store.py); else the last whole result `held`, or `none`, with closed reasons; `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`). `/health` `desk.books`: state,

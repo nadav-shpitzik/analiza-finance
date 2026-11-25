@@ -32,9 +32,12 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
    (type 78: students are sent none) is a student's; anything else is `unclear`, and its documents are shown only to a
    member of both charge boards (spec §6.4.1). **A key that is empty or masked names no card** (`card_of`): the copy cleans
    a key like any text, so a key of six digits or more - a student's card keyed by an ID number, a company's by its ח.פ - is
-   stored "#", and every such card would pool into one. Such a document is judged alone, by its own type - an
-   invoice-receipt a student's, as FR-6's interim rule; a tax invoice unclear (`key_masked`, `key_empty`) - and never an
-   Account's.
+   stored "#", and pooled by key every such card would be one. **Such a document's side is judged by its card's name**
+   (`side_card`: NFKC, case folded, spaces collapsed - the same on every document of a card, spec §3.4), so a company's
+   invoice-receipts keyed by its ח.פ meet the proforma beside them (FR-C4, the incident of 18.11). The name is evidence of
+   the side only: never matched to an Account (a company's card is an Account's key, and a masked key is none) or to a
+   row. A document with neither a key nor a name is judged alone, by its own type - an invoice-receipt a student's, as
+   FR-6's interim rule; a tax invoice unclear (`key_masked`, `key_empty`).
 
 EVERY DOCUMENT OF THE ERA LANDS IN ONE PLACE (spec §6.3.1), the first that fits in PLACES: outside (another status or
 type, a cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row, answered
@@ -100,14 +103,24 @@ PLACES = ("outside", "cited", "missing", "vouchers", "students", "companies", "u
 UNCLEAR_WHY = {
     "no_invoice_receipt": "בכרטיס אין חשבונית מס/קבלה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
     "invoice_receipt_and_proforma": "בכרטיס יש חשבונית מס/קבלה וגם חשבון עסקה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
-    # a key that names no card (`card_of`): the document alone, and a tax invoice alone says no side
-    "key_masked": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ), ולכן החשבונית "
-                  "נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
-    "key_empty": "למסמך אין מפתח כרטיס בעותק של הספרים, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
+    # a key that names no card (`card_of`), judged by the card's name (`side_card`)
+    "name_no_invoice_receipt": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) או "
+                               "שאין לו מפתח, ולכן הוא נשפט לפי השם שבו, ובמסמכים בשם הזה אין חשבונית מס/קבלה",
+    "name_invoice_receipt_and_proforma": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או "
+                                         "ח.פ) או שאין לו מפתח, ולכן הוא נשפט לפי השם שבו, ובשם הזה יש חשבונית מס/קבלה "
+                                         "וגם חשבון עסקה, כמו בכרטיס של חברה",
+    # neither a key nor a name: the document alone, and a tax invoice alone says no side
+    "key_masked": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) ואין בו שם, ולכן "
+                  "החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
+    "key_empty": "למסמך אין בעותק של הספרים מפתח כרטיס ולא שם, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי "
+                 "היא",
 }
 # the books' cleaning masks a number of six digits or more that has no known shape (app/books/clean.py): a key holding it
 # names no card
 KEY_MASK = "#"
+# a card a document's side is judged by when its key names none: its name, after this prefix - which holds KEY_MASK, so it
+# is never a card's key (`card_of`) and never an Account's (`account_keys_of`)
+NAME_CARD = "#name:"
 
 # The states of the part, and the closed reasons a part is not `ok` - each with the sentence the page and the files say
 STATES = ("ok", "held", "none", "off")
@@ -245,6 +258,23 @@ def no_card_why(doc: dict) -> str:
     return "key_empty" if not norm_key(doc.get("account_key")) else "key_masked"
 
 
+def norm_name(text: Any) -> str:
+    """A card's name as cards are told apart by it: NFKC, case folded, every run of spaces one space, trimmed."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(text or "")).casefold()).strip()
+
+
+def side_card(doc: dict) -> Optional[str]:
+    """The card a document's side is judged by: its key (`card_of`); for a key that names none (masked or empty), its
+    card's name (NAME_CARD and `norm_name`), so the documents of one card keyed by an ID number or a ח.פ are judged together
+    (FR-C4: a proforma beside them) - evidence of the side only, never matched to an Account or a row; None with neither
+    (the document is judged alone)."""
+    card = card_of(doc)
+    if card is not None:
+        return card
+    name = norm_name(doc.get("account_name"))
+    return NAME_CARD + name if name else None
+
+
 def cited_numbers(rows: list, column: str) -> set:
     """Every document number a charge board's rows cite in `column`: each number of a readable cell (A1's `parse_refs`),
     and every number an unreadable one may name (A1's `loose_numbers`) - a document a row may cite is never listed as
@@ -257,25 +287,27 @@ def cited_numbers(rows: list, column: str) -> set:
 
 
 def card_sides(documents: list, keys: dict) -> dict:
-    """{card key: (side, why)} for every card that holds a valid document: ("company", "account_key"), ("student",
-    "invoice_receipt"), or ("unclear", one of UNCLEAR_WHY). A draft is no evidence; a document that answered "not found"
-    stays in every figure until a person confirms it gone (spec §4.2.5), so it is. A document whose key names no card
-    (`card_of`) is on no card here: it is judged alone (`place_of`)."""
+    """{card: (side, why)} for every card that holds a valid document, by `side_card` (a key, or a name for a key that
+    names none): ("company", "account_key"), ("student", "invoice_receipt"), or ("unclear", one of UNCLEAR_WHY). A card
+    judged by its name is never a company's (no Account names it). A draft is no evidence; a document that answered "not
+    found" stays in every figure until a person confirms it gone (spec §4.2.5), so it is. A document with neither a key
+    nor a name is on no card here: it is judged alone (`place_of`)."""
     roles: dict = defaultdict(set)
     for d in documents:
-        card = card_of(d)
+        card = side_card(d)
         if card is not None and d.get("status") == VALID_STATUS:
             roles[card].add(role(d.get("doc_type")))
     out = {}
     for card, held in roles.items():
-        if card in keys:
+        named = card.startswith(NAME_CARD)
+        if not named and card in keys:
             out[card] = ("company", "account_key")
         elif INVOICE_RECEIPT in held and PROFORMA not in held:
             out[card] = ("student", "invoice_receipt")
         elif INVOICE_RECEIPT in held:
-            out[card] = ("unclear", "invoice_receipt_and_proforma")
+            out[card] = ("unclear", "name_invoice_receipt_and_proforma" if named else "invoice_receipt_and_proforma")
         else:
-            out[card] = ("unclear", "no_invoice_receipt")
+            out[card] = ("unclear", "name_no_invoice_receipt" if named else "no_invoice_receipt")
     return out
 
 
@@ -475,11 +507,11 @@ def place_of(doc: dict, cited: set, sides: dict) -> tuple:
         return "cited", ""
     if doc.get("missing"):
         return "missing", ""
-    card = card_of(doc)
-    if card == VOUCHER_CARD:
+    if card_of(doc) == VOUCHER_CARD:
         return "vouchers", ""
+    card = side_card(doc)
     if card is None:
-        # a key that names no card: the document alone, by its own type (FR-6's interim rule), never pooled with another's
+        # neither a key nor a name: the document alone, by its own type (FR-6's interim rule), never pooled with another's
         side, why = ("student", "invoice_receipt") if r == INVOICE_RECEIPT else ("unclear", no_card_why(doc))
     else:
         side, why = sides.get(card, ("unclear", "no_invoice_receipt"))

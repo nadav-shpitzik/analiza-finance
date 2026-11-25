@@ -483,34 +483,58 @@ def test_a_card_is_a_companys_when_an_account_names_it_else_a_students_by_its_in
                                                                                         "10092": ["משרד"]}
 
 
-def test_a_masked_or_empty_card_key_is_no_card_and_its_documents_are_judged_alone():
+def test_a_masked_or_empty_card_key_is_no_card_and_its_side_is_judged_by_the_cards_name():
     """The copy cleans a card's key like any text (app/books/parse.py "key"), so a key of six digits or more - a student's
     card keyed by an ID number, a company's by its ח.פ - is stored "#", and an empty key is "": pooled by key they would be
     two cards of many people's documents, and one proforma on any of them would make every invoice-receipt there unclear.
-    A key that is masked or empty names no card: each document is judged alone by its own type - an invoice-receipt a
-    student's (FR-6's interim rule), a tax invoice unclear with its reason - and never an Account's, even if a key the desk
-    read from monday was masked to "#" too."""
+    A key that is masked or empty names no card: the side is judged by the card's name (NFKC, case folded, spaces
+    collapsed), the same on every document of a card - so a proforma beside invoice-receipts of the same name makes them
+    unclear, and a name with an invoice-receipt and no proforma is a student's. A document with neither a key nor a name is
+    judged alone by its own type. Never an Account's, even if a key the desk read from monday was masked to "#" too."""
     docs = [doc(62406, card="#", name="דנה לוי"), doc(62407, card="#", name="משה כהן"),
-            doc(40505, doc_type=78, card="#"),                                   # a proforma on another masked card
+            doc(40505, doc_type=78, card="#", name="דנה  לוי"),                 # a proforma of the same name: 62406's card
             doc(62408, card="", name="רות אבן"), doc(62409, card=None, name="יעל גל"),
-            doc(40506, doc_type=78, card=""),                                    # a proforma with no key at all
-            doc(50400, doc_type=1, card="AB-#", name="כרטיס מוסתר"), doc(50401, doc_type=1, card=None)]
-    keys = {"#": ["חברה שהמפתח שלה הוסתר"]}                                      # as if one came through: it never matches
+            doc(40506, doc_type=78, card="", name="נועה בר"),                   # a proforma with no key, alone on its name
+            doc(50400, doc_type=1, card="AB-#", name="כרטיס מוסתר"),           # a tax invoice, its name holding no receipt
+            doc(50401, doc_type=1, card=None, name=""),                         # neither a key nor a name: alone
+            doc(62410, card=None, name=None)]                                   # alone: an invoice-receipt, a student's
+    keys = {"#": ["חברה שהמפתח שלה הוסתר"], db.NAME_CARD + "משה כהן": ["חברה בשם"]}   # neither ever matches
     part, _v, _r = run([], docs, keys=keys)
-    assert sorted(e["number"] for e in part["students"]) == ["62406", "62407", "62408", "62409"]
+    assert sorted(e["number"] for e in part["students"]) == ["62407", "62408", "62409", "62410"]
     assert [(e["number"], e["why"]) for e in sorted(part["unclear"], key=lambda e: e["number"])] == [
-        ("50400", "key_masked"), ("50401", "key_empty")]
-    assert part["companies"] == [] and part["counts"] == {"students": 4, "unclear": 2, "outside": 2}
-    assert part["unclear"][0]["why_text"] == db.UNCLEAR_WHY[part["unclear"][0]["why"]]
-    assert db.card_sides(docs, keys) == {}                                       # no card at all among them
+        ("50400", "name_no_invoice_receipt"), ("50401", "key_empty"), ("62406", "name_invoice_receipt_and_proforma")]
+    assert part["companies"] == [] and part["counts"] == {"students": 4, "unclear": 3, "outside": 2}
+    assert all(e["why_text"] == db.UNCLEAR_WHY[e["why"]] for e in part["unclear"])
+    assert db.card_sides(docs, keys) == {
+        db.NAME_CARD + "דנה לוי": ("unclear", "name_invoice_receipt_and_proforma"),
+        db.NAME_CARD + "משה כהן": ("student", "invoice_receipt"), db.NAME_CARD + "רות אבן": ("student", "invoice_receipt"),
+        db.NAME_CARD + "יעל גל": ("student", "invoice_receipt"), db.NAME_CARD + "נועה בר": ("unclear", "name_no_invoice_receipt"),
+        db.NAME_CARD + "כרטיס מוסתר": ("unclear", "name_no_invoice_receipt")}
+    assert db.norm_name(" ＤＡＮＡ\u00a0 Levi ") == "dana levi" == db.norm_name("dana levi")
     # a key the desk read from monday and masked (`mask_ids`) names no Account's card either
     assert db.account_keys_of([{"name": "חברה", fd.AC["hash_key"]: "#"}, {"name": "חברה אחרת", fd.AC["hash_key"]: "10092"}]) \
         == {"10092": ["חברה אחרת"]}
-    # beside them, a real card keeps its rule: its invoice-receipt with a proforma on the same card is unclear
-    mixed = docs + [doc(62410, card="20005"), doc(40507, doc_type=78, card="20005")]
+    # beside them, a real card keeps its rule, by its key whatever its name: its invoice-receipt with a proforma on the same
+    # card is unclear, and a masked card of the same name is not joined to it
+    mixed = docs + [doc(62411, card="20005", name="משה כהן"), doc(40507, doc_type=78, card="20005", name="משה כהן")]
     part, _v, _r = run([], mixed, keys=keys)
-    assert ("62410", "invoice_receipt_and_proforma") in [(e["number"], e["why"]) for e in part["unclear"]]
-    assert len(part["students"]) == 4
+    assert ("62411", "invoice_receipt_and_proforma") in [(e["number"], e["why"]) for e in part["unclear"]]
+    assert sorted(e["number"] for e in part["students"]) == ["62407", "62408", "62409", "62410"]
+
+
+def test_an_invoice_receipt_beside_a_proforma_on_a_masked_card_is_not_a_students():
+    """The review of dfa967b, finding 3 (tests/test_review_d3_masked_card.py, ported): FR-C4 and FR-6 - a type 2 never makes
+    a card a student's when anything marks it B2B. The case that wrote the rule is a company card carrying proforma 40522
+    whose invoice-receipts 63149 and 63186 were counted as students (18.11). On a card keyed by its ח.פ, the proforma and
+    the invoice-receipts all read "#": judged alone, the invoice-receipts went to the students' list, shown with the
+    company's card name to a member of Student Charge only. The card's name ties them (spec §3.4)."""
+    name = "שירות תעסוקה בדוי"
+    docs = [doc(63149, card="#", name=name, total="52500"), doc(63186, card="#", name=name, total="52500"),
+            doc(40522, doc_type=78, card="#", name=name, total="42000")]
+    part, _v, _r = run([], docs)
+    assert [e["number"] for e in part["students"]] == [], [(e["number"], e["card"]) for e in part["students"]]
+    assert sorted((e["number"], e["why"]) for e in part["unclear"]) == [
+        ("63149", "name_invoice_receipt_and_proforma"), ("63186", "name_invoice_receipt_and_proforma")]
 
 
 def test_type2_on_b2b_card_is_not_a_student_without_a_row():
