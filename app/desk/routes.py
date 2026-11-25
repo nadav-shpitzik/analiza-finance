@@ -572,7 +572,8 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
 
 class ExportBody(BaseModel):
     """What a list shows: its tab, a state ('' all, 'tasks', or a state key), a period key, the search box, the reading the
-    page shows (its taken_at: the file says when it is built from another) and a customer (an account id, '' for all).
+    page shows (its taken_at: the file says when it is built from another), a customer (an account id, '' for all), and
+    D3's the books' part the page shows (its key: the file says when it is built from another, as the totals do).
     Anything else in the body is 400 `invalid_filter`, read after the gate (`_body_of`)."""
     model_config = ConfigDict(extra="forbid")
     tab: str = "b2c"
@@ -581,6 +582,14 @@ class ExportBody(BaseModel):
     q: str = ""
     taken: str = ""
     customer: str = ""
+    books: str = ""
+
+
+def link_fields(user: Any, exp: str, tab: str, state: str, period: str, q: str, taken: str, customer: str,
+                books: str) -> list:
+    """What a link's signature covers: every field of its filter, and the books' part's key when the page sent one (D3) -
+    a link without it is signed as before D3, so the 8 fields it had stay what they were."""
+    return [str(user), exp, tab, state, period, q, taken, customer] + ([books] if books else [])
 
 
 def export_sig(client_secret: str, fields: list) -> str:
@@ -613,15 +622,15 @@ async def desk_export_link(request: Request) -> JSONResponse:
         return err(403, "not_a_board_member")
     states = B2C_STATES if body.tab == "b2c" else B2B_STATES
     if (body.state and body.state != "tasks" and body.state not in states) or len(body.period) > 32 \
-            or len(body.q) > 100 or len(body.taken) > 40 \
+            or len(body.q) > 100 or len(body.taken) > 40 or len(body.books) > BOOKS_KEY_MAX \
             or not (body.customer == "" or (body.customer.isascii() and body.customer.isalnum() and len(body.customer) <= 32)) \
             or not query_exportable(body.q):
         return err(400, "bad_filter")
     user = visitor.identity.user_id
     exp = str(int(time.time()) + EXPORT_LINK_S)
-    fields = [str(user), exp, body.tab, body.state, body.period, body.q, body.taken, body.customer]
+    fields = link_fields(user, exp, body.tab, body.state, body.period, body.q, body.taken, body.customer, body.books)
     query = urlencode({"tab": body.tab, "state": body.state, "period": body.period, "q": body.q, "taken": body.taken,
-                       "customer": body.customer, "u": user, "exp": exp,
+                       "customer": body.customer, **({"books": body.books} if body.books else {}), "u": user, "exp": exp,
                        "sig": export_sig(cfg.monday_client_secret, fields)})
     audit(visitor.identity, "desk-export", "link")
     return JSONResponse({"url": "/api/desk/export.xlsx?" + query, "expires_in": EXPORT_LINK_S})
@@ -638,7 +647,8 @@ def _local(stamp: Optional[datetime]) -> str:
 
 @router.get("/api/desk/export.xlsx")
 def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period: str = "", q: str = "",
-                     taken: str = "", customer: str = "", u: int = 0, exp: str = "", sig: str = "") -> Response:
+                     taken: str = "", customer: str = "", books: str = "", u: int = 0, exp: str = "",
+                     sig: str = "") -> Response:
     """The file behind a link from /api/desk/export-link. No session header (a new tab cannot send one): the signature
     and the two minutes stand in for it, and the board's members are asked again, through the same cache as the gate.
     The reading is the one this instance holds, as the page got it - on an instance the link landed on cold, the stored
@@ -650,8 +660,9 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     if missing:
         return err(503, "app_not_configured", missing=missing)
     # bytes on both sides: a str with a non-ASCII character makes compare_digest raise (a 500, not a 403)
-    good = hmac.compare_digest(export_sig(cfg.monday_client_secret, [str(u), exp, tab, state, period, q, taken, customer])
-                               .encode(), (sig or "").encode("utf-8", "replace"))
+    good = hmac.compare_digest(export_sig(cfg.monday_client_secret,
+                                          link_fields(u, exp, tab, state, period, q, taken, customer, books)).encode(),
+                               (sig or "").encode("utf-8", "replace"))
     if not good or not exp.isdigit() or int(exp) < time.time() or tab not in TABS:
         _audit_link(u, "link_expired")
         return err(403, "link_expired")
@@ -690,8 +701,11 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     # whole when the view's own checks of the tab hold and the reading read every board of the tab whole (stricter than
     # analiza-metrics, whose reading could not come short and still be held)
     complete = bool(whole["checks"].get(side + "_ok")) and _visible_complete(reading.get("checks") or {}, TAB_BOARDS[side])
+    # D3: and when the page showed another part of the books (its key), as the totals say `other_reading`
+    books_other = bool(books) and (whole.get("books") or {}).get("key") != books
     about = {"taken_at": _local(held), "screen_taken_at": _local(shown) if other else "", "complete": complete,
-             "state_label": state_label, "q": q, "books_lines": books_lines(whole.get("books"), _local)}
+             "state_label": state_label, "q": q, "books_lines": books_lines(whole.get("books"), _local),
+             "books_other": books_other}
     today = today_in(DESK_TZ)
     # D3: "לטיפול" of a tab carries its list of documents with no charge as a sheet of its own (the students', the
     # companies' of every company), and the unclear documents only for a member of both charge boards (spec §6.4.1)

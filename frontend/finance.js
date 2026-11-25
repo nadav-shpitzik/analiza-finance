@@ -137,9 +137,10 @@
  *      of the vouchers' card. The documents of a card whose side is not clear come only to a member of both charge
  *      boards, and are drawn under both tabs. A search stays on the rows.
  * D3 4 The books' state: "לפי הספרים נכון ל-..." above the lists and in the footer, or why not, in the server's sentence
- *      (`view.books.said`). The totals of "לטיפול" are asked by the books' part on the screen (`books`), as by its reading.
- * D3 5 A number a row cites that is past the last of its series is not yet in the copy (read every hour): the server gives
- *      no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
+ *      (`view.books.said`). The totals of "לטיפול" are asked by the books' part on the screen (`books`), as by its reading,
+ *      and the Excel link carries it too, so a file built from another part says so.
+ * D3 5 A number a row cites that is just past the end of its series is not yet in the copy (read every hour): the server
+ *      gives no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -779,8 +780,8 @@
     books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
   };
   function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
-  /* D3 fix 2: a number the row cites that is past the last of its series is not yet in the copy of the books (read every
-     hour) - no mark, and the details say so, in the server's words, quietly */
+  /* D3 fix 2: a number the row cites that is just past the end of its series is not yet in the copy of the books (read
+     every hour) - no mark, and the details say so, in the server's words, quietly */
   function booksNote(r) { return r.books_note ? "<p class=\"fin-dx-books\">" + esc(r.books_note) + "</p>" : ""; }
   var WARN_ON = { b2: { amount_missing: FLAG_ON.b2.amount_missing } };
   function warnings(r) {
@@ -937,6 +938,8 @@
       var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" || all ? "" : f.state,
         period: b2 || all ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
         q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
+      /* D3: and the books' part on the screen, so a file built from another says so (as the totals are asked by it) */
+      if (VIEW.books && VIEW.books.key) { body.books = VIEW.books.key; }
       return deps.post("/api/desk/export-link", body);
     }).then(function (res) {
       var url = new URL(res.url, window.location.href).href;

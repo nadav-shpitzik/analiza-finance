@@ -1168,15 +1168,19 @@ def _merged_b2c() -> dict:
 
 
 # ---- the Excel files: "לטיפול" carries the marks and its tab's list --------------------------------------------------------------
-def _file(booked, user: int, tab: str, state: str = "tasks"):
+def _link(booked, user: int, tab: str, state: str = "tasks", books=None) -> str:
+    body = booked.get(user).json()
+    asked = {"tab": tab, "state": state, "taken": body["taken_at"], **({} if books is None else {"books": books})}
+    return booked.client.post("/api/desk/export-link", headers={"Authorization": "Bearer " + session_token(user)},
+                              json=asked).json()["url"]
+
+
+def _file(booked, user: int, tab: str, state: str = "tasks", books=None):
     import io
 
     import openpyxl
 
-    body = booked.get(user).json()
-    link = booked.client.post("/api/desk/export-link", headers={"Authorization": "Bearer " + session_token(user)},
-                              json={"tab": tab, "state": state, "taken": body["taken_at"]}).json()
-    got = booked.client.get(link["url"])
+    got = booked.client.get(_link(booked, user, tab, state, books))
     assert got.status_code == 200, got.text
     return openpyxl.load_workbook(io.BytesIO(got.content))
 
@@ -1215,6 +1219,33 @@ def test_the_companies_tasks_file_carries_its_list_and_the_vouchers_line(booked)
     said = [r[0].value for r in lst.iter_rows(min_row=3) if r[0].value]
     assert any("10091" in x for x in said) and not any("50502" in x for x in said)
     assert "לא ברור של מי" in _file(booked, 1, "b2b").sheetnames
+
+
+def test_a_file_built_from_another_books_part_than_the_page_showed_says_so(booked):
+    """The review of dfa967b, 10(a): the Excel link carries the books' part the page shows (its key), signed with the rest
+    of the link, so a file built after the part changed says so in "פרטים" - as the totals say `other_reading`. A link with
+    the part on the screen says nothing; a link without a key is signed as before D3."""
+    from urllib.parse import parse_qs, urlencode, urlsplit
+
+    from app.desk.export import BOOKS_OTHER_SAID
+
+    def said(wb) -> list:
+        return [r[1].value for r in wb["פרטים"].iter_rows()]
+
+    shown = booked.get(1).json()["view"]["books"]["key"]
+    assert BOOKS_OTHER_SAID not in said(_file(booked, 1, "b2c", books=shown))
+    assert BOOKS_OTHER_SAID not in said(_file(booked, 1, "b2c"))
+    # the copy moves: the page that showed the part before asks for its file
+    booked.copy.snapshot = copy(ROUTE_DOCS + [doc(62504, card="20003", name="תלמיד-דלת")], last_run_id=8)
+    booked.client.app.state.desk.books._checked_at = None
+    assert BOOKS_OTHER_SAID in said(_file(booked, 1, "b2c", books=shown))
+    # the key is signed: changed or dropped, the link opens nothing
+    url = _link(booked, 1, "b2c", books=shown)
+    q = {k: v[0] for k, v in parse_qs(urlsplit(url).query, keep_blank_values=True).items()}
+    assert q["books"] == shown
+    for forged in (dict(q, books="other"), {k: v for k, v in q.items() if k != "books"}):
+        assert booked.client.get("/api/desk/export.xlsx?" + urlencode(forged)).status_code == 403
+    assert booked.client.get(url).status_code == 200
 
 
 # ---- the whole path, on a real Postgres ---------------------------------------------------------------------------------------

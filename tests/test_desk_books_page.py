@@ -189,6 +189,16 @@ def test_the_totals_of_tasks_are_asked_by_the_books_part_on_the_screen():
     assert totals and all("books=k-1" in c for c in totals)
 
 
+def test_the_excel_link_is_asked_with_the_books_part_on_the_screen():
+    """10(a) of the review of dfa967b: the link to a file carries the books' part the page shows, as the totals do."""
+    view, _m = books_view()
+    got = drive(body(view), [{"show": TASKS}, {"click": [{"export": "b2c"}]}],
+                answers={"GET /api/desk": [{"body": body(view)}],
+                         "POST /api/desk/export-link": [{"body": {"url": "/api/desk/export.xlsx?x=1"}}]})
+    links = [p[1] for p in got["posts"] if p[0] == "/api/desk/export-link"]
+    assert links and all(x.get("books") == "k-1" for x in links)
+
+
 def test_the_page_and_the_file_pick_the_same_rows_of_tasks():
     """The page's filter (scFilter) and the server's (filter_b2c), which builds the Excel file, on the same merged rows:
     every period and the search, with the books' rows of the era in "לטיפול"."""

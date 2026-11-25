@@ -229,6 +229,11 @@ BOOKS_SHEETS = {
 }
 
 
+# what "פרטים" says when the file's part of the books is not the one the page showed (its key, D3)
+BOOKS_OTHER_SAID = ("הסימונים והרשימות של חשבשבת בקובץ הם מהשוואה לספרים אחרת מזו שהמסך הציג (העותק של חשבשבת או הקריאה "
+                    "ממאנדיי התעדכנו בינתיים): ייתכן שהם שונים מהמסך.")
+
+
 def books_sheet(kind: str, part: dict) -> tuple:
     """(title, columns, entries, lines under them) of one list of the books (the view's `books` of a tab, or its
     `books_unclear`): its title and sentence under the rows, and the companies' line of the vouchers' card."""
@@ -350,6 +355,8 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
     if about.get("screen_taken_at"):   # set only when the page showed another reading
         lines.append(("שימו לב", "הקובץ נבנה מקריאה של %s, והמסך הציג קריאה של %s: ייתכן שהשורות שונות מהמסך."
                       % (about.get("taken_at"), about.get("screen_taken_at"))))
+    if about.get("books_other"):   # D3: set only when the page showed another part of the books
+        lines.append(("שימו לב", BOOKS_OTHER_SAID))
     lines += [
         ("הקובץ", what),
         *(head_lines or []),
