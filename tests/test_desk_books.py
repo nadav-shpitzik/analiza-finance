@@ -9,7 +9,7 @@ Fixtures are synthetic and shaped like the incidents (the rules' contract §0.2)
 records, names are invented, and no card carries an ID number."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import psycopg
@@ -188,6 +188,7 @@ from app.desk import view as fd  # noqa: E402
 from tests.desk_fixtures import TODAY, b2, reading_of, sc, snap  # noqa: E402
 
 AS_OF = datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 25, 8, 30, tzinfo=timezone.utc)   # the desk's clock: half an hour after the copy's last run
 CFG = SimpleNamespace(database_url="postgresql://books.test/db", company="analiza", db=ANALIZA)
 
 
@@ -717,8 +718,8 @@ class Tick:
         return self.t
 
 
-def holder(store, keys=None, clock=None) -> db.DeskBooks:
-    b = db.DeskBooks(lambda _url: store, lambda: None, clock=clock or Tick())
+def holder(store, keys=None, clock=None, now=None) -> db.DeskBooks:
+    b = db.DeskBooks(lambda _url: store, lambda: None, clock=clock or Tick(), now=now or (lambda: NOW))
     b.keys = FakeKeys({} if keys is None else keys)
     return b
 
@@ -795,6 +796,46 @@ def test_a_copy_that_is_not_whole_shows_the_last_whole_result_with_its_time_and_
     tick.t += db.RUN_CHECK_S + 1
     fresh = b.answer(CFG, reading, view)
     assert fresh["state"] == "ok" and fresh["as_of"] == "2026-11-25T09:00:00+00:00" and len(fresh["students"]) == 2
+
+
+def test_a_whole_copy_older_than_three_hours_is_held_as_stale():
+    """The review of dfa967b, 10(b): a copy whole by A1's rule whose last run finished more than COPY_STALE_S ago (a sync
+    that stopped: the books are read every hour) is `held`, `copy_stale` - its marks and lists stay, said as not current,
+    never posing as current - and /health says the reason. The boundary: three hours exactly is current. A run that
+    finishes again makes it current."""
+    store, tick = FakeCopy(copy(DOCS)), Tick()
+    now = {"t": AS_OF + timedelta(hours=1)}
+    b = holder(store, clock=tick, now=lambda: now["t"])
+    reading, view = reading_view(ROWS)
+    ok = b.answer(CFG, reading, view)
+    assert ok["state"] == "ok" and set(ok["marks"]) == {"1"}
+    now["t"] = AS_OF + timedelta(seconds=db.COPY_STALE_S)
+    assert b.answer(CFG, reading, view) is ok and b.health()["reasons"] == []
+    now["t"] += timedelta(seconds=1)
+    stale = b.answer(CFG, reading, view)
+    assert (stale["state"], stale["reasons"], stale["as_of"]) == ("held", ["copy_stale"], ok["as_of"])
+    assert stale["marks"] == ok["marks"] and stale["students"] == ok["students"] and stale["key"] != ok["key"]
+    assert db.public(stale)["said"] == db.REASONS["copy_stale"] + " " + db.HELD_SAID
+    assert b.answer(CFG, reading, view)["key"] == stale["key"] and b.current()["reasons"] == ["copy_stale"]
+    assert (b.health()["state"], b.health()["reasons"]) == ("held", ["copy_stale"])
+    # /health says it even when no request came since the copy grew stale
+    later = holder(store, clock=tick, now=lambda: AS_OF + timedelta(hours=1))
+    later.answer(CFG, reading, view)
+    later.now = lambda: AS_OF + timedelta(hours=4)
+    assert later.health()["reasons"] == ["copy_stale"]
+    # the sync runs again
+    store.snapshot = copy(DOCS, last_run_id=8, last_run_finished_at=now["t"])
+    tick.t += db.RUN_CHECK_S + 1
+    fresh = b.answer(CFG, reading, view)
+    assert (fresh["state"], fresh["reasons"]) == ("ok", [])
+
+
+def test_through_the_route_a_stale_copy_is_said_on_the_page_and_in_health(booked):
+    booked.client.app.state.books_now = lambda: AS_OF + timedelta(hours=4)
+    books = booked.get(1).json()["view"]["books"]
+    assert (books["state"], books["reasons"]) == ("held", ["copy_stale"]) and db.REASONS["copy_stale"] in books["said"]
+    health = booked.client.get("/health").json()["desk"]["books"]
+    assert (health["state"], health["reasons"]) == ("held", ["copy_stale"])
 
 
 def test_a_reading_read_short_shows_the_last_whole_result_and_never_asks_the_copy():
@@ -1053,6 +1094,7 @@ def booked(monkeypatch):
     main.app.state.frontend_dir = None
     main.app.state.desk_store = MemoryStore()
     main.app.state.books_store = fake
+    main.app.state.books_now = lambda: NOW
 
     class D:
         pass
@@ -1066,6 +1108,7 @@ def booked(monkeypatch):
     main.app.state.usage = None
     main.app.state.desk_store = None
     main.app.state.books_store = None
+    main.app.state.books_now = None
 
 
 def test_a_member_of_both_boards_sees_the_marks_both_lists_and_the_unclear_documents(booked):

@@ -135,7 +135,8 @@ def _store(state: Any, cfg: config.Config) -> Any:
 
 
 def _books_store(state: Any) -> Any:
-    """How the desk reaches the books copy (D3): `BooksStore` on the URL given, or the tests' own on `state.books_store`."""
+    """How the desk reaches the books copy (D3): `BooksStore` on the URL given, or the tests' own on `state.books_store`
+    (and the tests' clock of the copy's age on `state.books_now`)."""
     given = getattr(state, "books_store", None)
     if given is not None:
         return lambda _url: given
@@ -172,7 +173,8 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
                                limiter=RateLimiter(DESK_PER_USER_HOUR, DESK_PER_DAY),
                                refresh=RateLimiter(1, 1, user_window=REFRESH_GAP_S, global_window=REFRESH_GAP_S),
                                view=None, view_lock=threading.Lock(),
-                               books=DeskBooks(_books_store(state), lambda: _reader(state, cfg.monday_token)),
+                               books=DeskBooks(_books_store(state), lambda: _reader(state, cfg.monday_token),
+                                               now=getattr(state, "books_now", None)),
                                merged=None)
         state.desk = made
         return made

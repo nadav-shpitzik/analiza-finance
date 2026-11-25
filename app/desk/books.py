@@ -46,7 +46,8 @@ type, a cancellation, before the era, or a student's outside Student Charge's wi
 ONLY A WHOLE COPY CHANGES WHAT IS SHOWN (spec §6.1.5). A result is computed only on a desk reading whose two charge boards
 were read whole and on a copy that is whole by A1's own rule (app/books/store.py `not_ready`, judged on one repeatable-
 read snapshot, `desk_snapshot`). Otherwise the last result this instance computed is shown, `held`, with the time of its
-copy and why it is not newer; with none, `none` and why. Never on Demo (`demo`: the books of the Demo company must never
+copy and why it is not newer; with none, `none` and why. A whole copy older than COPY_STALE_S is `held` too
+(`copy_stale`): the books are read every hour, so its marks never pose as current on a sync that stopped. Never on Demo (`demo`: the books of the Demo company must never
 meet the real boards, the rules' §0.6), nor without a database (`not_configured`): `off`.
 
 WHAT LEAVES. The result lives in this instance's memory and in the desk's gated answer only: the marks and the students'
@@ -133,6 +134,7 @@ REASONS = {
     "last_run_not_ok": "הקריאה האחרונה של חשבשבת לא הייתה תקינה.",
     "retry_waiting": "יש מסמכים בחשבשבת שהקריאה שלהם נכשלה ועוד לא נקראו שוב.",
     "holes": "בעותק של חשבשבת חסרים מספרים בתוך סדרה של מסמכים.",
+    "copy_stale": "העותק של חשבשבת לא התעדכן יותר משלוש שעות.",
     "store_error": "לא הצלחנו לקרוא עכשיו את העותק של חשבשבת.",
     "accounts_unread": "לא הצלחנו לקרוא ממאנדיי את מפתחות חשבשבת של החברות.",
     "reading_incomplete": "הקריאה ממאנדיי לא שלמה.",
@@ -181,6 +183,8 @@ KEYS_DEADLINE_S = 20
 STORE_FAIL_GAP_S = 30
 # the same reading asks again whether the copy moved (its last finished run) at most this often: a tick is hourly
 RUN_CHECK_S = 15
+# a whole copy whose last run finished longer ago than this is no longer current (`copy_stale`): three ticks missed
+COPY_STALE_S = 3 * 3600
 # the longest a part's key may be (`DeskBooks._made`): what the totals and the files are asked by is refused past it
 BOOKS_KEY_MAX = 400
 # a request that may read and finds the part being computed waits at most this long, then is answered with the last
@@ -769,11 +773,24 @@ class DeskBooks:
             return off
         got = self._lock.acquire(timeout=WAIT_S) if may_read else self._lock.acquire(blocking=False)
         if not got:
-            return self.part or self._made("none", ["busy" if may_read else "pending"])
+            return self._current(self.part) or self._made("none", ["busy" if may_read else "pending"])
         try:
-            return self._answer(cfg, reading, view, may_read)
+            self.part = self._current(self._answer(cfg, reading, view, may_read))
+            return self.part
         finally:
             self._lock.release()
+
+    def _current(self, part: Optional[dict]) -> Optional[dict]:
+        """The part as it may be shown now: one computed from a copy whose last run finished longer ago than COPY_STALE_S
+        is `held`, with `copy_stale` (the review of dfa967b: marks must never pose as current on a stopped sync). The
+        same part, held, has one key, so it is laid over the view once."""
+        if part is None or part["state"] != "ok":
+            return part
+        try:
+            age = (self.now() - datetime.fromisoformat(part["as_of"])).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            return part
+        return self._made("held", ["copy_stale"], part) if age > COPY_STALE_S else part
 
     def _off(self, cfg: Any) -> Optional[dict]:
         if not getattr(cfg, "database_url", ""):
@@ -871,9 +888,10 @@ class DeskBooks:
         return part
 
     def health(self) -> dict:
-        """For the public /health: the state of the part last answered, its copy's time and its reasons (closed codes),
-        when it was last computed and how long it took, and when the Accounts' keys were read. Never a count."""
-        part = self.part
+        """For the public /health: the state of the part last answered, as it may be shown now (a copy grown stale since
+        is `copy_stale`), its copy's time and its reasons (closed codes), when it was last computed and how long it took,
+        and when the Accounts' keys were read. Never a count."""
+        part = self._current(self.part)
         return {"state": part["state"] if part else None, "as_of": part.get("as_of") if part else None,
                 "reasons": list(part.get("reasons") or []) if part else [],
                 "computed_at": self.trace["computed_at"], "seconds": self.trace["seconds"], "error": self.trace["error"],
