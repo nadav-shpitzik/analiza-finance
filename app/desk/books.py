@@ -65,6 +65,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter, defaultdict
+from zoneinfo import ZoneInfo
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
@@ -75,7 +76,8 @@ from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
 from ..recon.reading import Board, check_board
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
-from .view import BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, LEGEND_FLAGS, P_PROBLEM, P_UNPAID, TASK_STATES, status_word
+from .view import (BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID, TASK_STATES,
+                   status_word)
 
 logger = logging.getLogger("analiza_finance.desk")
 
@@ -142,7 +144,13 @@ REASONS = {
     # key yet: never a read of monday in it - the page's own next request computes the part
     "pending": "ההשוואה לחשבשבת מתעדכנת.",
     "busy": "ההשוואה לחשבשבת עוד מחושבת.",
+    # a note, not a reason the part is not current (NOTES): Student Charge is compared to the books within its window only
+    # (FR-7), so from the year after it no student's document is listed or marked - said, never an empty list without a word
+    "student_window_ended": "ההשוואה של Student Charge לחשבשבת היא של %d בלבד, ולכן מסמכים של סטודנטים מ-%d ואילך לא "
+                            "מסומנים ולא מופיעים ברשימה." % (STUDENT_WINDOW_YEAR, STUDENT_WINDOW_YEAR + 1),
 }
+# the reasons that note something of a part that may still be current (`ok`): said after the others
+NOTES = ("student_window_ended",)
 # What a part that is not fresh says after its reasons
 HELD_SAID = "מוצגים הסימונים והרשימות מהעותק השלם האחרון."
 NONE_SAID = "לכן אין כאן סימונים מהספרים ואין רשימה של מסמכים בלי חיוב."
@@ -614,15 +622,15 @@ def _iso(t: Any) -> Optional[str]:
 
 def said(state: str, reasons: list) -> str:
     """What the page and the files say beside "לפי הספרים נכון ל-": nothing when the part is fresh; else its reasons'
-    sentences, and what is shown instead."""
-    if state == "ok":
-        return ""
-    text = " ".join(REASONS.get(r, r) for r in reasons)
+    sentences, and what is shown instead; and last its notes (NOTES), which a fresh part says too."""
+    notes = " ".join(REASONS.get(r, r) for r in reasons if r in NOTES)
+    main = [r for r in reasons if r not in NOTES]
+    text = "" if state == "ok" else " ".join(REASONS.get(r, r) for r in main)
     if state == "held":
-        return (text + " " + HELD_SAID).strip()
-    if state == "none" and not set(reasons) <= {"pending", "busy"}:
-        return (text + " " + NONE_SAID).strip()
-    return text
+        text = (text + " " + HELD_SAID).strip()
+    elif state == "none" and not set(main) <= {"pending", "busy"}:
+        text = (text + " " + NONE_SAID).strip()
+    return (text + " " + notes).strip()
 
 
 def public(part: dict) -> dict:
@@ -781,16 +789,29 @@ class DeskBooks:
             self._lock.release()
 
     def _current(self, part: Optional[dict]) -> Optional[dict]:
-        """The part as it may be shown now: one computed from a copy whose last run finished longer ago than COPY_STALE_S
-        is `held`, with `copy_stale` (the review of dfa967b: marks must never pose as current on a stopped sync). The
-        same part, held, has one key, so it is laid over the view once."""
-        if part is None or part["state"] != "ok":
+        """The part as it may be shown now (the review of dfa967b): one computed from a copy whose last run finished
+        longer ago than COPY_STALE_S is `held`, with `copy_stale` - marks must never pose as current on a stopped sync;
+        and one that shows what the books say (`ok`, `held`) once today is past Student Charge's window says so
+        (`student_window_ended`). The same part made so has one key, so it is laid over the view once."""
+        if part is None or part["state"] not in ("ok", "held"):
             return part
-        try:
-            age = (self.now() - datetime.fromisoformat(part["as_of"])).total_seconds()
-        except (KeyError, TypeError, ValueError):
+        state, reasons = part["state"], list(part.get("reasons") or [])
+        if state == "ok":
+            try:
+                age = (self.now() - datetime.fromisoformat(part["as_of"])).total_seconds()
+            except (KeyError, TypeError, ValueError):
+                age = 0
+            if age > COPY_STALE_S:
+                state, reasons = "held", ["copy_stale"]
+        if self._window_ended() and "student_window_ended" not in reasons:
+            reasons.append("student_window_ended")
+        if (state, reasons) == (part["state"], list(part.get("reasons") or [])):
             return part
-        return self._made("held", ["copy_stale"], part) if age > COPY_STALE_S else part
+        return self._made(state, reasons, part)
+
+    def _window_ended(self) -> bool:
+        """Whether today, the desk's day (DESK_TZ), is past Student Charge's window (FR-7)."""
+        return self.now().astimezone(ZoneInfo(DESK_TZ)).year > STUDENT_WINDOW_YEAR
 
     def _off(self, cfg: Any) -> Optional[dict]:
         if not getattr(cfg, "database_url", ""):

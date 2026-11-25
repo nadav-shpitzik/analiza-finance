@@ -182,6 +182,15 @@ def test_the_books_state_line_says_when_or_why():
     assert "data-books=" not in html and '<span class="fin-subtle">%s</span>' % db.REASONS["demo"] in html
 
 
+def test_past_the_window_the_students_list_says_so_calmly():
+    """10(c) of the review of dfa967b: past Student Charge's window a current part says, above its list and in the footer,
+    that no student's document of the next year is listed - in the server's words, calm (the part is current)."""
+    view, _m = books_view("ok", ["student_window_ended"])
+    html = draw(view, [TASKS])[0]
+    said = "לפי הספרים נכון ל-25.11, 10:00. %s" % db.REASONS["student_window_ended"]
+    assert '<p class="fin-books-asof">%s</p>' % said in html and '<span class="fin-subtle">%s</span>' % said in html
+
+
 def test_the_totals_of_tasks_are_asked_by_the_books_part_on_the_screen():
     view, _m = books_view()
     got = drive(body(view), [{"show": TASKS}])

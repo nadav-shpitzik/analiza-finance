@@ -127,7 +127,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   a company's masked invoice-receipts makes them unclear (FR-C4, 18.11); with neither a key nor a name, alone, by its type. Computed per reading and per books run
   (`DeskBooks`), only on a whole reading and a whole copy (`BooksStore.desk_snapshot`, one repeatable-read snapshot, judged by
   `not_ready`, A1's rule, now in app/books/store.py); else the last whole result `held`, or `none`, with closed reasons; a whole copy whose last run finished more
-  than 3 h ago is `held` too (`copy_stale`, `COPY_STALE_S`: the marks never pose as current on a stopped sync); `off`
+  than 3 h ago is `held` too (`copy_stale`, `COPY_STALE_S`: the marks never pose as current on a stopped sync); past Student Charge's window (2026,
+  the desk's year) a part notes `student_window_ended` (NOTES: said after the reasons, by a current part too); `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`) and never waits for another request's computation. `/health` `desk.books`: state,
   as_of, reasons, never a count. No schema change. Tests: `tests/test_desk_books.py`, `tests/test_desk_books_page.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,

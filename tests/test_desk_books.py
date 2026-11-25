@@ -830,6 +830,35 @@ def test_a_whole_copy_older_than_three_hours_is_held_as_stale():
     assert (fresh["state"], fresh["reasons"]) == ("ok", [])
 
 
+def test_past_student_charges_window_the_part_says_it_ended():
+    """The review of dfa967b, 10(c): Student Charge is compared to the books within its window (FR-7: 2026), so from the
+    next year no student's document is listed or marked. The part says so - a closed reason, a note said after the others
+    and by a current part too - never an empty list without a word; /health says it. The year is the desk's (Israel's):
+    2026's last evening in UTC is already 2027 there."""
+    ran = datetime(2026, 12, 31, 20, 30, tzinfo=timezone.utc)                    # the copy's last run, fresh
+    store, tick = FakeCopy(copy(DOCS, last_run_finished_at=ran)), Tick()
+    now = {"t": datetime(2026, 12, 31, 21, 0, tzinfo=timezone.utc)}
+    b = holder(store, clock=tick, now=lambda: now["t"])
+    reading, view = reading_view(ROWS)
+    first = b.answer(CFG, reading, view)
+    assert (first["state"], first["reasons"]) == ("ok", [])
+    now["t"] = datetime(2026, 12, 31, 21, 59, tzinfo=timezone.utc)                # 23:59 in Israel: still 2026
+    assert b.answer(CFG, reading, view) is first
+    now["t"] = datetime(2026, 12, 31, 22, 0, tzinfo=timezone.utc)                 # midnight in Israel: 2027
+    part = b.answer(CFG, reading, view)
+    assert (part["state"], part["reasons"], part["marks"]) == ("ok", ["student_window_ended"], first["marks"])
+    assert part["key"] != first["key"] and b.answer(CFG, reading, view) is part
+    assert db.public(part)["said"] == db.REASONS["student_window_ended"] and "2026" in db.REASONS["student_window_ended"]
+    assert b.health()["reasons"] == ["student_window_ended"]
+    # with another reason, the note comes after it, and after what is shown instead
+    store.snapshot = copy(DOCS, last_run_id=9, last_run_complete=False)
+    tick.t += db.RUN_CHECK_S + 1
+    held = b.answer(CFG, reading, view)
+    assert (held["state"], held["reasons"]) == ("held", ["last_run_incomplete", "student_window_ended"])
+    assert db.public(held)["said"] == " ".join([db.REASONS["last_run_incomplete"], db.HELD_SAID,
+                                                db.REASONS["student_window_ended"]])
+
+
 def test_through_the_route_a_stale_copy_is_said_on_the_page_and_in_health(booked):
     booked.client.app.state.books_now = lambda: AS_OF + timedelta(hours=4)
     books = booked.get(1).json()["view"]["books"]
