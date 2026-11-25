@@ -1263,6 +1263,26 @@ def test_an_answer_at_once_never_reads_monday_for_the_keys_and_the_next_request_
     assert b.answer(CFG, other, view2, may_read=False)["state"] == "ok"
 
 
+def test_an_answer_at_once_with_no_key_held_does_not_read_the_copy():
+    """The review of dfa967b, finding 7 (tests/test_review_d3_at_once.py, ported): `_compute` read the copy first - every
+    document of the company with its card's name, in a repeatable-read transaction - and only then asked for the keys,
+    found none, and answered `pending` with nothing kept: every cold open paid a full read of the books for no answer. The
+    keys held are asked first."""
+    class Cold(FakeKeys):
+        def get(self, may_read=True):
+            self.asked += 1
+            return self.keys if may_read else None
+
+    store = FakeCopy(copy(DOCS))
+    b = holder(store)
+    b.keys = Cold({})
+    reading, view = reading_view(ROWS)
+    part = b.answer(CFG, reading, view, may_read=False)
+    assert (part["state"], part["reasons"]) == ("none", ["pending"])
+    assert store.snapshots == 0, "the whole copy was read for an answer that keeps nothing"
+    assert b.answer(CFG, reading, view)["state"] == "ok" and store.snapshots == 1   # the page's next request computes
+
+
 def test_the_accounts_keys_are_read_whole_kept_ten_minutes_and_a_short_read_keeps_the_ones_held():
     """`AccountKeys`: the whole Accounts board, its one column and the names; kept KEYS_TTL_S; a read that comes short of
     the board's items_count is a failed read (a company's card missing would make its invoice-receipt a student's), and

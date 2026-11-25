@@ -831,6 +831,12 @@ class DeskBooks:
 
     def _compute(self, cfg: Any, store: Any, reading: dict, view: dict, may_read: bool = True) -> Optional[dict]:
         started = self.clock()
+        # an answer at once takes the keys held, and with none held it is `pending` before the copy is read: the copy is
+        # every document of the company with its card's name, and an answer that keeps nothing must not pay for it (the
+        # review of dfa967b: every cold open read the whole copy and threw it away)
+        held = self.keys.get(False) if not may_read else None
+        if not may_read and held is None:
+            return self._made("none", ["pending"])
         try:
             snapshot = store.desk_snapshot(cfg.db)
         except BooksStoreError as exc:
@@ -839,9 +845,9 @@ class DeskBooks:
         reason = not_ready(snapshot)
         if reason is not None:
             return self._not_ok([reason])
-        keys = self.keys.get(may_read)
+        keys = held if not may_read else self.keys.get(True)
         if keys is None:
-            return self._made("none", ["pending"]) if not may_read else self._not_ok(["accounts_unread"])
+            return self._not_ok(["accounts_unread"])
         try:
             got = compute(reading, view, snapshot, keys)
         except Exception as exc:  # noqa: BLE001 - said by class: no document, name or amount reaches the log
