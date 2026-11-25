@@ -115,8 +115,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   cited number just past the end of its series (`not_yet_read`: at most 20 past the last of the series nearest below, held by no
   document of the copy) is not yet in the copy (read hourly): no mark, a note in the details; one further on is "לא נמצא", and a
   number the copy holds as a draft is "טיוטה".
-  `books_receipt_unpaid` is read off the row's group (`receipt_unpaid_facts`: A1 matched it, `RECEIPT_BUCKETS` by name; sums
-  within the tolerance; invoice-receipts only; a status that says no money), not off A1's order of buckets (`dates_differ` comes before the status). A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
+  `books_receipt_unpaid` is read off the row itself, never off A1's buckets (`receipt_unpaid_facts`): "לא שולם", "יש בעיה" or an
+  empty status (never "מלגת אנליזה" or an unknown label), every number cited a valid invoice-receipt of the window, and its amount
+  empty (A1's `amount_unreadable`, the usual unpaid row) or its group's sums within the tolerance. A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
   too (`books_task`: filter_b2c and the page's scFilter alike). Under "לטיפול", the documents of the era no charge row cites:
   the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
   companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted

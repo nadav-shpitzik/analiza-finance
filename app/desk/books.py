@@ -12,11 +12,13 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
      בהעתק של הספרים" (`books_note`). A number further on, between two series or below every series is mistyped: marked;
    - `books_amount_differs`: `amount_mismatch` only (the rounding band is no mark) - "בשורה X, בחשבשבת Y", the group's two
      sums, including VAT;
-   - `books_receipt_unpaid`: read off the row's group itself (A1's `group`), not off A1's order of buckets - A1 matched
-     the group (RECEIPT_BUCKETS, named), its two sums agree within the tolerance, its documents are invoice-receipts (a tax
-     invoice waits for its receipt), and the row's status does not say the money came in. The books say the money came in
-     (FR-L12) and the row says it did not: the case of 23.11, also when the group's invoice-receipts carry different days
-     (A1's `dates_differ`, which A1 judges before the row's status).
+   - `books_receipt_unpaid` (the desk move plan §1a.2.1: the row says "לא שולם" while the books hold an invoice-receipt
+     for its number): read off the row itself, never off A1's order of buckets - its "סטטוס תשלום" is "לא שולם", "יש
+     בעיה" or empty (never "מלגת אנליזה", never a label the desk does not know), every number it cites is a valid
+     invoice-receipt of the window (FR-7) that the books did not answer "not found", and its "סכום ששולם" is empty (the
+     usual unpaid row: A1's `amount_unreadable`, which has no group) or its group's two sums agree within the tolerance.
+     The books say the money came in (FR-L12) and the row says it did not: the case of 23.11, also when the
+     invoice-receipts carry different days (A1's `dates_differ`, which A1 judges before the row's status).
    Every other bucket gives no mark. **A mark moves no row out of its state** (משבצת), so no state's count or sum changes;
    a marked row whose date is from ERA_FROM on (the row's date as the desk dates it: "תאריך תקבול", else the day it was
    made) also joins "לטיפול" (`books_task`); an older one keeps its mark on the row only (spec §6.4.2, ADR-0168 §5).
@@ -69,7 +71,7 @@ from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
 from ..recon.reading import Board, check_board
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
-from .view import BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, LEGEND_FLAGS, TASK_STATES, status_word
+from .view import BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, LEGEND_FLAGS, P_PROBLEM, P_UNPAID, TASK_STATES, status_word
 
 logger = logging.getLogger("analiza_finance.desk")
 
@@ -87,12 +89,10 @@ LISTED_ROLES = (INVOICE, INVOICE_RECEIPT)  # types 1 and 2: what a charge row ci
 MARKS = ("books_ref_invalid", "books_amount_differs", "books_receipt_unpaid")
 MARK_OF_BUCKET = {"ref_not_in_books": "books_ref_invalid", "ref_ambiguous": "books_ref_invalid",
                   "ref_not_an_invoice": "books_ref_invalid", "amount_mismatch": "books_amount_differs"}
-# `books_receipt_unpaid` is read off the group (`receipt_unpaid_facts`) of a row in one of these buckets, named and not
-# found by their place in A1's order: A1 matched its group (every document found, in the window, not tangled), and the
-# facts the mark needs - the sums, the types, the row's status - are read off the group and the row. Every other bucket
-# is a number refused, a group that cannot be judged or is out of the window (FR-7: never a gap), or sums that differ
-# (the amount's mark). Today they are A1's order from `dates_differ` on; a test holds that, so a bucket A1 adds is judged
-RECEIPT_BUCKETS = ("dates_differ", "status_not_money_in", "date_unreadable", "filled_same", "filled_differs", "fill")
+# `books_receipt_unpaid` is read off the row itself (`receipt_unpaid_facts`), whatever A1's bucket: the statuses that say
+# no money came in and are no decision of their own - "לא שולם", "יש בעיה", or empty. Never "מלגת אנליזה" (a scholarship:
+# nothing is due) and never a label the desk does not know (the review of dfa967b: noise)
+UNPAID_STATUSES = (P_UNPAID, P_PROBLEM)
 
 # Where a document of the books lands, the first that fits (spec §6.3.1: each in exactly one)
 PLACES = ("outside", "cited", "missing", "vouchers", "students", "companies", "unclear")
@@ -362,12 +362,8 @@ def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
         return {"kind": kind, "chip": chip, "documents": [n for n, _b in refused],
                 "text": "%s: %s." % (_flag_text(kind).split(":")[0], "; ".join(x for _w, x in why))}
     group = entry.get("group")
-    if group is None:
-        return None
-    numbers = list(group["documents"])
-    if kind is None:
-        return _receipt_unpaid(entry, row, by_number)
-    if kind == "books_amount_differs":
+    if kind == "books_amount_differs" and group is not None:
+        numbers = list(group["documents"])
         rows, paid, total = group["rows"], group["paid"], group["total"]
         where = "בשורה" if len(rows) == 1 else "ב-%d השורות" % len(rows)
         chip = _flag_text(kind).replace("{row}", money_text(paid)).replace("{books}", money_text(total))
@@ -380,30 +376,50 @@ def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
         if len(rows) > 1 and own is not None:
             text += " בשורה הזאת %s." % money_text(own)
         return {"kind": kind, "chip": chip, "documents": numbers, "text": text}
+    if kind is None:
+        return _receipt_unpaid(entry, row, idx)
     return None
 
 
-def receipt_unpaid_facts(entry: dict, row: dict, by_number: dict) -> list:
-    """The invoice-receipts that say the money came in on a row whose status says it did not, read off the row's group
-    (A1's `group`), whatever A1's order of buckets: A1 matched the group (RECEIPT_BUCKETS), its two sums agree within the
-    tolerance (1 ₪ a document, the contract §0.3; never the rounding band), every document of it is an invoice-receipt (a
-    tax invoice waits for its receipt, R1), and the row's "סטטוס תשלום" is not one that says the money came in (A1's
-    MONEY_IN, by index; an empty status says nothing came in). [] when any of them does not hold."""
+def _unpaid_status(row: dict) -> bool:
+    """Whether the row's "סטטוס תשלום" says no money came in and is no decision of its own: "לא שולם" or "יש בעיה" by
+    index, or empty (no index and no label). "מלגת אנליזה", a status that says money came in, and a label the desk does
+    not know are not."""
+    s = str(row.get("status_idx") or "")
+    return s in UNPAID_STATUSES or (s == "" and not row.get("status"))
+
+
+def receipt_unpaid_facts(entry: dict, row: dict, idx: dict) -> list:
+    """The invoice-receipts the row cites, which say the money came in, when the row says it did not - read off the row
+    itself, whatever A1's bucket (A1's `documents`, `refused` and `group`); [] when any of these does not hold:
+    1. its "סטטוס תשלום" is "לא שולם", "יש בעיה" or empty (`_unpaid_status`);
+    2. every number it cites is a valid invoice-receipt: A1 refused none (one status-1 document each, of type 2, not
+       negative), each dated in Student Charge's window (FR-7: outside it, never a gap) and not answered "not found";
+    3. its "סכום ששולם" is empty - the usual unpaid row, A1's `amount_unreadable`, which has no group - or its group's two
+       sums agree within the tolerance (1 ₪ a document, the contract §0.3; never the rounding band: that is the amount's)."""
+    if not _unpaid_status(row):
+        return []
+    numbers = list(entry.get("documents") or [])
+    if not numbers or entry.get("refused"):
+        return []
+    for n in numbers:
+        docs = idx["by_number"].get(n) or []
+        day = _day(docs[0].get("value_date")) if len(docs) == 1 else None
+        if (len(docs) != 1 or role(docs[0].get("doc_type")) != INVOICE_RECEIPT or docs[0].get("missing")
+                or day is None or day.year != STUDENT_WINDOW_YEAR):
+            return []
+    if not a1._clean(row.get("paid_raw")):  # empty as A1 reads a cell: an invisible mark alone is empty too
+        return numbers
     group = entry.get("group")
-    if group is None or entry.get("bucket") not in RECEIPT_BUCKETS:
+    if group is None or abs(group["paid"] - group["total"]) > a1.TOLERANCE_PER_DOC * len(group["documents"]):
         return []
-    numbers = list(group["documents"])
-    if not numbers or abs(group["paid"] - group["total"]) > a1.TOLERANCE_PER_DOC * len(numbers):
-        return []
-    if str(row.get("status_idx") or "") in a1.MONEY_IN:
-        return []
-    receipts = [n for n in numbers if role((by_number.get(n) or [{}])[0].get("doc_type")) == INVOICE_RECEIPT]
-    return receipts if len(receipts) == len(numbers) else []
+    return numbers
 
 
-def _receipt_unpaid(entry: dict, row: dict, by_number: dict) -> Optional[dict]:
+def _receipt_unpaid(entry: dict, row: dict, idx: dict) -> Optional[dict]:
     kind = "books_receipt_unpaid"
-    receipts = receipt_unpaid_facts(entry, row, by_number)
+    by_number = idx["by_number"]
+    receipts = receipt_unpaid_facts(entry, row, idx)
     if not receipts:
         return None
     status = status_word(row)
