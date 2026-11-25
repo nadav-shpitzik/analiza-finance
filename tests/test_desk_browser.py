@@ -44,9 +44,12 @@ BANK = {"text_mm8cxm9y": "בעל/ת החשבון", "text_mm8cv3v3": "12", "text_
 VAT = {"7701": "500000001", "7702": "", "7703": "500000027"}
 
 
-def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None):
+def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None, opened: dict | None = None,
+             fresher: dict | None = None):
     """This service's page routes, behind a stub of D2's API that records every request it is asked: the hand-made view,
-    or `v`; a refresh answers `refreshed` when given (the reading after a write)."""
+    or `v`; a refresh answers `refreshed` when given (the reading after a write). `opened`: what the plain GET's answer says
+    besides (`{"refreshing": True}`: a held reading, so the page asks `?fresh=1` for the next); `fresher`: the view a
+    `?fresh=1` answers, a newer reading."""
     from fastapi import FastAPI, Request
     from fastapi.responses import Response
 
@@ -67,8 +70,12 @@ def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None):
         return resp
 
     @app.get("/api/desk")
-    def desk():
-        return answer(v) if v is not None else answer()
+    def desk(fresh: str = ""):
+        if fresh and fresher is not None:
+            held["view"] = fresher
+            return answer(fresher, taken_at="2026-11-24T08:00:30+00:00")
+        base = answer(v) if v is not None else answer()
+        return dict(base, **(opened or {})) if not fresh else base
 
     @app.post("/api/desk/refresh")
     def refresh():
@@ -294,10 +301,11 @@ def serve():
 
     started = []
 
-    def start(v=None, refreshed=None):
+    def start(v=None, refreshed=None, opened=None, fresher=None):
         log: list = []
         port = _free_port()
-        server = uvicorn.Server(uvicorn.Config(stub_app(log, v, refreshed), host="127.0.0.1", port=port, log_level="warning"))
+        server = uvicorn.Server(uvicorn.Config(stub_app(log, v, refreshed, opened, fresher), host="127.0.0.1", port=port,
+                                               log_level="warning"))
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
         deadline = time.time() + 15
@@ -328,6 +336,7 @@ const [base, sdk, sizes] = process.argv.slice(1);
   await page.route("**/desk/vendor/monday-sdk.js*", (r) => r.fulfill({ contentType: "application/javascript", body: sdk }));
   const text = (sel) => page.$eval(sel, (el) => el.innerText);
   const at = size.join("x");
+  /*SETUP*/
   await page.goto(base + "/desk/");
   await page.waitForSelector("#screen-finance:not([hidden]) .fin-tabs", { timeout: 15000 });
 """
@@ -340,8 +349,10 @@ QA_CODA = r"""
 """
 
 
-def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),)) -> dict:
-    run = subprocess.run([NODE, "-e", QA_PRELUDE + script + QA_CODA, base, sdk, json.dumps([list(s) for s in sizes])],
+def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),), setup: str = "") -> dict:
+    """`setup` runs before the page opens (a route that holds a request, a clock)."""
+    prelude = QA_PRELUDE.replace("/*SETUP*/", setup)
+    run = subprocess.run([NODE, "-e", prelude + script + QA_CODA, base, sdk, json.dumps([list(s) for s in sizes])],
                          capture_output=True, text=True, timeout=180, env=dict(os.environ, NODE_PATH=PW_ROOT))
     assert run.returncode == 0, (run.stdout[-3000:], run.stderr[-3000:])
     got = json.loads(run.stdout.strip().splitlines()[-1])
@@ -588,3 +599,106 @@ def test_the_page_logs_no_console_error_and_throws_nothing_while_it_loads_opens_
     assert steps["loaded"] > 0 and steps["mutations"] == 0
     assert 'סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"' in steps["details"]
     assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in steps["row"] and steps["refreshed"].startswith("נכון ל-")
+
+
+# --- the QA of 24.11, its second pass ------------------------------------------------------------------------------------
+
+def newer_view() -> dict:
+    """The hand-made view with one more payment waiting for its receipt: a newer reading than the one the page opened on."""
+    v = view()
+    v["b2c"]["rows"].append(sc_row("3199", "שורה-חדשה", "receipt_pending", invoice="30099", receipt="טרם", receipt_idx="0"))
+    return with_counts(v)
+
+
+# the page's own second request (`?fresh=1`) and the refresh pressed, each held until the script lets it through
+HOLD = r"""
+  const holding = {};
+  const hold = (name, match) => {
+    holding[name] = {};
+    holding[name].came = new Promise((ok) => { holding[name].ok = ok; });
+    return page.route(match, (route) => { holding[name].route = route; holding[name].ok(); });
+  };
+  const release = async (name, part) => {
+    const answered = page.waitForResponse((r) => r.url().indexOf(part) !== -1);
+    await holding[name].route.continue();
+    await answered;
+  };
+  await hold("fresh", (u) => u.pathname === "/api/desk" && u.searchParams.get("fresh") === "1");
+  await hold("refresh", (u) => u.pathname === "/api/desk/refresh");
+"""
+SEARCH = r"""
+  const search = () => page.evaluate(() => { const q = document.getElementById("fin-q");
+    return { value: q.value, focused: document.activeElement === q, caret: q.selectionStart,
+      line: /חיפוש: /.test(document.querySelector(".fin-listhead").innerText),
+      refreshing: !!document.querySelector(".fin-refreshing") }; });
+"""
+
+
+def test_a_press_on_a_tile_is_taken_while_the_newer_reading_lands_under_it(serve):
+    """QA 24.11 (1): "right after the page loaded, a click on a tile was not taken ... after 'מתעדכן' went away, everything
+    worked". The page opens on a held reading and asks for the newer one, which lands while the tile is pressed - between
+    the press and its release. A drawing there builds the tile anew and the browser takes no click; the drawing now waits
+    for the release, and the tile is taken."""
+    base, _log = serve(opened={"refreshing": True, "age_seconds": 40}, fresher=newer_view())
+    got = qa_visit(r"""
+  await holding.fresh.came;
+  const tile = () => page.$eval('[data-bstate="done"]', (t) => t.getAttribute("aria-pressed"));
+  out.steps.before = { pressed: await tile(), refreshing: !!(await page.$(".fin-refreshing")) };
+  const spot = await page.$eval('[data-bstate="done"]', (el) => { const b = el.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+  await page.mouse.move(spot[0], spot[1]);
+  await page.mouse.down();
+  await release("fresh", "fresh=1");
+  await page.waitForTimeout(300);
+  out.steps.held = { refreshing: !!(await page.$(".fin-refreshing")) };
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  out.steps.after = { pressed: await tile(), refreshing: !!(await page.$(".fin-refreshing")),
+    head: await page.$eval(".fin-listhead h2", (h) => h.innerText) };
+""", base, fake_sdk({}), setup=HOLD)
+    assert got["errors"] == []
+    steps = got["steps"]
+    assert steps["before"] == {"pressed": "false", "refreshing": True}
+    assert steps["held"] == {"refreshing": True}                  # the newer reading waited while the tile was pressed
+    assert steps["after"]["pressed"] == "true" and steps["after"]["refreshing"] is False, steps["after"]
+
+
+def test_what_is_typed_into_the_search_stays_when_an_answer_lands_before_it_settles(serve):
+    """QA 24.11 (1): "text I typed into the search box was erased". (a) "רענון" pressed and the search typed while it is on
+    its way: its answer keeps the text, the focus and the caret, and the next keys go on in the box. (b) The search typed,
+    the focus gone to monday's frame, and the page's own newer reading lands before the search settles (the page's clock
+    held, so the search cannot settle first): the box keeps the text, and the search settles on it."""
+    base, _log = serve()
+    got = qa_visit(SEARCH + r"""
+  await page.click("[data-refresh]");
+  await holding.refresh.came;
+  await page.click("#fin-q");
+  await page.keyboard.type("תלמיד");
+  await release("refresh", "/api/desk/refresh");
+  await page.waitForFunction(() => !document.querySelector("[data-refresh][disabled]"), null, { timeout: 15000 });
+  out.steps.refreshed = await search();
+  await page.keyboard.type("/ה 2");
+  await page.waitForTimeout(400);
+  out.steps.typed = await search();
+""", base, fake_sdk({}), setup=HOLD)
+    assert got["errors"] == []
+    # the answer drew the search on what was typed (it had not settled yet), and kept the box's focus and caret
+    assert got["steps"]["refreshed"] == {"value": "תלמיד", "focused": True, "caret": 5, "line": True, "refreshing": False}
+    assert got["steps"]["typed"] == {"value": "תלמיד/ה 2", "focused": True, "caret": 9, "line": True, "refreshing": False}
+
+    base, _log = serve(opened={"refreshing": True, "age_seconds": 40}, fresher=newer_view())
+    got = qa_visit(SEARCH + r"""
+  await holding.fresh.came;
+  await page.click("#fin-q");
+  await page.clock.pauseAt(Date.now() + 2000);
+  await page.keyboard.type("תלמיד/ה 2");
+  await page.evaluate(() => document.activeElement.blur());
+  await release("fresh", "fresh=1");
+  await page.waitForTimeout(300);
+  out.steps.landed = await search();
+  await page.clock.runFor(300);
+  out.steps.settled = await search();
+""", base, fake_sdk({}), setup=HOLD + "  await page.clock.install();\n")
+    assert got["errors"] == []
+    landed, settled = got["steps"]["landed"], got["steps"]["settled"]
+    assert landed["value"] == "תלמיד/ה 2" and landed["refreshing"] is False and not landed["focused"], landed
+    assert settled["value"] == "תלמיד/ה 2" and settled["line"], settled

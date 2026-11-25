@@ -61,7 +61,9 @@ let scrolled = null;                                /* where a step scrolled the
 global.window = { scrollY: 0, scrollTo(x, y) { this.scrollY = y; scrolled = y; }, open() {}, location: { href: "https://desk.test/desk/" },
   addEventListener(t, f) { (listeners["window:" + t] = listeners["window:" + t] || []).push(f); },
   crypto: require("crypto").webcrypto };
-const root = { innerHTML: "", addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
+let html = "", paints = 0;                          /* every drawing of the page, counted */
+const root = { get innerHTML() { return html; }, set innerHTML(v) { html = v; paints += 1; },
+  addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
   querySelector() { return null; }, querySelectorAll() { return []; } };
 vm.runInThisContext(fs.readFileSync(process.argv[1], "utf8"));
 const F = window.FinanceDesk;
@@ -109,9 +111,14 @@ const monday = M.absent ? null : {
     return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
   }
 };
+/* an answer marked `hold` lands only when a step says so ({"land": "<request>"}) */
+const held = {};
 function answer(key) {
   calls.push(key);
   const a = ((input.answers || {})[key] || []).shift();
+  if (a && a.hold) {
+    return new Promise((ok, no) => { (held[key] = held[key] || []).push(() => (a.reject ? no(a.reject) : ok(a.body))); });
+  }
   return !a ? new Promise(() => {}) : a.reject ? Promise.reject(a.reject) : Promise.resolve(a.body);
 }
 const deps = { api: (p) => answer("GET " + p),
@@ -142,6 +149,8 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     scrolled = null;
     if (step.scrollY !== undefined) { window.scrollY = step.scrollY; }      /* how far down she is before the step */
     if (step.mutate) { Object.keys(step.mutate).forEach((b) => Object.keys(step.mutate[b]).forEach((id) => Object.assign(boards[b][id], step.mutate[b][id]))); }
+    /* the main button pressed on the desk, and (`release`, below) let go */
+    if (step.press) { (handlers.pointerdown || (() => {}))({ button: 0 }); }
     if (step.show) { F._show(step.show); }
     if (step.click) { click(step.click[0], step.click[1]); }
     if (step.type !== undefined) { search.value = step.type; handlers.input({ target: { id: "fin-q", value: step.type, dataset: {} } }); }
@@ -149,6 +158,11 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     if (step.input) { handlers.input({ target: { id: "", value: step.input[1], dataset: step.input[0] } }); }
     if (step.choose) { handlers.change({ target: { id: "", value: step.choose[1], dataset: step.choose[0] } }); }
     if (step.change) { handlers.change({ target: { id: step.change[0], value: step.change[1], dataset: {} } }); }
+    if (step.land) {
+      const next = (held[step.land] || []).shift();
+      if (!next) { throw new Error("nothing held for " + step.land); }
+      next();
+    }
     if (step.hide) { document.visibilityState = "hidden"; (listeners.visibilitychange || []).forEach((f) => f()); }
     if (step.back) {
       /* a return to the view: [ms away, how] - "visible" (another tab), "focus" (monday's item card closed) or "both" */
@@ -158,6 +172,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
       if (how !== "focus") { (listeners.visibilitychange || []).forEach((f) => f()); }
       if (how !== "visible") { (listeners["window:focus"] || []).forEach((f) => f()); }
     }
+    if (step.release) { (listeners["window:pointerup"] || []).forEach((f) => f({ button: 0 })); }
     if (step.act) { F._act(step.act[0], step.act[1], step.typed); }
     if (step.confirm) { F._confirm(); }
     if (step.write) { refused = await F._write(step.write[0], step.write[1], step.write[2]).then(() => "sent", (e) => e.code); }
@@ -167,7 +182,8 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
     const act = F._actState(), b = F._batchState();
     /* the element a step clicked, as the click left it (a button that says it is busy) */
     const pressed = step.click && clicked ? { text: clicked.textContent, disabled: clicked.disabled } : null;
-    steps.push({ html: step.raw ? root.innerHTML : F._show({}), phase: act && act.phase, error: act && act.error, pressed: pressed,
+    const drawn = paints;                             /* before the step's own picture below, which draws */
+    steps.push({ html: step.raw ? root.innerHTML : F._show({}), paints: drawn, phase: act && act.phase, error: act && act.error, pressed: pressed,
       refused: refused, can: F._can(), sent: sent.length, scrolled: scrolled,
       plan: act && act.plan ? act.plan.lines.map((l) => [l.title, !!l.same, !!l.kept, l.to === undefined ? null : l.to]) : null,
       /* 1.1: the batch on the screen, row by row */
@@ -776,6 +792,80 @@ def test_the_page_asks_again_when_its_window_takes_the_focus_back_after_mondays_
                 [[6_000, "focus"], [2_000, "focus"], [4_000, "focus"]])
     assert got == {"calls": ["GET /api/desk", "POST /api/desk/refresh", "GET /api/desk", "POST /api/desk/refresh"],
                    "seen": [False, False, True]}
+
+
+# --- the QA of 24.11, its second pass: a drawing she did not ask for keeps what she typed and what she pressed ---------
+
+REFRESHING = 'class="fin-refreshing"'
+NEWER = "2026-11-24T08:00:40.250000+00:00"
+
+
+def search_box(html: str) -> str:
+    """What the search box holds in a drawing of the page."""
+    import html as h
+    return h.unescape(re.search(r'id="fin-q"[^>]*value="([^"]*)"', html).group(1))
+
+
+@pytest.mark.parametrize("drawing", [
+    {"land": "GET /api/desk?fresh=1"},           # the page's own second request lands: "מתעדכן" goes
+    {"click": [{"bstate": "done"}]},               # a tile chosen before the search settled (a redraw)
+    {"click": [{"legend": "1"}]},                  # "מקרא" opened before it settled (a drawing of its own)
+])
+def test_a_drawing_before_the_search_settles_keeps_what_was_typed_in_the_box(drawing):
+    """QA 24.11 (1): text typed into the search box was erased while "מתעדכן" showed. What is typed reaches state.query
+    when the search settles, 250ms after the last key, and the box was read back only while it had the focus: a drawing
+    in between drew the box from state.query. Here the box has no focus (the harness's document has none, as when
+    monday's frame holds it), and every drawing keeps what it holds - the search is drawn on it at once."""
+    import html as h
+    first = {"body": answer(refreshing=True, age_seconds=40)}
+    newer = {"hold": True, "body": newer_body(NEWER, 0)}
+    got = drive(answers={"GET /api/desk": [first], "GET /api/desk?fresh=1": [newer]}, monday={"absent": True},
+                steps=[{"type": "תלמיד/ה 2", "raw": True}, dict(drawing, raw=True), {"wait": 400, "raw": True}])
+    _typed, drawn, settled = got["steps"]
+    assert search_box(drawn["html"]) == "תלמיד/ה 2" and "חיפוש: תלמיד/ה 2" in h.unescape(drawn["html"])
+    if "land" in drawing:
+        assert REFRESHING not in drawn["html"]                     # the newer reading is the one on the screen
+    assert search_box(settled["html"]) == "תלמיד/ה 2" and "חיפוש: תלמיד/ה 2" in h.unescape(settled["html"])
+
+
+@pytest.mark.parametrize("landing", [
+    {"hold": True, "body": newer_body(NEWER, 0)},
+    {"hold": True, "reject": {"error": "rate_limited", "retryAfter": 5}},   # "not yet": the reading on the screen stays
+])
+def test_the_refresh_pressed_keeps_what_was_typed_while_it_was_on_its_way(landing):
+    """QA 24.11 (1): "רענון" drew its answer with render() from state.query, so a search typed while it was on its way was
+    drawn over. Its answer, a newer reading or a "not yet", is drawn as every answer is now."""
+    got = drive(answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [landing]}, monday={"absent": True},
+                steps=[{"click": [{"refresh": "1"}]}, {"type": "תלמיד/ה 2", "land": "POST /api/desk/refresh", "raw": True}])
+    assert search_box(got["steps"][1]["html"]) == "תלמיד/ה 2"
+    assert ("rate_limited" in json.dumps(landing)) == ("אפשר לרענן שוב בעוד 5 שניות." in got["toasts"])
+
+
+def test_a_drawing_that_lands_while_the_desk_is_pressed_waits_for_the_release_and_is_drawn_once():
+    """QA 24.11 (1): a click on a tile was not taken while "מתעדכן" showed. A drawing between a press and its release builds
+    what was pressed anew, and the browser then takes no click (tests/test_desk_browser.py presses one). An answer that
+    lands while a pointer is down on the desk is drawn after the release, once; a choice of her own draws at once, and what
+    landed with it; and a release the page never hears holds a drawing PRESS_MAX_MS (1.5 s) at most."""
+    first = lambda: {"body": answer(refreshing=True, age_seconds=40)}
+    newer = lambda: {"hold": True, "body": newer_body(NEWER, 0)}
+    answers = lambda: {"GET /api/desk": [first()], "GET /api/desk?fresh=1": [newer()]}
+    pressed_landing = {"press": True, "land": "GET /api/desk?fresh=1", "raw": True}
+    got = drive(answers=answers(), monday={"absent": True},
+                steps=[{"raw": True}, pressed_landing, {"release": True, "raw": True}, {"wait": 50, "raw": True}])
+    before, pressed, released, after = got["steps"]
+    assert "שורה-חדשה" not in pressed["html"] and REFRESHING in pressed["html"] and pressed["paints"] == before["paints"]
+    assert "שורה-חדשה" in released["html"] and REFRESHING not in released["html"]
+    assert released["paints"] == before["paints"] + 1 and after["paints"] == released["paints"]
+    # her own choice while pressed (a select's list): drawn at once, the reading that landed with it, and nothing owed after
+    got = drive(answers=answers(), monday={"absent": True},
+                steps=[{"raw": True}, pressed_landing, {"change": ["fin-period", "2026-11"], "raw": True},
+                       {"release": True, "raw": True}])
+    before, pressed, chosen, released = got["steps"]
+    assert pressed["paints"] == before["paints"] and chosen["paints"] == before["paints"] + 1 and "שורה-חדשה" in chosen["html"]
+    assert released["paints"] == chosen["paints"]
+    # a press whose release never comes: the reading is drawn after PRESS_MAX_MS all the same
+    got = drive(answers=answers(), monday={"absent": True}, steps=[pressed_landing, {"wait": 1700, "raw": True}])
+    assert "שורה-חדשה" not in got["steps"][0]["html"] and "שורה-חדשה" in got["steps"][1]["html"]
 
 
 # --- ported: the allowlist and one action end to end (analiza-metrics tests/test_finance_actions_js.py) ------------------

@@ -95,6 +95,16 @@
  *      paid for a full refund without it, the asterisk) was headed "סכום החזר" as if it were monday's column; it is
  *      "הוחזרו", the desk's word for it on the tab's figure and in the Excel file. A refund's details keep "סכום החזר" for
  *      monday's own value. The mark of what found a row reads "נמצא לפי: <field> <value>" with it.
+ * From the QA's second pass of 24.11 (QA2, the live desk at ef9d817), each by its number there:
+ * QA2 1 While "מתעדכן" showed, a click on a tile was not taken and text typed into the search box was erased. A press is a
+ *      click only when what was pressed is still there at its release, and a drawing between the two - the newer reading
+ *      landing, or monday's frame giving the view the focus back, which fires on the press itself - built the tile anew.
+ *      The search box was read back only while it had the focus, and what is typed reaches state.query only when the search
+ *      settles (250ms after the last key), so a drawing in between drew it over; "רענון" drew its answer with render(),
+ *      dropping the box's focus too. Now every drawing keeps what the box holds, focused or not, with its focus and caret
+ *      when it had them (render, focusKey); every answer is drawn as one, "רענון"'s too (load); and a drawing that is not
+ *      the person's own act - an answer, a return, the search settling - waits while a pointer is down on the desk and is
+ *      drawn once after the click (landed; PRESS_MAX_MS at most, for a release the page never hears).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -427,7 +437,7 @@
     TOTALS[key] = { body: null };
     params.taken = (BODY && BODY.taken_at) || "";
     var qs = Object.keys(params).map(function (k) { return k + "=" + encodeURIComponent(params[k] || ""); }).join("&");
-    deps.api("/api/desk/totals?" + qs).then(function (body) { TOTALS[key].body = body; redraw(); })
+    deps.api("/api/desk/totals?" + qs).then(function (body) { TOTALS[key].body = body; landed(); })
       .catch(function () { TOTALS[key].body = { failed: true }; });
     return null;
   }
@@ -1466,14 +1476,14 @@
     Promise.resolve(pending).catch(function () {}).then(function () {
       if (pending) { refreshAfterWrite(tries); return; }
       if (BODY) { BODY.refreshing = true; }
-      redraw();
+      landed();
       pending = deps.post("/api/desk/refresh").then(function (next) {
         takeNewer(next);
-        redraw();
+        landed();
         if (!settled() && tries < 2) { later(function () { refreshAfterWrite(tries + 1); }, 5000); }
       }, function (e) {
         if (BODY) { BODY.refreshing = false; }
-        redraw();
+        landed();
         if (e && e.error === "rate_limited" && tries < 2) {
           notBefore(e);
           later(function () { refreshAfterWrite(tries + 1); }, (num(e.retryAfter) || 5) * 1000);
@@ -1514,7 +1524,7 @@
     act.phase = "failed";
     act.error = errorWords(e);
     act.detail = (e && e.text) || "";
-    redraw();
+    landed();
     flash(act.error);
   }
   /* a partial refund that is not smaller than its "סכום לזיכוי" is "תשלום הוחזר" or a typo: said in the plan, not refused */
@@ -1543,10 +1553,11 @@
     act.phase = plan.steps.length ? "confirm" : "nothing";
     /* the plan on the screen ("shown"), or nothing to write since monday already holds it */
     use("act", { action: act.action, phase: plan.steps.length ? "shown" : "nothing" });
-    redraw();
     /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write) */
-    var box = root && root.querySelector ? root.querySelector(".fin-act-plan") : null;
-    if (box && box.focus) { box.focus(); }
+    landed(function () {
+      var box = root && root.querySelector ? root.querySelector(".fin-act-plan") : null;
+      if (box && box.focus) { box.focus(); }
+    });
     return true;
   }
   function startAction(rk, key) {
@@ -1602,7 +1613,7 @@
       noteWritten(act.key, cells, act.live);
       use("act", { action: act.action, phase: "done" });
       act.phase = "done";
-      redraw();
+      landed();
       flash("נכתב במאנדיי בשמך: " + act.plan.lines.filter(function (l) { return !l.same && !l.kept; }).map(function (l) {
         return l.title + " " + shownValue(l.kind === "status" ? "text" : l.kind, l.to);
       }).join(", ") + ". המסך מתעדכן.");
@@ -1693,7 +1704,7 @@
       } else { CAN = { state: "unknown", why: "" }; }
       CAN_UPDATE = u.isViewOnly !== true && !!p && Array.isArray(p.approvedScopes) && has(p.approvedScopes, "updates:write");
       USER_ID = String(u.id == null ? "" : u.id).replace(/[^0-9]/g, "").slice(0, 20);
-    }, function () { CAN = { state: "unknown", why: "" }; }).then(function () { if (VIEW) { redraw(); } });
+    }, function () { CAN = { state: "unknown", why: "" }; }).then(function () { if (VIEW) { landed(); } });
   }
 
   /* ---------- 1.1 (D2, the desk move plan §1b): two actions on the row itself, for one row or several at once ----------
@@ -1779,10 +1790,11 @@
     var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
     batch.phase = n ? "confirm" : "nothing";
     use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
-    redraw();
     /* the confirmation is read out where it appears: focus on the box, never on "כתיבה" (a key held down must not write) */
-    var box = root && root.querySelector ? root.querySelector(".fin-batch-plan") : null;
-    if (box && box.focus) { box.focus(); }
+    landed(function () {
+      var box = root && root.querySelector ? root.querySelector(".fin-batch-plan") : null;
+      if (box && box.focus) { box.focus(); }
+    });
   }
   function failBatch(batch, e) {
     if (e && e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; }
@@ -1790,7 +1802,7 @@
     batch.phase = "failed";
     batch.error = errorWords(e);
     batch.detail = (e && e.text) || "";
-    redraw();
+    landed();
     flash(batch.error);
   }
   function confirmBatch() {
@@ -1807,7 +1819,7 @@
       return p.then(function () {
         if (stop) { it.result = "failed"; it.why = stop + ". לא נשלח."; return null; }
         batch.at += 1;
-        redraw();
+        landed();
         /* the row again, as the person, right before its write: written only if it still holds what the confirmation
            showed (and its label still stands for the index), as a single action's confirmAction */
         return readRow(boardId, it.row.id, [w.column]).then(function (live) {
@@ -1841,7 +1853,7 @@
       batch.phase = "done";
       use("act", { action: batch.action, phase: "batch_done",
         code: written === todo.length ? "" : written ? "partial" : "none" });
-      redraw();
+      landed();
       flash(written ? "נכתב במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
         (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". המסך מתעדכן." : "לא נכתב כלום: הפירוט ברשימה.");
       /* one refresh after the batch, as after one action (refreshAfterWrite asks again at most twice while a written row
@@ -2138,7 +2150,7 @@
       .then(function () {
         mine.shown = null;
         if (said) { said(mine); }
-        if (store[key] === mine && VIEW) { redraw(); }
+        if (store[key] === mine && VIEW) { landed(); }
       });
     return mine;
   }
@@ -2295,9 +2307,10 @@
       bill.live = live;
       VATS[aid] = { phase: "ok", value: live.values.vat_id };     /* the ח.פ just read, as the details show it */
       bill.phase = "edit";
-      redraw();
-      var box = document.getElementById("fin-bill-" + bill.focus);
-      if (box && box.focus) { box.focus(); }
+      landed(function () {
+        var box = document.getElementById("fin-bill-" + bill.focus);
+        if (box && box.focus) { box.focus(); }
+      });
     }, function (e) {
       if (BILL !== bill) { return; }
       bill.phase = "failed";
@@ -2305,7 +2318,7 @@
         ". לא נכתב כלום.";
       bill.detail = (e && e.text) || "";
       use("bill", { phase: "failed", code: useWord(e && e.code) || "monday" });
-      redraw();
+      landed();
     });
   }
   /* a box's value: what she typed, or - a box she did not touch - what monday holds now (review 11.11: an untouched box
@@ -2423,13 +2436,13 @@
         b.phase = "edit";
         b.error = ACCOUNT_ERRORS.changed_since_read;
         use("bill", { phase: "failed", code: "changed_since_read" });
-        redraw();
+        landed();
         return;
       }
       b.phase = "done";
       b.outcome = outcome;
       use("bill", { phase: "done", fields: Math.min(Object.keys(b.plan.fields).length, 10), code: outcome === "posted" ? "" : outcome });
-      redraw();
+      landed();
       flash(outcome === "posted" ? "פרטי החיוב נכתבו בלוח החברות, ועל החברה נכתב עדכון."
         : outcome === "update_failed" ? "פרטי החיוב נכתבו בלוח החברות, אבל העדכון על החברה לא נכתב."
           : "פרטי החיוב נכתבו בלוח החברות בשמך.");
@@ -2448,7 +2461,7 @@
             : (BILL_ERRORS[e.code] || BILL_ERRORS.monday) + ". לא נכתב כלום.";
       b.detail = e.text || "";
       use("bill", { phase: "failed", code: useWord(e.code) || "monday" });
-      redraw();
+      landed();
       flash(b.error);
       if (maybe) { refreshAfterWrite(0); }
     });
@@ -2588,6 +2601,7 @@
   function focusKey() {
     var a = document.activeElement;
     if (!a || a === root || !root.contains(a) || !a.dataset) { return ""; }
+    if (a.id === "fin-q") { return "#fin-q"; }          /* the search box keeps its focus and caret too (QA 24.11) */
     var k = KEEP.filter(function (x) { return a.dataset[x] !== undefined; })[0];
     /* a dataset name in camelCase is a data- attribute in kebab-case */
     return k ? "[data-" + k.replace(/[A-Z]/g, function (m) { return "-" + m.toLowerCase(); }) + "=\"" +
@@ -2626,6 +2640,12 @@
   }
   function render() {
     if (!VIEW) { noReading(); return; }        /* D2: nothing read on the server yet */
+    /* QA 24.11: what the search box holds is what she typed, focused or not, its debounce (onInput, 250ms after the last
+       key) run or not - text typed just before an answer landed, or while the focus was in monday's frame, was drawn over
+       from state.query, which only the debounce and the focused box fed. No drawing draws over the box now, and state.query
+       changes nowhere else */
+    var box = document.getElementById("fin-q");
+    if (box && box.value !== state.query) { state.query = box.value; }
     var keep = focusKey(), scrolls = tableScrolls(), a = document.activeElement;
     /* an input being typed into keeps its caret: a redraw (a total landing, a newer reading) builds it anew */
     var caret = keep && a && a.tagName === "INPUT" && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
@@ -2716,32 +2736,60 @@
     if (!body.refreshing || pending) { return pending; }
     pending = deps.api("/api/desk?fresh=1").then(function (next) {
       takeNewer(next);
-      redraw();
+      landed();
     }).catch(function () {
-      if (BODY) { BODY.refreshing = false; redraw(); }
+      if (BODY) { BODY.refreshing = false; landed(); }
       flash("העדכון נכשל, ומוצגים הנתונים הקודמים.");
     }).then(function () { pending = null; });
     return pending;
   }
-  /* a redraw nobody asked for keeps the reader where they were: the scroll, and the search box's caret */
+  /* a redraw nobody asked for keeps the reader where they were: the scroll, and (render) the search box - what is in it,
+     and its focus and caret when it had them. `then` (landed): what follows the drawing, such as a plan taking the focus */
   function redraw() {
     var scroller = document.getElementById("content");
     var top = scroller ? scroller.scrollTop : 0, winTop = window.scrollY;
-    var q = document.getElementById("fin-q"), typing = q && document.activeElement === q;
-    var caret = typing ? q.selectionStart : null;
-    if (typing) { state.query = q.value; }
+    var then = press.then;
+    press.owed = false; press.then = null; clearTimeout(press.timer);
     render();
     if (scroller) { scroller.scrollTop = top; }
     window.scrollTo(0, winTop);
-    if (typing) { q = document.getElementById("fin-q"); q.focus(); q.setSelectionRange(caret, caret); }
+    if (then) { then(); }
+  }
+  /* QA 24.11: "a click on a tile was not taken" while the screen updated. A press is a click only when what was pressed is
+     still there when it is released, and a drawing between the two builds it anew: monday's frame giving the view the focus
+     back fires on the press itself (onFocus, a return), and an answer may land inside it. So a drawing that is not the
+     person's own act - an answer landing, a return to the view, the search settling - waits while a pointer is down on the
+     desk, and is drawn once, after the click the release makes; PRESS_MAX_MS at most, for a release the page never hears
+     (a select's own list, a press dragged out of the view). The person's own acts (a click, a key, a choice) draw at once */
+  var PRESS_MAX_MS = 1500;
+  var press = { down: false, owed: false, then: null, timer: null };
+  function landed(then) {
+    if (then) { press.then = then; }
+    if (!press.down) { redraw(); return; }
+    if (!press.owed) {
+      press.owed = true;
+      press.timer = setTimeout(function () { press.down = false; drawOwed(); }, PRESS_MAX_MS);
+    }
+  }
+  function drawOwed() { if (press.owed && !press.down) { redraw(); } }
+  /* the main button only: it alone makes a click */
+  function onPress(ev) { if (!ev.button) { press.down = true; } }
+  function onRelease() {
+    if (!press.down) { return; }
+    press.down = false;
+    /* the click comes after this event, in the same turn: a timer draws after it */
+    if (press.owed) { setTimeout(drawOwed, 0); }
   }
   function load(fresh) {
     var p = fresh ? deps.post("/api/desk/refresh") : deps.api("/api/desk");
     return p.then(function (body) {
+      /* a desk already on the screen ("רענון", "לנסות שוב") is redrawn as any answer is: what was typed and the scroll stay
+         (QA 24.11); the first drawing is the desk itself */
+      var drawn = !!VIEW;
       /* D2: an answer without a view never replaces the one on the screen (takeNewer); with none on it, it is said */
       if (body.view || !VIEW) { took(body); VIEW = body.view || null; index(VIEW); }
       else if (BODY) { BODY.refreshing = false; }
-      render();
+      if (drawn) { landed(); } else { render(); }
       if (fresh && VIEW && body.last_attempt && body.last_attempt.ok === false) { flash("הרענון נכשל, ומוצגים הנתונים הקודמים."); }
       else if (fresh && VIEW && !body.view && body.view_error) { flash(VIEW_ERROR_KEPT); }
       /* the desk on the screen for the first time this visit: how long it took, and from which board */
@@ -2753,7 +2801,7 @@
       followUp(body);
     }).catch(function (e) {
       use("load_failed", { code: useWord(e && e.error) || "unknown" });
-      if (VIEW && e && e.error === "rate_limited") { notBefore(e); render(); flash(errorText(e)); return; }
+      if (VIEW && e && e.error === "rate_limited") { notBefore(e); landed(); flash(errorText(e)); return; }
       message(errorText(e));
     });
   }
@@ -2784,7 +2832,7 @@
   function askAgain(how) {
     if (!VIEW || !refetchDue(BODY, bodyAt, Date.now(), refreshNotBefore, !!pending)) { return; }
     use("back", { how: how === "focus" ? "focus" : "visible" });
-    BODY.refreshing = true; redraw();
+    BODY.refreshing = true; landed();
     pending = deps.post("/api/desk/refresh").catch(function (e) {
       if (!e || e.error !== "rate_limited") { throw e; }
       /* "not yet" (429): a refresh was pressed inside the gap - by another reader, or by this one on the other charge
@@ -2799,9 +2847,9 @@
       });
     }).then(function (next) {
       takeNewer(next);
-      redraw();
+      landed();
     }).catch(function () {
-      if (BODY) { BODY.refreshing = false; redraw(); }
+      if (BODY) { BODY.refreshing = false; landed(); }
     }).then(function () {
       pending = null;
       /* a held reading past its span comes marked `refreshing`: the page's own request reads the next, as on open */
@@ -2972,9 +3020,11 @@
     if (ev.target.dataset && ev.target.dataset.bill !== undefined) { billTyped(ev.target.dataset.bill, ev.target.value); return; }
     if (ev.target.id !== "fin-q") { return; }
     clearTimeout(typing);
+    /* the search settles 250ms after the last key, drawn as any drawing she did not ask for this moment (QA 24.11): it
+       waits for a press on the desk, and keeps the box's focus and caret only when it has them */
     typing = setTimeout(function () {
-      state.query = ev.target.value; render();
-      var q = document.getElementById("fin-q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length);
+      state.query = ev.target.value;
+      landed();
       searchSettling();
     }, 250);
   }
@@ -3010,6 +3060,10 @@
        click away on both boards, for whoever is a member of both (the server answers each tab by its board) */
     state.tab = given.board === BOARD.b2 ? "b2b" : "b2c";
     root.addEventListener("click", onClick);
+    /* a press on the desk, and its release wherever it happens: a drawing that lands between them waits (QA 24.11) */
+    root.addEventListener("pointerdown", onPress);
+    window.addEventListener("pointerup", onRelease, true);
+    window.addEventListener("pointercancel", onRelease, true);
     root.addEventListener("input", onInput);
     root.addEventListener("keydown", onKey);
     root.addEventListener("change", onChange);
@@ -3055,6 +3109,9 @@
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];
       });
+      /* a query given is one typed into the box: every drawing keeps what the box holds (QA 24.11) */
+      var box = document.getElementById("fin-q");
+      if (box && st && st.query !== undefined) { box.value = st.query; }
       render();
       return root.innerHTML;
     },
