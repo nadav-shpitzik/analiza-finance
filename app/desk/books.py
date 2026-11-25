@@ -181,6 +181,8 @@ KEYS_DEADLINE_S = 20
 STORE_FAIL_GAP_S = 30
 # the same reading asks again whether the copy moved (its last finished run) at most this often: a tick is hourly
 RUN_CHECK_S = 15
+# the longest a part's key may be (`DeskBooks._made`): what the totals and the files are asked by is refused past it
+BOOKS_KEY_MAX = 400
 # a request that may read and finds the part being computed waits at most this long, then is answered with the last
 # part; an answer at once (D2's `refreshing`) never waits for it
 WAIT_S = 30
@@ -778,7 +780,11 @@ class DeskBooks:
         part = dict(base or {}, state=state, reasons=list(reasons))
         if base is None:
             part.update(as_of=None, marks={}, notes={}, students=[], companies=[], unclear=[], vouchers=0)
-        part["key"] = "%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "")
+        # the key names the part (the merged view is kept by it, the totals and the files are asked by it): two parts of one
+        # reading differ in it whenever what they say differs - their state, their copy's time, when they were computed,
+        # and their reasons (the review of dfa967b: two `held` parts with other reasons had one key, so the page was shown
+        # the reason of the part before). Bounded by construction: the reasons are a closed list (BOOKS_KEY_MAX)
+        part["key"] = "%s|%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "", ",".join(reasons))
         return part
 
     def _not_ok(self, reasons: list) -> dict:

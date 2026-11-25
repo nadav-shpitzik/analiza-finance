@@ -58,7 +58,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import config
 from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
-from .books import DeskBooks, merge as books_merge
+from .books import BOOKS_KEY_MAX, DeskBooks, merge as books_merge
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
 from .usage_store import UsageStoreError, append_events
@@ -546,7 +546,7 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
     if not _opens(visitor, tab):
         audit(visitor.identity, "desk-totals", "not_a_member")
         return err(403, "not_a_board_member")
-    if not query_exportable(q) or len(period) > 32 or len(customer) > 32 or len(taken) > 40 or len(books) > 120:
+    if not query_exportable(q) or len(period) > 32 or len(customer) > 32 or len(taken) > 40 or len(books) > BOOKS_KEY_MAX:
         return err(400, "bad_filter")
     reading = st.reading.reading  # as held: a totals request reads nothing
     if reading is None:

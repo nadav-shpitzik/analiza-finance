@@ -857,6 +857,57 @@ def test_a_request_that_may_read_waits_for_the_computation_in_progress_and_answe
     assert store.snapshots == 1                                              # computed once, by the first
 
 
+def test_two_held_parts_with_different_reasons_have_different_keys():
+    """The review of dfa967b, finding 5 (tests/test_review_d3_part_key.py, ported): the part's key named it by its state,
+    its copy's time and when it was computed, so every `held` part made from one last whole part had one key whatever its
+    reasons, and routes `_merged` (one merged view per reading and key) answered a part whose reasons changed with the
+    merged view of the part before: the page said the old reason while /health said the new one. The key holds the
+    reasons; two parts of one copy computed at two times differ in it too."""
+    store, tick = FakeCopy(copy(DOCS)), Tick()
+    b = holder(store, clock=tick)
+    reading, view = reading_view(ROWS)
+    ok = b.answer(CFG, reading, view)
+    assert ok["state"] == "ok"
+    store.fail = "57P01"
+    tick.t += db.RUN_CHECK_S + 1
+    first = b.answer(CFG, reading, view)
+    assert (first["state"], first["reasons"]) == ("held", ["store_error"])
+    store.fail = None
+    store.snapshot = copy(DOCS + [doc(62605)], last_run_id=8)               # the copy is back, with a hole
+    tick.t += db.STORE_FAIL_GAP_S + 1
+    second = b.answer(CFG, reading, view)
+    assert (second["state"], second["reasons"]) == ("held", ["holes"])
+    assert first["key"] != second["key"], (first["key"], second["key"])
+    # every reason at once still fits what the totals and the files are asked by
+    assert len(b._made("held", list(db.REASONS), ok)["key"]) <= db.BOOKS_KEY_MAX
+    # the same copy computed again at another time is another part (B81 of the review's mutants)
+    again = db.DeskBooks(lambda _url: store, lambda: None, clock=tick, now=lambda: datetime(2026, 11, 25, 9, 1, tzinfo=timezone.utc))
+    again.keys = FakeKeys({})
+    store.snapshot = copy(DOCS)
+    other = again.answer(CFG, reading, view)
+    assert other["state"] == "ok" and other["as_of"] == ok["as_of"] and other["key"] != ok["key"]
+
+
+def test_the_merged_view_says_the_reasons_of_the_part_it_is_merged_with():
+    from app.desk import routes
+
+    store, tick = FakeCopy(copy(DOCS)), Tick()
+    b = holder(store, clock=tick)
+    reading, view = reading_view(ROWS)
+    st = SimpleNamespace(view_lock=threading.Lock(), merged=None)
+    b.answer(CFG, reading, view)
+    store.fail = "57P01"
+    tick.t += db.RUN_CHECK_S + 1
+    shown = routes._merged(st, reading, view, b.answer(CFG, reading, view))
+    assert shown["books"]["reasons"] == ["store_error"]
+    store.fail = None
+    store.snapshot = copy(DOCS + [doc(62605)], last_run_id=8)
+    tick.t += db.STORE_FAIL_GAP_S + 1
+    part = b.answer(CFG, reading, view)
+    shown = routes._merged(st, reading, view, part)
+    assert shown["books"]["reasons"] == part["reasons"] == ["holes"], shown["books"]
+
+
 def test_without_the_accounts_keys_nothing_is_computed():
     """The side of a card needs every Account's key: with none read, no list and no mark (a company's invoice-receipt would
     otherwise be a student's)."""
@@ -1029,6 +1080,23 @@ def test_the_tasks_total_is_of_the_books_part_the_page_shows(booked):
     assert other["other_reading"] is True
     # a page that sends no key is answered as before D3
     assert booked.client.get("/api/desk/totals?tab=b2c&state=tasks&taken=%s" % taken, headers=auth).json()["count"] == t["count"]
+
+
+def test_through_the_route_the_page_and_health_say_the_same_reason(booked):
+    """The review of dfa967b, finding 5, end to end: GET /api/desk while the database fails, then while the copy has a
+    hole - one reading."""
+    assert booked.get(1).json()["view"]["books"]["state"] == "ok"
+    books = booked.client.app.state.desk.books
+    booked.copy.fail = "57P01"
+    books._checked_at = None                                                  # past RUN_CHECK_S
+    assert booked.get(1).json()["view"]["books"]["reasons"] == ["store_error"]
+    booked.copy.fail = None
+    booked.copy.snapshot = copy(ROUTE_DOCS + [doc(62605)], last_run_id=8)
+    books._checked_at = books._store_failed_at = None                         # past STORE_FAIL_GAP_S
+    page = booked.get(1).json()["view"]["books"]
+    health = booked.client.get("/health").json()["desk"]["books"]
+    assert health["reasons"] == ["holes"]
+    assert page["reasons"] == health["reasons"], (page, health)
 
 
 def _merged_b2c() -> dict:
