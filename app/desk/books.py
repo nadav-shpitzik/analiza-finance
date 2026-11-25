@@ -19,7 +19,7 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
      usual unpaid row: A1's `amount_unreadable`, which has no group) or its group's two sums agree within the tolerance.
      The books say the money came in (FR-L12) and the row says it did not: the case of 23.11, also when the
      invoice-receipts carry different days (A1's `dates_differ`, which A1 judges before the row's status).
-   Every other bucket gives no mark. **A mark moves no row out of its state** (משבצת), so no state's count or sum changes;
+   No other row is marked. **A mark moves no row out of its state** (משבצת), so no state's count or sum changes;
    a marked row whose date is from ERA_FROM on (the row's date as the desk dates it: "תאריך תקבול", else the day it was
    made) also joins "לטיפול" (`books_task`); an older one keeps its mark on the row only (spec §6.4.2, ADR-0168 §5).
 2. **"מסמכים בחשבשבת בלי חיוב במאנדיי"** (spec §6.1.2; FR-C4, FR-D1): status-1 tax invoices and invoice-receipts of the era
@@ -47,8 +47,9 @@ ONLY A WHOLE COPY CHANGES WHAT IS SHOWN (spec §6.1.5). A result is computed onl
 were read whole and on a copy that is whole by A1's own rule (app/books/store.py `not_ready`, judged on one repeatable-
 read snapshot, `desk_snapshot`). Otherwise the last result this instance computed is shown, `held`, with the time of its
 copy and why it is not newer; with none, `none` and why. A whole copy older than COPY_STALE_S is `held` too
-(`copy_stale`): the books are read every hour, so its marks never pose as current on a sync that stopped. Never on Demo (`demo`: the books of the Demo company must never
-meet the real boards, the rules' §0.6), nor without a database (`not_configured`): `off`.
+(`copy_stale`): the books are read every hour, so its marks never pose as current on a sync that stopped. Never on Demo
+(`demo`: the books of the Demo company must never meet the real boards, the rules' §0.6), nor without a database
+(`not_configured`): `off`.
 
 WHAT LEAVES. The result lives in this instance's memory and in the desk's gated answer only: the marks and the students'
 list in the students' tab (Student Charge's members), the companies' list in the companies' tab (B2B Charge's), the
@@ -65,10 +66,10 @@ import threading
 import time
 import unicodedata
 from collections import Counter, defaultdict
-from zoneinfo import ZoneInfo
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 from ..books.doctypes import DRAFT_STATUS, INFERRED, VALID_STATUS, role
 from ..books.store import BooksStoreError, not_ready, summarize_series

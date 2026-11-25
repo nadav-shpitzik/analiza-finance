@@ -304,7 +304,8 @@ def test_a_negative_invoice_receipt_is_said_as_a_negative_sum_not_as_another_typ
     for tax invoices only - so the details read "62500: חשבונית מס/קבלה, ולא חשבונית מס או חשבונית מס/קבלה", a sentence
     that contradicts itself (in the Excel file too), and the chip gave no reason. A negative sum is said as one; a credit
     note's reason stays its type, whatever its sign."""
-    part, _v, _r = run([pay(1, "62500"), pay(2, "70100")], [doc(62500, total="-4000"), doc(70100, doc_type=3, total="-500")])
+    part, _v, _r = run([pay(1, "62500"), pay(2, "70100")],
+                       [doc(62500, total="-4000"), doc(70100, doc_type=3, total="-500")])
     (mark,) = part["marks"]["1"]
     assert mark["kind"] == "books_ref_invalid"
     assert "ולא חשבונית מס או חשבונית מס/קבלה" not in mark["text"], mark["text"]
@@ -585,8 +586,9 @@ def test_a_masked_or_empty_card_key_is_no_card_and_its_side_is_judged_by_the_car
     assert all(e["why_text"] == db.UNCLEAR_WHY[e["why"]] for e in part["unclear"])
     assert db.card_sides(docs, keys) == {
         db.NAME_CARD + "דנה לוי": ("unclear", "name_invoice_receipt_and_proforma"),
-        db.NAME_CARD + "משה כהן": ("student", "invoice_receipt"), db.NAME_CARD + "רות אבן": ("student", "invoice_receipt"),
-        db.NAME_CARD + "יעל גל": ("student", "invoice_receipt"), db.NAME_CARD + "נועה בר": ("unclear", "name_no_invoice_receipt"),
+        db.NAME_CARD + "משה כהן": ("student", "invoice_receipt"),
+        db.NAME_CARD + "רות אבן": ("student", "invoice_receipt"), db.NAME_CARD + "יעל גל": ("student", "invoice_receipt"),
+        db.NAME_CARD + "נועה בר": ("unclear", "name_no_invoice_receipt"),
         db.NAME_CARD + "כרטיס מוסתר": ("unclear", "name_no_invoice_receipt")}
     assert db.norm_name(" ＤＡＮＡ\u00a0 Levi ") == "dana levi" == db.norm_name("dana levi")
     # a key the desk read from monday and masked (`mask_ids`) names no Account's card either
@@ -1056,7 +1058,8 @@ def test_two_held_parts_with_different_reasons_have_different_keys():
     # every reason at once still fits what the totals and the files are asked by
     assert len(b._made("held", list(db.REASONS), ok)["key"]) <= db.BOOKS_KEY_MAX
     # the same copy computed again at another time is another part (B81 of the review's mutants)
-    again = db.DeskBooks(lambda _url: store, lambda: None, clock=tick, now=lambda: datetime(2026, 11, 25, 9, 1, tzinfo=timezone.utc))
+    again = db.DeskBooks(lambda _url: store, lambda: None, clock=tick,
+                         now=lambda: datetime(2026, 11, 25, 9, 1, tzinfo=timezone.utc))
     again.keys = FakeKeys({})
     store.snapshot = copy(DOCS)
     other = again.answer(CFG, reading, view)
@@ -1067,7 +1070,8 @@ def test_two_parts_computed_in_one_second_have_different_keys():
     """A part's key names the computation it comes from, not only its second: a copy whose run moved within the second the
     part before was computed (here its finished time kept, as a fixture keeps it) is another part, with another list."""
     store = FakeCopy(copy(DOCS))
-    b = db.DeskBooks(lambda _url: store, lambda: None, clock=Tick(), now=lambda: datetime(2026, 11, 25, 9, 0, tzinfo=timezone.utc))
+    b = db.DeskBooks(lambda _url: store, lambda: None, clock=Tick(),
+                     now=lambda: datetime(2026, 11, 25, 9, 0, tzinfo=timezone.utc))
     b.keys = FakeKeys({})
     reading, view = reading_view(ROWS)
     first = b.answer(CFG, reading, view)
@@ -1090,7 +1094,8 @@ def test_the_merged_view_is_kept_per_reading_and_part():
     m1 = routes._merged(st, r1, v1, off)
     m2 = routes._merged(st, r2, v2, off)
     assert [r["id"] for r in m1["b2c"]["rows"]] == [r["id"] for r in v1["b2c"]["rows"]]
-    assert [r["id"] for r in m2["b2c"]["rows"]] == [r["id"] for r in v2["b2c"]["rows"]] != [r["id"] for r in m1["b2c"]["rows"]]
+    ids2 = [r["id"] for r in m2["b2c"]["rows"]]
+    assert ids2 == [r["id"] for r in v2["b2c"]["rows"]] != [r["id"] for r in m1["b2c"]["rows"]]
     assert routes._merged(st, r2, v2, off) is m2
 
 
