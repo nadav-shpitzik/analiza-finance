@@ -39,6 +39,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import config
+# A1's rule for a whole copy is the books copy's own since D3 (app/books/store.py `not_ready`): the desk judges by it too
+from .books.store import NOT_READY as BOOKS_NOT_READY  # noqa: F401 - the name A1's code and tests know
+from .books.store import not_ready as books_not_ready
 from .desk.routes import health_block as desk_health
 from .desk.routes import router as desk_router
 from .wizcloud import READ_PATHS, Session, WizClient, WizError
@@ -603,31 +606,6 @@ def recon_status(request: Request) -> JSONResponse:
 ACTION_KINDS = ("b2c_receipt_date_fill",)
 VERIFY_MAX_IDS = 1000
 _ITEM_ID_RE = re.compile(r"\d{1,20}")
-
-
-BOOKS_NOT_READY = ("never_completed", "last_run_incomplete", "last_run_not_ok", "retry_waiting", "holes")
-
-
-def books_not_ready(snapshot: dict) -> Optional[str]:
-    """Why the books copy cannot be matched against now, or None (spec §6.1.5: only a whole copy changes what is
-    shown), judged on the very snapshot the rule matches (BooksStore.matching_snapshot): no run ever completed; the
-    last finished run did not (cut short, crashed, or a read failed), or was not ok (with `canary` no "not found" was
-    trusted, so a deleted document would still be matched - second review 23.11); ids wait in books_retry; or a series
-    of the documents read has a hole (review 23.11: 'ever completed' let a copy cut short since then be matched)."""
-    from .books.store import summarize_series
-
-    if not snapshot["ever_completed"]:
-        return "never_completed"
-    if not snapshot["last_run_complete"]:
-        return "last_run_incomplete"
-    if not snapshot["last_run_ok"]:
-        return "last_run_not_ok"
-    if snapshot["retry_waiting"]:
-        return "retry_waiting"
-    held = [(d["doc_type"], d["doc_number"], d["status"]) for d in snapshot["documents"]]
-    if any(x["holes"] for x in summarize_series(held)):
-        return "holes"
-    return None
 
 
 def _action_input(payload: Any, verify: bool) -> tuple:

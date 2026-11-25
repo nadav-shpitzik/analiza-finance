@@ -207,6 +207,12 @@ class _Groups:
             self.parent[rb] = ra
 
 
+def _group_sums(amounts: list, docs: dict) -> tuple:
+    """(what the group's rows say was paid, what its documents total including VAT): the two sums the verdict compares,
+    and the two the desk's mark says (D3, "בשורה X, בחשבשבת Y")."""
+    return sum(amounts, Decimal(0)), sum((_as_money(d["total_incl"]) for d in docs.values()), Decimal(0))
+
+
 def _group_verdict(amounts: list, docs: dict) -> tuple:
     """(bucket or None, the day) for a group whose every row resolved, in the order of BUCKETS: a document not found,
     the window (FR-7: never a gap, whatever the sums), the shape, the sum, then the day."""
@@ -217,8 +223,7 @@ def _group_verdict(amounts: list, docs: dict) -> tuple:
         return "out_of_window", None
     if len(amounts) > 1 and len(docs) > 1:
         return "group_tangled", None
-    paid = sum(amounts, Decimal(0))
-    total = sum((_as_money(d["total_incl"]) for d in docs.values()), Decimal(0))
+    paid, total = _group_sums(amounts, docs)
     diff = abs(paid - total)
     if diff > TOLERANCE_PER_DOC * len(docs):
         return ("rounding_band" if diff <= total * ROUNDING_BAND else "amount_mismatch"), None
@@ -231,14 +236,19 @@ def _group_verdict(amounts: list, docs: dict) -> tuple:
 
 def analyse(rows: list, documents: Iterable[dict]) -> dict:
     """Every Student Charge row in one bucket, with the day the books give where they give one. Returns
-    {"rows": {item_id: {"bucket", "books_day", "current", "documents"}}, "counts": {bucket: n}}."""
+    {"rows": {item_id: {"bucket", "books_day", "current", "documents", "refused", "group"}}, "counts": {bucket: n}}.
+
+    What decided a row, for whoever says it (the desk's marks, D3): `refused`, each number of the row that failed on its
+    own, with its bucket, in the order typed; `group`, for a row judged with its group, the group's rows, its documents,
+    and the two sums the verdict compared (`_group_sums`) - one dict, shared by the group's rows. Neither changes a bucket."""
     by_number = index_documents(documents)
     out: dict = {}
     pending: list = []  # rows whose own numbers and amount are fine, to be judged by their group
     loose: dict = {}  # an unreadable cell's digit runs: never resolved, but they hold the documents they may name
     for row in rows:
         item_id = str(row.get("id"))
-        entry = {"bucket": None, "books_day": None, "current": str(row.get(COLUMN) or "").strip(), "documents": []}
+        entry = {"bucket": None, "books_day": None, "current": str(row.get(COLUMN) or "").strip(), "documents": [],
+                 "refused": [], "group": None}
         out[item_id] = entry
         if row.get("state", "active") != "active":
             entry["bucket"] = "not_active"
@@ -257,6 +267,7 @@ def analyse(rows: list, documents: Iterable[dict]) -> dict:
             bucket, doc = _resolve(number, by_number)
             if bucket is not None:
                 problems.append(bucket)
+                entry["refused"].append((number, bucket))
             else:
                 resolved.append(doc)
         if problems:  # the first in BUCKETS, whatever order the numbers were typed in (review 23.11)
@@ -294,10 +305,14 @@ def analyse(rows: list, documents: Iterable[dict]) -> dict:
         for i in candidates:
             for doc in judged[i][2]:
                 docs[str(int(str(doc["doc_number"])))] = doc
-        bucket, day = _group_verdict([judged[i][1] for i in candidates], docs)
+        amounts = [judged[i][1] for i in candidates]
+        bucket, day = _group_verdict(amounts, docs)
+        paid, total = _group_sums(amounts, docs)
+        group = {"rows": list(candidates), "documents": sorted(docs, key=int), "paid": paid, "total": total}
         for i in candidates:
             out[i]["bucket"] = bucket
             out[i]["books_day"] = day.isoformat() if day else None
+            out[i]["group"] = group
         if bucket is not None:
             continue
         for i in candidates:

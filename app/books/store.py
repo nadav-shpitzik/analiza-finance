@@ -18,6 +18,8 @@ from .doctypes import DRAFT_STATUS, INFERRED, VALID_STATUS, role
 from .parse import DOCUMENT_COLUMNS, LINE_COLUMNS, line_key
 
 CONNECT_TIMEOUT_S = 10
+# the desk (D3) asks inside a person's request: a database that does not answer is said within seconds, not ten
+DESK_CONNECT_TIMEOUT_S = 3
 STATEMENT_TIMEOUT = "15s"
 # What the writes name, per table. app/migrate.py checks the live schema against it.
 BOOKS_TABLES = {
@@ -82,11 +84,11 @@ class BooksStore:
     def __repr__(self) -> str:
         return "BooksStore()"
 
-    def _connect(self, autocommit: bool = True):
+    def _connect(self, autocommit: bool = True, connect_timeout_s: int = CONNECT_TIMEOUT_S):
         import psycopg
 
         try:
-            return psycopg.connect(self._url, autocommit=autocommit, connect_timeout=CONNECT_TIMEOUT_S)
+            return psycopg.connect(self._url, autocommit=autocommit, connect_timeout=connect_timeout_s)
         except psycopg.Error:
             raise
         except Exception as exc:  # noqa: BLE001 - the class only: the text can carry the URL
@@ -446,22 +448,33 @@ class BooksStore:
         document's number, type, status, day and total, and whether it answered 'not found'; whether a run ever
         completed, and whether the last finished one did and was ok (a run in progress is not judged); and how many
         ids wait in books_retry. Never a name, a card or a text field."""
-        with _guard(), self._conn.transaction():
-            self._conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            rows = self._conn.execute(
-                "SELECT stock_id, doc_type, doc_number, status, value_date, total_incl, missing_since IS NOT NULL "
-                "FROM books_documents WHERE company = %s AND gone_at IS NULL ORDER BY stock_id", (company,)).fetchall()
-            waiting = self._conn.execute("SELECT count(*) FROM books_retry WHERE company = %s", (company,)).fetchone()[0]
-            last = self._conn.execute(
-                "SELECT complete, ok, reasons FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL "
-                "ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
-            ever = self._conn.execute(
-                "SELECT EXISTS (SELECT 1 FROM books_sync_runs WHERE company = %s AND complete)", (company,)).fetchone()[0]
-        documents = [{"stock_id": r[0], "doc_type": r[1], "doc_number": r[2], "status": r[3], "value_date": r[4],
-                      "total_incl": r[5], "missing": bool(r[6])} for r in rows]
-        return {"documents": documents, "retry_waiting": waiting, "last_run_complete": bool(last and last[0]),
-                "last_run_ok": bool(last and last[1]), "last_run_reasons": list(last[2] or []) if last else [],
-                "ever_completed": bool(ever)}
+        return _snapshot(self._conn, company, wide=False)
+
+    def desk_snapshot(self, company: str, connect_timeout_s: int = DESK_CONNECT_TIMEOUT_S) -> dict:
+        """What the desk shows of the books (backlog 0301 D3): matching_snapshot's documents and conditions, in the same ONE
+        repeatable-read transaction, and with each document also its card (`account_key`, `account_name` - cleaned of ID
+        numbers when it was written, spec §3.4) and its `total_excl`; and the last finished run's id and time, which the
+        desk names its copy by. On a connection of its own, outside a run's lock: the desk reads, it never waits for a
+        tick. Nothing of it is logged or returned anywhere but the desk's gated answer (CLAUDE.md rule 4)."""
+        with _guard():
+            conn = self._connect(autocommit=True, connect_timeout_s=connect_timeout_s)
+            try:
+                return _snapshot(conn, company, wide=True)
+            finally:
+                conn.close()
+
+    def last_finished_run(self, company: str, connect_timeout_s: int = DESK_CONNECT_TIMEOUT_S) -> Optional[tuple]:
+        """(run_id, finished_at) of the last finished run of this company, or None when none finished: the cheap question
+        the desk asks before it reads the copy again (D3). On a connection of its own, like desk_snapshot."""
+        with _guard():
+            conn = self._connect(autocommit=True, connect_timeout_s=connect_timeout_s)
+            try:
+                row = conn.execute(
+                    "SELECT run_id, finished_at FROM books_sync_runs WHERE company = %s AND finished_at IS NOT NULL "
+                    "ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
+            finally:
+                conn.close()
+        return None if row is None else (row[0], row[1])
 
     def series(self, company: str) -> list:
         """Per document type: valid documents held, first and last number, and the numbers missing
@@ -472,6 +485,65 @@ class BooksStore:
                 (company,),
             ).fetchall()
         return summarize_series(rows)
+
+
+def _snapshot(conn, company: str, wide: bool) -> dict:
+    """matching_snapshot's one repeatable-read transaction on `conn`. `wide` (the desk, D3) adds each document's card and
+    total before VAT, and the last finished run's id and time; without it the answer is A1's, key for key."""
+    cols = "stock_id, doc_type, doc_number, status, value_date, total_incl, missing_since IS NOT NULL"
+    if wide:
+        cols += ", total_excl, account_key, account_name"
+    with _guard(), conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        if wide:  # a person's request waits for it: bounded, as a save is
+            conn.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+        rows = conn.execute(
+            f"SELECT {cols} FROM books_documents WHERE company = %s AND gone_at IS NULL ORDER BY stock_id",
+            (company,)).fetchall()
+        waiting = conn.execute("SELECT count(*) FROM books_retry WHERE company = %s", (company,)).fetchone()[0]
+        last = conn.execute(
+            "SELECT complete, ok, reasons, run_id, finished_at FROM books_sync_runs WHERE company = %s "
+            "AND finished_at IS NOT NULL ORDER BY run_id DESC LIMIT 1", (company,)).fetchone()
+        ever = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM books_sync_runs WHERE company = %s AND complete)", (company,)).fetchone()[0]
+    documents = []
+    for r in rows:
+        doc = {"stock_id": r[0], "doc_type": r[1], "doc_number": r[2], "status": r[3], "value_date": r[4],
+               "total_incl": r[5], "missing": bool(r[6])}
+        if wide:
+            doc.update(total_excl=r[7], account_key=r[8], account_name=r[9])
+        documents.append(doc)
+    out = {"documents": documents, "retry_waiting": waiting, "last_run_complete": bool(last and last[0]),
+           "last_run_ok": bool(last and last[1]), "last_run_reasons": list(last[2] or []) if last else [],
+           "ever_completed": bool(ever)}
+    if wide:
+        out.update(last_run_id=last[3] if last else None, last_run_finished_at=last[4] if last else None)
+    return out
+
+
+# Why a copy cannot be matched against now (spec §6.1.5: only a whole copy changes what is shown), in this order. A1's plan
+# (app/main.py) and the desk (app/desk/books.py, D3) judge by this one rule.
+NOT_READY = ("never_completed", "last_run_incomplete", "last_run_not_ok", "retry_waiting", "holes")
+
+
+def not_ready(snapshot: dict) -> Optional[str]:
+    """Why the books copy cannot be matched against now, or None, judged on the very snapshot the rule matches
+    (matching_snapshot, desk_snapshot): no run ever completed; the last finished run did not (cut short, crashed, or a read
+    failed), or was not ok (with `canary` no "not found" was trusted, so a deleted document would still be matched - second
+    review 23.11); ids wait in books_retry; or a series of the documents read has a hole (review 23.11: 'ever completed'
+    let a copy cut short since then be matched)."""
+    if not snapshot["ever_completed"]:
+        return "never_completed"
+    if not snapshot["last_run_complete"]:
+        return "last_run_incomplete"
+    if not snapshot["last_run_ok"]:
+        return "last_run_not_ok"
+    if snapshot["retry_waiting"]:
+        return "retry_waiting"
+    held = [(d["doc_type"], d["doc_number"], d["status"]) for d in snapshot["documents"]]
+    if any(x["holes"] for x in summarize_series(held)):
+        return "holes"
+    return None
 
 
 def record_crash(url: str, company: str, trigger: str, note: str, connect_timeout_s: int = 3) -> Optional[bool]:
