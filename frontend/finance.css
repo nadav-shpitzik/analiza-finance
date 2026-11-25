@@ -390,6 +390,14 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-batch-plan ul, #screen-finance .fin-batch-done ul { max-height: 220px; overflow: auto; }
 #screen-finance .fin-batch-done p { margin: 6px 0 2px; font-size: 14px; }
 #screen-finance .fin-batch-done ul { margin: 0; padding-inline-start: 18px; font-size: 14px; }
+/* QA2 3 (24.11): a batch - a row's own or the bar's - its reading, its one confirmation, its progress and its report float
+   beside what was pressed, over the list and never in it, so no row moves when it opens or closes (finance.js placePop
+   places it in the view, and the focus on it scrolls nothing). Opaque, over the rows; the bar's place is held, empty, while
+   the batch's rows offer no box any more */
+#screen-finance .fin-batch.fin-pop { position: fixed; z-index: 20; top: 8px; left: 8px; width: min(520px, calc(100% - 16px));
+  max-height: calc(100% - 16px); overflow: auto; margin: 0; padding: 10px 14px; border: 1px solid var(--fin-focus);
+  border-radius: 8px; background: var(--fin-panel); font-size: 14px; box-shadow: 0 8px 24px rgba(15, 20, 30, .2); }
+#screen-finance .fin-batchbar.fin-hold { visibility: hidden; }
 /* "אין תנאי תשלום" that leads to the company's ledger: the same chip, pressable, underlined lightly as the desk's links are */
 #screen-finance button.fin-chiplink { border: 0; font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }

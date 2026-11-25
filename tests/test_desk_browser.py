@@ -702,3 +702,83 @@ def test_what_is_typed_into_the_search_stays_when_an_answer_lands_before_it_sett
     landed, settled = got["steps"]["landed"], got["steps"]["settled"]
     assert landed["value"] == "תלמיד/ה 2" and landed["refreshing"] is False and not landed["focused"], landed
     assert settled["value"] == "תלמיד/ה 2" and settled["line"], settled
+
+
+def many_receipts(n: int = 16) -> dict:
+    """The hand-made view with n more payments waiting for their receipt: the list "שולם, שליחת קבלה: טרם" longer than the
+    view, as Chava's 21 were."""
+    v = view()
+    for i in range(n):
+        v["b2c"]["rows"].append(sc_row(str(5000 + i), "תלמיד/ה לדוגמה %d" % i, "receipt_pending", invoice="300%02d" % i,
+                                       receipt="טרם", receipt_idx="0", money_in="5000", paid_typed="5000", net="5000",
+                                       actions=["receipt_sent"]))
+    return with_counts(v)
+
+
+def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_closes(serve):
+    """QA2 3 (24.11): "the confirmation screen pushes the table down, and the mouse stays over the button of another row". It
+    took the bar's place above the table, taller than it - every row 69 pixels lower - and with the list scrolled down the
+    focus on it scrolled the page up to it, about 550 pixels. It floats now beside what was pressed: no row moves when it
+    opens or closes, at the list's top or scrolled down, for a row's own button or the bar's; the page does not scroll;
+    the box is in the view and never over what was pressed, so the pointer is not on "כתיבה"; the focus is on the box."""
+    base, _log = serve(many_receipts())
+    store = {"5093448677": {str(5000 + i): {"__name": "תלמיד/ה לדוגמה %d" % i,
+                                            "color_mm4cq1hw": {"text": "טרם", "index": 0, "label": "טרם"}} for i in range(16)}}
+    labels = {"5093448677": {"color_mm4cq1hw": {"0": "טרם", "1": "יצאה", "2": "לא רלוונטי"}}}
+    got = qa_visit(r"""
+  await page.click('[data-bstate="receipt_pending"]');
+  await page.waitForSelector('[data-row-act="sc:5000:receipt_sent"]');
+  const rows = () => page.evaluate(() => [...document.querySelectorAll("tr[data-row]")].map((r) => [r.dataset.row,
+    Math.round(r.getBoundingClientRect().top)]));
+  const center = (sel) => page.$eval(sel, (el) => { const b = el.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+  /* the box against what was pressed and the pointer that pressed, the page's scroll, and what has the focus */
+  const box = (pressed, at) => page.evaluate(([pressed, at]) => {
+    const pop = document.querySelector(".fin-batch-plan"), p = pop.getBoundingClientRect();
+    const what = document.querySelector(pressed), r = what && what.getBoundingClientRect();
+    const go = pop.querySelector("[data-batch-go]").getBoundingClientRect();
+    return { y: Math.round(window.scrollY), focus: document.activeElement === pop, inView: p.top >= 0 && p.bottom <= window.innerHeight,
+      clear: !!r && (p.bottom <= r.top || p.top >= r.bottom),
+      onGo: at[0] >= go.left && at[0] <= go.right && at[1] >= go.top && at[1] <= go.bottom, text: pop.innerText };
+  }, [pressed, at]);
+  const press = async (sel) => {
+    const spot = await center(sel);
+    await page.mouse.click(spot[0], spot[1]);
+    await page.waitForSelector(".fin-batch-plan [data-batch-go]");
+    return spot;
+  };
+  const close = async () => {
+    await page.click('.fin-batch-plan [data-batch-close="1"]');
+    await page.waitForSelector(".fin-batch-plan", { state: "detached" });
+  };
+  for (const [name, y, row] of [["top", 0, "5001"], ["scrolled", 700, "5010"]]) {
+    await page.evaluate((y) => window.scrollTo(0, y), y);
+    await page.waitForTimeout(100);
+    const before = await rows(), spot = await press('[data-row-act="sc:' + row + ':receipt_sent"]');
+    out.steps[name] = { before: before, open: await rows(), box: await box('tr[data-row="' + row + '"]', spot) };
+    await close();
+    out.steps[name].closed = await rows();
+    out.steps[name].y = Math.round(await page.evaluate(() => window.scrollY));
+  }
+  /* the bar's own: two rows picked, its button pressed */
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
+  await page.click('[data-pick="sc:5000"]');
+  await page.click('[data-pick="sc:5001"]');
+  const before = await rows(), spot = await press('[data-batch="receipt_sent"]');
+  out.steps.bar = { before: before, open: await rows(), box: await box(".fin-batchbar", spot) };
+  await close();
+  out.steps.bar.closed = await rows();
+  out.steps.bar.y = Math.round(await page.evaluate(() => window.scrollY));
+""", base, fake_sdk(store, labels), sizes=((1280, 748),))
+    assert got["errors"] == []
+    steps = got["steps"]
+    for name, y in (("top", 0), ("scrolled", 700), ("bar", 0)):
+        step, box = steps[name], steps[name]["box"]
+        # every row where it was, while the confirmation is open and after it closed; the page where it was
+        assert step["open"] == step["before"] and step["closed"] == step["before"], (name, step["before"][:3], step["open"][:3])
+        assert box["y"] == y and step["y"] == y, (name, box["y"], step["y"])
+        # the box in the view, clear of what was pressed, not under the pointer's "כתיבה", and the focus on it
+        assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"], (name, box)
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה לדוגמה 1", בשמך:' in steps["top"]["box"]["text"]
+    assert 'ייכתב במאנדיי בשורה "תלמיד/ה לדוגמה 10", בשמך:' in steps["scrolled"]["box"]["text"]
+    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in steps["bar"]["box"]["text"]

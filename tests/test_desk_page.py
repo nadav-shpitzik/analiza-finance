@@ -1176,6 +1176,25 @@ def test_every_row_picks_at_most_one_batchs_worth_and_a_pick_past_it_is_said():
     assert got["steps"][3]["picked"] == []                       # every row it can was picked: the second press lets go
 
 
+def test_a_batch_floats_beside_the_bar_which_keeps_its_place_while_it_is_on_the_screen():
+    """QA2 3 (24.11): the batch's box took the bar's place above the table, taller than it, and every row moved down. The bar
+    is drawn in its place while a batch is on the screen - picked rows and all - and the batch's box floats (fin-pop, placed
+    in the view by placePop; tests/test_desk_browser.py measures that no row moves). Where the batch's rows offer no box any
+    more (written), the bar's place is held, empty, until the report closes; then the list has no bar, as before."""
+    receipts = {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}
+    got = drive(steps=[{"show": receipts}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"batch": "receipt_sent"}]}, {"click": [{"batchGo": "1"}]}, {"click": [{"batchClose": "1"}]}],
+                monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
+    confirm, done, closed = (s["html"] for s in got["steps"][3:])
+    assert (confirm.index("fin-listhead") < confirm.index('class="fin-batch fin-batchbar" role="group"') <
+            confirm.index('class="fin-batch fin-act-plan fin-batch-plan fin-pop"') < confirm.index('<table class="fin-t">'))
+    assert "נבחרו 2 שורות" in confirm and confirm.count('class="fin-batch') == 2
+    # written, both rows offer no box: the bar's place held, empty and unread, beside the floating report
+    assert '<div class="fin-batch fin-batchbar idle fin-hold" aria-hidden="true"></div>' in done
+    assert 'class="fin-batch fin-batch-done fin-pop"' in done
+    assert "fin-batchbar" not in closed and "fin-pop" not in closed
+
+
 CARD_NOTE = ("נכתב במאנדיי, כפי שמוצג כאן. כרטיס הפריט בלשונית הזאת עשוי להציג את הערך שלפני הכתיבה, עד שהדף ייטען "
              "מחדש בדפדפן.")
 

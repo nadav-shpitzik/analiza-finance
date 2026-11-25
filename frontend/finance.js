@@ -111,6 +111,15 @@
  *      in this visit (WROTE, kept for the visit as WRITTEN is not) says so, once for that row, in a flash that outlasts
  *      the card closing (cardNote, CARD_NOTE_MS); never with the write itself, nor outside monday, where the link opens
  *      the item's page in a new tab.
+ * QA2 3 "The confirmation screen pushes the table down, and the mouse stays over the button of another row." A batch's box
+ *      (a row's own button, or the bar's) took the bar's place above the table, taller than it: every row 69 pixels lower
+ *      at 1280x748, and with the list scrolled down the focus on it scrolled the page up to it, about 550 pixels - QA 1's bar
+ *      held one height only while nothing was confirmed. Now the bar keeps its place (barHtml; held, empty, while the
+ *      batch's rows offer no box any more), and the batch - its reading, its one confirmation, its progress, its report -
+ *      floats in the view beside what was pressed (fin-pop, batchBox): above the row, or the bar, where the view has room,
+ *      below it otherwise, never over it, so the pointer that pressed is never on "כתיבה"; it follows a scroll and a resize
+ *      (placePop). The focus still goes to its box, never to "כתיבה", and scrolls nothing. A row's details' own plan is as
+ *      it was: under its button, which does not move.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1753,7 +1762,8 @@
      written from here (its new value waits for a reading) */
   function pickable(r) { return CAN.state !== "no" && !r.written && !!rowAction(r); }
   function pickedIn(rows) { return rows.filter(function (r) { return PICKED[rowKey(r)] && pickable(r); }); }
-  function startBatch(actionKey, keys) {
+  /* `from`: what was pressed - "row", the row's own button, or "bar", the bar's - beside which the batch floats (QA2 3) */
+  function startBatch(actionKey, keys, from) {
     if (CAN.state === "no" || busy()) { return; }
     var items = [], a = null;
     keys.forEach(function (k) {
@@ -1765,7 +1775,8 @@
     if (!items.length) { return; }
     /* one thing on the screen at a time: a single action's plan, not being written, gives way */
     if (ACT && !busyAct()) { ACT = null; }
-    var batch = BATCH = { action: actionKey, a: a, items: items, phase: "reading", at: 0, total: 0, error: "" };
+    var batch = BATCH = { action: actionKey, a: a, items: items, phase: "reading", at: 0, total: 0, error: "",
+      from: from === "row" ? "row" : "bar" };
     use("act", { action: actionKey, phase: "batch_start" });
     redraw();
     var w = a.steps[0][0];
@@ -1802,10 +1813,11 @@
     var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
     batch.phase = n ? "confirm" : "nothing";
     use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
-    /* the confirmation is read out where it appears: focus on the box, never on "כתיבה" (a key held down must not write) */
+    /* the confirmation is read out where it appears: focus on the box, never on "כתיבה" (a key held down must not write).
+       It floats in the view (QA2 3), so the focus scrolls nothing */
     landed(function () {
       var box = root && root.querySelector ? root.querySelector(".fin-batch-plan") : null;
-      if (box && box.focus) { box.focus(); }
+      if (box && box.focus) { box.focus({ preventScroll: true }); }
     });
   }
   function failBatch(batch, e) {
@@ -1876,59 +1888,71 @@
   function batchLine(it, words) {
     return "<li><b>" + esc(it.name) + "</b> · " + esc(words) + "</li>";
   }
+  /* QA2 3 (24.11): "the confirmation screen pushes the table down, and the mouse stays over the button of another row". The
+     batch took the bar's place above the table, taller than it (every row 69 pixels lower), and with the list scrolled down
+     the focus on its box scrolled the page up to it (about 550 pixels). Now the bar keeps its place, and the batch - its
+     reading, its one confirmation, its progress, its report - floats beside what was pressed (fin-pop, placePop): above the
+     row, or the bar, where the view has room, below it otherwise, never over it. No row moves when it opens or closes */
   function batchHtml(rows) {
-    var b = BATCH, close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
-    if (b) {
-      var w = b.a.steps[0][0];
-      if (b.phase === "reading") {
-        return "<div class=\"fin-batch\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
-          (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
-      }
-      if (b.phase === "failed") {
-        return "<div class=\"fin-batch\"><p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + " " + close + "</p>" +
-          (b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "") + "</div>";
-      }
-      var writes = b.items.filter(function (it) { return it.verdict === "write"; });
-      var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
-      var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
-      if (b.phase === "nothing") {
-        return "<div class=\"fin-batch fin-act-plan fin-batch-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
-          "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
-          "<div class=\"fin-act-go\">" + close + "</div></div>";
-      }
-      if (b.phase === "confirm") {
-        return "<div class=\"fin-batch fin-act-plan fin-batch-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
-          "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
-            : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
-            var l = it.plan.lines[0];
-            return batchLine(it, l.title + ": עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue("text", l.to));
-          }).join("") + "</ul>" + notWritten +
-          (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
-          "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
-          "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
-      }
-      if (b.phase === "writing") {
-        return "<div class=\"fin-batch\"><p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי" +
-          (b.total > 1 ? ", שורה " + NF.format(b.at) + " מתוך " + NF.format(b.total) : "") + "...</p></div>";
-      }
-      /* done: every row of the batch, by what happened to it */
-      var done = writes.filter(function (it) { return it.result === "written"; });
-      var failed = writes.filter(function (it) { return it.result === "failed"; });
-      var later = writes.filter(function (it) { return it.result === "skipped"; });
-      var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
-        ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן." : "לא נכתב כלום.";
-      return "<div class=\"fin-batch fin-batch-done\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
-        esc(head) + " " + close + "</p>" +
-        (done.length ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
-          done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
-        (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
-        (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
-          "</ul>" : "") + "</div>";
+    return barHtml(rows) + (BATCH ? batchBox(BATCH) : "");
+  }
+  function batchBox(b) {
+    var close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
+    var w = b.a.steps[0][0];
+    if (b.phase === "reading") {
+      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
+        (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
     }
-    /* no batch: the rows picked in this list, and one button per action they offer. QA 1 (24.11): wherever the list
-       offers a box, the bar holds its place - a quiet line when nothing is picked, which also says what the box is for -
-       so a pick never moves the rows under the next click (the second row's box was unticking the first) */
-    if (!rows.some(pickable)) { return ""; }
+    if (b.phase === "failed") {
+      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.error) + " " + close + "</p>" +
+        (b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "") + "</div>";
+    }
+    var writes = b.items.filter(function (it) { return it.verdict === "write"; });
+    var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
+    var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
+    if (b.phase === "nothing") {
+      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
+        "<div class=\"fin-act-go\">" + close + "</div></div>";
+    }
+    if (b.phase === "confirm") {
+      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
+          : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
+          var l = it.plan.lines[0];
+          return batchLine(it, l.title + ": עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue("text", l.to));
+        }).join("") + "</ul>" + notWritten +
+        (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
+        "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
+        "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
+    }
+    if (b.phase === "writing") {
+      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי" +
+        (b.total > 1 ? ", שורה " + NF.format(b.at) + " מתוך " + NF.format(b.total) : "") + "...</p></div>";
+    }
+    /* done: every row of the batch, by what happened to it */
+    var done = writes.filter(function (it) { return it.result === "written"; });
+    var failed = writes.filter(function (it) { return it.result === "failed"; });
+    var later = writes.filter(function (it) { return it.result === "skipped"; });
+    var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
+      ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן." : "לא נכתב כלום.";
+    return "<div class=\"fin-batch fin-batch-done fin-pop\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
+      esc(head) + " " + close + "</p>" +
+      (done.length ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
+        done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
+      (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
+      (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
+        "</ul>" : "") + "</div>";
+  }
+  /* the bar: the rows picked in this list, and one button per action they offer. QA 1 (24.11): wherever the list offers a
+     box, the bar holds its place - a quiet line when nothing is picked, which also says what the box is for - so a pick
+     never moves the rows under the next click (the second row's box was unticking the first). While a batch is on the
+     screen the bar's place is held even where no row offers a box any more (its rows written, the person no longer
+     allowed), empty, so the list does not move under the batch's report (QA2 3) */
+  function barHtml(rows) {
+    if (!rows.some(pickable)) {
+      return BATCH ? "<div class=\"fin-batch fin-batchbar idle fin-hold\" aria-hidden=\"true\"></div>" : "";
+    }
     var picked = pickedIn(rows);
     if (!picked.length) {
       return "<div class=\"fin-batch fin-batchbar idle\" role=\"group\" aria-label=\"השורות שנבחרו\"><span>" + esc(PICK_HINT) +
@@ -2647,7 +2671,49 @@
   function onResize() {
     if (refit || !VIEW) { return; }
     refit = true;
-    var again = function () { refit = false; fitFrames(); };
+    var again = function () { refit = false; fitFrames(); placePop(); };
+    if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
+  }
+  /* QA2 3 (24.11): a batch's box (fin-pop) floats in the view beside what was pressed - the row whose button it was, or the
+     bar - and follows it: placed after every drawing, on a scroll (the page's, or a table frame's) and on a resize. Above
+     it where the view has room, below it otherwise; where neither side holds it, on the side with more, cut to that
+     height (its own scroll). Never over what was pressed, so the pointer that pressed is never on "כתיבה". When the row
+     has left the list (a reading moved it), beside the bar */
+  var POP_GAP = 6, POP_EDGE = 8;
+  function popAnchor(pop) {
+    var panel = pop.closest ? pop.closest(".fin-panel") : null, b = BATCH, v = null, h = null;
+    if (!panel || !b) { return null; }
+    var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
+    if (b.from === "row") {
+      v = panel.querySelector("tr[data-row=\"" + quote(b.items[0].row.id) + "\"]");
+      h = panel.querySelector("[data-row-act=\"" + quote(b.items[0].key + ":" + b.action) + "\"]");
+    }
+    if (!v) {
+      v = panel.querySelector(".fin-batchbar");
+      h = v && b.from === "bar" ? v.querySelector("[data-batch=\"" + quote(b.action) + "\"]") : null;
+    }
+    v = v || panel.querySelector(".fin-listhead");
+    return v ? { v: v, h: h || v } : null;
+  }
+  function placePop() {
+    var pop = root && root.querySelector ? root.querySelector(".fin-pop") : null;
+    if (!pop || !pop.getBoundingClientRect) { return; }
+    var at = popAnchor(pop), vh = window.innerHeight, vw = document.documentElement.clientWidth;
+    pop.style.maxHeight = "";
+    var h = pop.offsetHeight, w = pop.offsetWidth;
+    if (!at) { pop.style.top = POP_EDGE + "px"; pop.style.left = Math.round((vw - w) / 2) + "px"; return; }
+    var a = at.v.getBoundingClientRect(), x = at.h.getBoundingClientRect();
+    var above = a.top - POP_GAP - POP_EDGE, below = vh - POP_EDGE - a.bottom - POP_GAP;
+    var up = h <= above || (h > below && above >= below);
+    if (h > (up ? above : below)) { h = Math.max(up ? above : below, 60); pop.style.maxHeight = h + "px"; }
+    pop.style.top = Math.round(up ? a.top - POP_GAP - h : a.bottom + POP_GAP) + "px";
+    pop.style.left = Math.round(Math.min(Math.max(POP_EDGE, x.left + x.width / 2 - w / 2), vw - w - POP_EDGE)) + "px";
+  }
+  var follow = false;
+  function onScroll() {
+    if (follow || !BATCH) { return; }
+    follow = true;
+    var again = function () { follow = false; placePop(); };
     if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
   }
   function render() {
@@ -2667,6 +2733,7 @@
       var at = scrolls[el.getAttribute("data-list")];
       if (at) { el.scrollTop = at[0]; el.scrollLeft = at[1]; }
     });
+    placePop();
     var back = keep && root.querySelector(keep);
     if (back) {
       back.focus({ preventScroll: true });
@@ -2765,6 +2832,7 @@
     render();
     if (scroller) { scroller.scrollTop = top; }
     window.scrollTo(0, winTop);
+    placePop();                                 /* where the page is now held (QA2 3) */
     if (then) { then(); }
   }
   /* QA 24.11: "a click on a tile was not taken" while the screen updated. A press is a click only when what was pressed is
@@ -2909,10 +2977,10 @@
     }
     if (el.dataset.rowAct) {
       var at = el.dataset.rowAct.lastIndexOf(":");
-      startBatch(el.dataset.rowAct.slice(at + 1), [el.dataset.rowAct.slice(0, at)]); return;
+      startBatch(el.dataset.rowAct.slice(at + 1), [el.dataset.rowAct.slice(0, at)], "row"); return;
     }
     if (el.dataset.batch) {
-      startBatch(el.dataset.batch, pickedIn(scRows()).map(rowKey)); return;
+      startBatch(el.dataset.batch, pickedIn(scRows()).map(rowKey), "bar"); return;
     }
     if (el.dataset.batchGo) { confirmBatch(); return; }
     if (el.dataset.batchClose) {
@@ -3099,6 +3167,8 @@
     window.addEventListener("focus", onFocus);
     /* monday's sidebar opened or closed, the window resized: whether each table still fits its frame (QA 9) */
     window.addEventListener("resize", onResize);
+    /* a scroll of the page or of a table's frame: a batch's floating box follows what was pressed (QA2 3) */
+    window.addEventListener("scroll", onScroll, true);
     /* round 3, slice 3: whether this person may write from here (monday's context) - asked beside the first reading, never
        in its way: desk.js shows the desk when this promise settles, and monday may be slow to answer, or not answer */
     var first = load(false);
