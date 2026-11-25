@@ -5,7 +5,9 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
 1. **A mark on a Student Charge row** (spec §6.1.1), from A1's own judgement of every row (app/recon/receipt_dates.py
    `analyse`, reused as it is - its buckets are the rules FR-C1, FR-3 and FR-4; nothing here judges a row again):
    - `books_ref_invalid`: the bucket `ref_not_in_books`, `ref_ambiguous` or `ref_not_an_invoice` - a number in
-     "אסמכתת חשבונית" that is no valid document; the details say which number and why;
+     "אסמכתת חשבונית" that is no valid document; the details say which number and why. **But a number past the last of its
+     series is not yet in the copy** (`not_yet_read`): the books are read every hour, and a document issued and cited
+     since is no gap - no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`);
    - `books_amount_differs`: `amount_mismatch` only (the rounding band is no mark) - "בשורה X, בחשבשבת Y", the group's two
      sums, including VAT;
    - `books_receipt_unpaid`: `status_not_money_in` when the group holds an invoice-receipt - the books say the money came
@@ -57,7 +59,7 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from ..books.doctypes import INFERRED, VALID_STATUS, role
-from ..books.store import BooksStoreError, not_ready
+from ..books.store import BooksStoreError, not_ready, summarize_series
 from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
 from ..recon.reading import Board, check_board
@@ -138,6 +140,9 @@ REF_WHY = {
     "ref_ambiguous": ("בשני מסמכים", "שני מסמכים תקפים בחשבשבת נושאים את המספר הזה"),
 }
 CANDIDATES_MAX = 10  # a common name shows its first ten rows, and how many more there are
+REF_BUCKETS = ("ref_not_in_books", "ref_ambiguous", "ref_not_an_invoice")
+# what a row's details say of a number it cites that is past the last of its series (`not_yet_read`)
+NOT_YET_SAID = "עוד לא בהעתק של הספרים"
 
 # The Accounts board's keys: read whole with one column, kept this long, and after a failed read not tried again sooner
 KEYS_TTL_S = 600
@@ -259,6 +264,28 @@ def card_sides(documents: list, keys: dict) -> dict:
 
 
 # ---- the marks -------------------------------------------------------------------------------------------------------
+def series_ends(documents: list) -> list:
+    """[(first, last)] of the copy's series of tax invoices and invoice-receipts, lowest first: their status-1 numbers by
+    the rule of the copy's own `series()` (app/books/store.py summarize_series)."""
+    held = [(d.get("doc_type"), d.get("doc_number"), d.get("status")) for d in documents]
+    return sorted((s["first"], s["last"]) for s in summarize_series(held)
+                  if s["role"] in LISTED_ROLES and s["first"] is not None)
+
+
+def not_yet_read(number: str, ends: list) -> bool:
+    """Whether a number no valid document holds is past the last number of its series - the series it would continue, the
+    one whose first number is the highest not above it: a document issued since the copy's last tick (the books are read
+    every hour), not yet in the copy. A number below every series is no such number."""
+    n = int(number)
+    lasts = [last for first, last in ends if first <= n]
+    return bool(lasts) and n > lasts[-1]
+
+
+def _not_yet(entry: dict, ends: list) -> list:
+    """The numbers of a row that no valid document holds and that are past the last of their series."""
+    return [n for n, b in entry.get("refused") or [] if b == "ref_not_in_books" and not_yet_read(n, ends)]
+
+
 def _flag_text(kind: str) -> str:
     """A mark's chip as the legend words it (view.LEGEND_FLAGS, the one place its words live), to be filled."""
     return next(t for k, t, _x in LEGEND_FLAGS["b2c"] if k == kind)
@@ -282,15 +309,20 @@ def _docs_said(numbers: list, by_number: dict) -> str:
     return ", ".join("%s %s" % (type_name((by_number.get(n) or [{}])[0].get("doc_type")), n) for n in numbers)
 
 
-def mark_of(entry: dict, row: dict, by_number: dict) -> Optional[dict]:
+def mark_of(entry: dict, row: dict, by_number: dict, ends: list = ()) -> Optional[dict]:
     """The mark A1's judgement of one row gives, or None: {"kind", "chip" (the chip's words, filled), "text" (the sentence
     the row's details and the Excel file say), "documents" (the numbers it is about)}. `row` is the view's row (its
-    status's label, by index)."""
+    status's label, by index); `ends`, the copy's series (`series_ends`): a number past the last of its series is not yet
+    in the copy, and no mark is given for it."""
     kind = MARK_OF_BUCKET.get(entry["bucket"])
     if kind == "books_ref_invalid":
-        why = [_ref_reason(n, b, by_number) for n, b in entry.get("refused") or []]
+        late = _not_yet(entry, ends)
+        refused = [(n, b) for n, b in entry.get("refused") or [] if n not in late]
+        if not refused:
+            return None
+        why = [_ref_reason(n, b, by_number) for n, b in refused]
         chip = _flag_text(kind).replace("{why}", "; ".join(w for w, _s in why))
-        return {"kind": kind, "chip": chip, "documents": [n for n, _b in entry.get("refused") or []],
+        return {"kind": kind, "chip": chip, "documents": [n for n, _b in refused],
                 "text": "%s: %s." % (_flag_text(kind).split(":")[0], "; ".join(x for _w, x in why))}
     group = entry.get("group")
     if kind is None or group is None:
@@ -327,17 +359,21 @@ def _dmy(iso: str) -> str:
     return "%s.%s.%s" % (iso[8:10], iso[5:7], iso[:4]) if len(iso) >= 10 else iso
 
 
-def marks_of(analysis: dict, rows_by_id: dict, by_number: dict) -> dict:
-    """{item id: [its marks]} for every row A1 judged into a bucket that gives one."""
-    out = {}
+def marks_of(analysis: dict, rows_by_id: dict, by_number: dict, ends: list = ()) -> tuple:
+    """({item id: [its marks]} for every row A1 judged into a bucket that gives one, {item id: the note of its details}
+    for every row that cites a number not yet in the copy)."""
+    marks, notes = {}, {}
     for item_id, entry in analysis["rows"].items():
         row = rows_by_id.get(item_id)
         if row is None or entry["bucket"] not in MARK_OF_BUCKET:
             continue
-        mark = mark_of(entry, row, by_number)
+        mark = mark_of(entry, row, by_number, ends)
         if mark is not None:
-            out[item_id] = [mark]
-    return out
+            marks[item_id] = [mark]
+        late = _not_yet(entry, ends) if entry["bucket"] in REF_BUCKETS else []
+        if late:
+            notes[item_id] = "%s: %s" % (", ".join(late), NOT_YET_SAID)
+    return marks, notes
 
 
 # ---- the documents with no charge ----------------------------------------------------------------------------------------
@@ -414,7 +450,7 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
         rows_by_id[r["id"]] = dict(r, paid_raw=raw.get(a1.AMOUNT_COLUMN))
     by_number = a1.index_documents(documents)
     analysis = a1.analyse(sc_raw, documents)
-    marks = marks_of(analysis, rows_by_id, by_number)
+    marks, notes = marks_of(analysis, rows_by_id, by_number, series_ends(documents))
 
     cited = cited_numbers(sc_raw, a1.REF_COLUMN) | cited_numbers(b2_raw, B2["invoice"])
     sides = card_sides(documents, keys)
@@ -445,7 +481,7 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
             e = _entry(d)
             e.update(why=why, why_text=UNCLEAR_WHY.get(why, ""))
             lists["unclear"].append(e)
-    return {"marks": marks, "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
+    return {"marks": marks, "notes": notes, "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
             "unclear": _newest(lists["unclear"]), "vouchers": vouchers, "places": places,
             "counts": dict(Counter(places.values())), "buckets": {i: e["bucket"] for i, e in analysis["rows"].items()}}
 
@@ -486,13 +522,14 @@ def _tasks_of(rows: list, months: list) -> int:
 def merge(view: dict, part: dict) -> dict:
     """The view with the part laid over it, for every reader (app/desk/view.py `visible_part` then removes what a reader
     may not see): the marks on their rows - each mark's kind added to the row's flags, so the page's column "מה לבדוק" and
-    the files' (view.row_reasons) say it in their order, and `books`, the marks' own words; a row's state is never touched -
+    the files' (view.row_reasons) say it in their order, and `books`, the marks' own words; `books_note` on a row that cites
+    a number not yet in the copy, said in its details and nowhere else; a row's state is never touched -
     `books_task` on a marked row of the era, which "לטיפול" holds; each period's count of "לטיפול" (`tasks`); the students'
     list in the students' tab, the companies' list and the vouchers' count in the companies' tab, the unclear documents
     under `books_unclear`, and the part's state under `books`."""
     out = dict(view)
     out["books"] = public(part)
-    marks = part.get("marks") or {}
+    marks, notes = part.get("marks") or {}, part.get("notes") or {}
     era = ERA_FROM.isoformat()
     if view.get("b2c") is not None:
         b2c = dict(view["b2c"])
@@ -503,6 +540,8 @@ def merge(view: dict, part: dict) -> dict:
                 r = dict(r, flags=list(r["flags"]) + [m["kind"] for m in mine if m["kind"] not in r["flags"]],
                          books=[{k: m[k] for k in ("kind", "chip", "text", "documents")} for m in mine],
                          books_task=bool(r.get("date")) and r["date"] >= era)
+            if notes.get(r["id"]):  # a number it cites is not yet in the copy: said in its details, no mark
+                r = dict(r, books_note=notes[r["id"]])
             rows.append(r)
         b2c["rows"] = rows
         b2c["periods"] = [dict(p, tasks=_tasks_of(rows, p.get("months") or [])) for p in b2c["periods"]]
@@ -626,7 +665,7 @@ class DeskBooks:
     def _made(self, state: str, reasons: list, base: Optional[dict] = None) -> dict:
         part = dict(base or {}, state=state, reasons=list(reasons))
         if base is None:
-            part.update(as_of=None, marks={}, students=[], companies=[], unclear=[], vouchers=0)
+            part.update(as_of=None, marks={}, notes={}, students=[], companies=[], unclear=[], vouchers=0)
         part["key"] = "%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "")
         return part
 

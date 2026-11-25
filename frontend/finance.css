@@ -421,3 +421,4 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-books-asof { margin: 6px 0 0; max-width: 760px; font-size: 13px; line-height: 1.5; }
 #screen-finance .fin-books .fin-cand + .fin-cand { margin-top: 3px; }
 #screen-finance table.fin-books-t td { vertical-align: top; }
+#screen-finance .fin-dx-books { margin: 10px 0 0; color: var(--fin-muted); font-size: 13px; }

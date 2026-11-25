@@ -192,7 +192,7 @@ def test_every_mark_is_a1s_bucket_and_every_other_bucket_gives_none():
     docs = [doc(62500), doc(62501), doc(62600), doc(62600), doc(70100, doc_type=3), doc(50400, doc_type=1, total="-4000"),
             doc(63109, total="4000"), doc(62800, total="3347.46"), doc(62502), doc(50401, doc_type=1),
             doc(62990, day="2025-12-28"), doc(62700, missing=True), doc(62510, total="10000")]
-    rows = [pay(1, "62500"), pay(2, "99999"), pay(3, "62600"), pay(4, "70100"), pay(5, "50400"), pay(6, "63109"),
+    rows = [pay(1, "62500"), pay(2, "10500"), pay(3, "62600"), pay(4, "70100"), pay(5, "50400"), pay(6, "63109"),
             pay(7, "63109"), pay(8, "62800", paid="3350"), pay(9, "62502", st="0"), pay(10, "50401", st="0"),
             pay(11, "62990"), pay(12, "62700"), pay(13, ""), pay(14, "62,5O1"), pay(15, "62510", paid="4000"),
             pay(16, "62510", paid="6000"), pay(17, "62501", paid="")]
@@ -215,20 +215,48 @@ def test_every_mark_is_a1s_bucket_and_every_other_bucket_gives_none():
 
 def test_books_ref_invalid_names_each_number_and_why():
     """FR-C1, FR-3, FR-4: not found, held by two valid documents, or not an invoice (its type); the chip says each in a
-    word, the row's details in a sentence. A draft's number is not a valid document (FR-2)."""
+    word, the row's details in a sentence. A draft's number is not a valid document (FR-2), here inside its series."""
     docs = [doc(62600), doc(62600), doc(70100, doc_type=3), doc(80500, doc_type=31), doc(40505, doc_type=78),
-            doc(50400, doc_type=1, total="-4000"), doc(62610, status=0)]
-    rows = [pay(1, "99999"), pay(2, "62600"), pay(3, "70100"), pay(4, "80500, 40505"), pay(5, "50400"), pay(6, "62610")]
+            doc(50400, doc_type=1, total="-4000"), doc(62610, status=0), doc(62611)]
+    rows = [pay(1, "40000"), pay(2, "62600"), pay(3, "70100"), pay(4, "80500, 40505"), pay(5, "50400"), pay(6, "62610")]
     part, _v, _r = run(rows, docs)
     head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
     got = {int(i) % 100: ms[0] for i, ms in part["marks"].items()}
     assert {n: m["chip"] for n, m in got.items()} == {
-        1: head + "99999 לא נמצא", 2: head + "62600 בשני מסמכים", 3: head + "70100 חשבונית זיכוי",
+        1: head + "40000 לא נמצא", 2: head + "62600 בשני מסמכים", 3: head + "70100 חשבונית זיכוי",
         4: head + "80500 קבלה; 40505 חשבון עסקה", 5: head + "50400 חשבונית מס בסכום שלילי", 6: head + "62610 לא נמצא"}
+    assert part["notes"] == {}
     assert got[2]["text"] == "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 62600: שני מסמכים תקפים בחשבשבת נושאים את המספר הזה."
     assert "70100: חשבונית זיכוי, ולא חשבונית מס או חשבונית מס/קבלה" in got[3]["text"]
     assert "50400: חשבונית מס בסכום שלילי, כלומר ביטול" in got[5]["text"]
     assert got[4]["documents"] == ["80500", "40505"]
+
+
+def test_a_number_past_the_last_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
+    """The copy is read every hour: a document issued and cited on monday since is past the last number the copy holds in
+    its series (status 1, by the rule of the copy's `series()`), and is no gap yet - no `books_ref_invalid` for it, and the
+    row's details say "עוד לא בהעתק של הספרים". Both sides of the boundary: the last number of the series plus one is not
+    yet in the copy; a number not held at or below it, or below every series, is not found. A number's series is the one
+    it would continue (the highest first number not above it); another refused number of the row keeps its mark."""
+    docs = [doc(62500), doc(62501), doc(62503), doc(50400, doc_type=1), doc(70100, doc_type=3)]
+    rows = [pay(1, "62504"), pay(2, "62502"), pay(3, "50401"), pay(4, "40000"), pay(5, "62504, 70100"),
+            pay(6, "62503, 62505"), pay(7, "50400, 62504")]
+    part, view, _r = run(rows, docs)
+    assert db.series_ends(docs) == [(50400, 50400), (62500, 62503)]
+    head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
+    assert {i: ms[0]["chip"] for i, ms in part["marks"].items()} == {
+        "2": head + "62502 לא נמצא", "4": head + "40000 לא נמצא", "5": head + "70100 חשבונית זיכוי"}
+    assert part["notes"] == {"1": "62504: עוד לא בהעתק של הספרים", "3": "50401: עוד לא בהעתק של הספרים",
+                             "5": "62504: עוד לא בהעתק של הספרים", "6": "62505: עוד לא בהעתק של הספרים",
+                             "7": "62504: עוד לא בהעתק של הספרים"}
+    assert part["marks"]["5"][0]["documents"] == ["70100"] and "62504" not in part["marks"]["5"][0]["text"]
+    # the note is in the row's details only: no flag, no chip, and no place in "לטיפול"
+    merged = db.merge(view, dict(part, state="ok", reasons=[], as_of=None, key="k"))
+    row = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]
+    assert row["books_note"] == "62504: עוד לא בהעתק של הספרים" and "books" not in row and "books_task" not in row
+    assert not any(f.startswith("books_") for f in row["flags"])
+    assert db.not_yet_read("62504", db.series_ends(docs)) and not db.not_yet_read("62503", db.series_ends(docs))
+    assert not db.not_yet_read("40000", db.series_ends(docs)) and not db.not_yet_read("62504", [])
 
 
 def test_amount_differs_says_the_groups_two_sums_and_the_rounding_band_is_no_mark():

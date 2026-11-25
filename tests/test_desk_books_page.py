@@ -29,11 +29,12 @@ PAGE = Path(__file__).resolve().parents[1] / "frontend" / "finance.js"
 TAKEN = "2026-11-24T10:00:01+00:00"
 AS_OF = "2026-11-25T08:00:00+00:00"
 
-# the rows: 1 cites invoice-receipt 62502 and says "לא שולם" (marked, of the era); 2 cites 99999 (marked, made before the
-# era, so it keeps its mark and stays out of "לטיפול"); 3 waits for its receipt (a task state); 4 is done, unmarked, and
-# named like the card of 62503
-ROWS = [pay(1, "62502", st="0", receipt="0"), pay(2, "99999", on="2026-10-01"), pay(3, "", receipt="0"),
-        pay(4, "", name="תלמיד גימל")]
+# the rows: 1 cites invoice-receipt 62502 and says "לא שולם" (marked, of the era); 2 cites 40000, below every series
+# (marked "not found", made before the era, so it keeps its mark and stays out of "לטיפול"); 3 waits for its receipt (a
+# task state); 4 is done, unmarked, and named like the card of 62503; 5 cites 62504, past the last of its series: not yet in
+# the copy, no mark, said in its details
+ROWS = [pay(1, "62502", st="0", receipt="0"), pay(2, "40000", on="2026-10-01"), pay(3, "", receipt="0"),
+        pay(4, "", name="תלמיד גימל"), pay(5, "62504", on="2026-10-02")]
 DOCS = [doc(62502), doc(62503, card="20002", name="גימל תלמיד"),
         doc(50500, doc_type=1, card="77001", name="כרטיס של חברה", total="11800", excl="10000"),
         doc(50501, doc_type=1, card="20009", name="כרטיס לא ברור", total="5900", excl="5000"),
@@ -89,7 +90,7 @@ def test_tasks_holds_the_marked_rows_of_the_era_with_their_red_chip_and_the_tile
     assert int(tile) == merged["b2c"]["periods"][0]["tasks"] == len(ids) == 2
     # the older row keeps its mark on the row: in "הכל", under its state
     assert "2" in re.findall(r'data-row="([^"]+)"', all_)
-    assert "99999 לא נמצא</span>" in cell(all_, "2", "state")
+    assert "40000 לא נמצא</span>" in cell(all_, "2", "state")
 
 
 def test_a_rows_details_say_the_marks_sentence():
@@ -99,7 +100,16 @@ def test_a_rows_details_say_the_marks_sentence():
     assert ('<li>בחשבשבת חשבונית מס/קבלה 62502 מ-03.11.2026 על 4,000.00 ₪ כולל מע&quot;מ, כלומר הכסף התקבל, וסטטוס התשלום '
             'בשורה &quot;לא שולם&quot;.</li>') in detail[:detail.index("</td></tr>")]
     detail = html[html.index('<tr class="fin-detail">', html.index('data-row="2"')):]
-    assert "<li>מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 99999: אין בחשבשבת מסמך תקף במספר הזה.</li>" in detail
+    assert "<li>מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 40000: אין בחשבשבת מסמך תקף במספר הזה.</li>" in detail
+
+
+def test_a_number_not_yet_in_the_copy_is_said_in_the_rows_details_and_nowhere_else():
+    view, _m = books_view()
+    html = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"5": True}}}])[0]
+    detail = html[html.index('<tr class="fin-detail">', html.index('data-row="5"')):]
+    detail = detail[:detail.index("</td></tr>")]
+    assert '<p class="fin-dx-books">62504: עוד לא בהעתק של הספרים</p>' in detail and "fin-dx-warn" not in detail
+    assert "fin-books-chips" not in cell(html, "5", "state")
 
 
 def test_the_students_list_draws_each_document_and_its_candidates_as_candidates_only():

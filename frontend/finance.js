@@ -138,6 +138,8 @@
  *      boards, and are drawn under both tabs. A search stays on the rows.
  * D3 4 The books' state: "לפי הספרים נכון ל-..." above the lists and in the footer, or why not, in the server's sentence
  *      (`view.books.said`). The totals of "לטיפול" are asked by the books' part on the screen (`books`), as by its reading.
+ * D3 5 A number a row cites that is past the last of its series is not yet in the copy (read every hour): the server gives
+ *      no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -777,6 +779,9 @@
     books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
   };
   function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
+  /* D3 fix 2: a number the row cites that is past the last of its series is not yet in the copy of the books (read every
+     hour) - no mark, and the details say so, in the server's words, quietly */
+  function booksNote(r) { return r.books_note ? "<p class=\"fin-dx-books\">" + esc(r.books_note) + "</p>" : ""; }
   var WARN_ON = { b2: { amount_missing: FLAG_ON.b2.amount_missing } };
   function warnings(r) {
     var w = r.flags.filter(function (f) { return WARN[f]; }).map(function (f) {
@@ -863,7 +868,7 @@
         [["נוהל הרשמה", r.flow ? esc(r.flow) : NOT_SET]])]);
     /* the actions first, under the row's situation: the view is about 527 pixels tall inside monday, and the facts below
        sit in the same place on every row of a list - its rows all offer the same actions */
-    return dx(stateChip(r.state), scSituation(r), actionsBox(r) + refund + payment + linked + warnings(r) +
+    return dx(stateChip(r.state), scSituation(r), actionsBox(r) + refund + payment + linked + warnings(r) + booksNote(r) +
       (others.length ? "<div class=\"fin-dx-more\"><span class=\"fin-subtle\">תקבולים נוספים של אותו סטודנט/ית:</span> " + others.map(function (x) {
         return "<span class=\"fin-nw\">" + d(x.date) + " " + money2(x.money_in) + " " + stateChip(x.state) + "</span>";
       }).join(" · ") + "</div>" : ""), r);
