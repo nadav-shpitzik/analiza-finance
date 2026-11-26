@@ -442,13 +442,15 @@ class BooksStore:
         out["far_hits"] = list(out["far_hits"] or [])
         return out
 
-    def matching_snapshot(self, company: str) -> dict:
+    def matching_snapshot(self, company: str, wide: bool = False) -> dict:
         """What a rule that matches monday to the books reads (backlog 0301 A1), in ONE repeatable-read transaction, so a
         tick that saves between two statements cannot leave a hole in what is matched (review 23.11): every held
         document's number, type, status, day and total, and whether it answered 'not found'; whether a run ever
         completed, and whether the last finished one did and was ok (a run in progress is not judged); and how many
-        ids wait in books_retry. Never a name, a card or a text field."""
-        return _snapshot(self._conn, company, wide=False)
+        ids wait in books_retry. Never a name, a card or a text field - unless `wide` (FR-C2, app/recon/ref_fill.py,
+        which judges a document's card): then also each document's card and total before VAT and the last finished
+        run's id and time, as desk_snapshot reads them, in the same one transaction on this session's connection."""
+        return _snapshot(self._conn, company, wide=wide)
 
     def desk_snapshot(self, company: str, connect_timeout_s: int = DESK_CONNECT_TIMEOUT_S) -> dict:
         """What the desk shows of the books (backlog 0301 D3): matching_snapshot's documents and conditions, in the same ONE
@@ -493,8 +495,8 @@ class BooksStore:
 
 
 def _snapshot(conn, company: str, wide: bool) -> dict:
-    """matching_snapshot's one repeatable-read transaction on `conn`. `wide` (the desk, D3) adds each document's card and
-    total before VAT, and the last finished run's id and time; without it the answer is A1's, key for key."""
+    """matching_snapshot's one repeatable-read transaction on `conn`. `wide` (the desk, D3; FR-C2) adds each document's
+    card and total before VAT, and the last finished run's id and time; without it the answer is A1's, key for key."""
     cols = "stock_id, doc_type, doc_number, status, value_date, total_incl, missing_since IS NOT NULL"
     if wide:
         cols += ", total_excl, account_key, account_name"

@@ -600,10 +600,11 @@ def recon_status(request: Request) -> JSONResponse:
                          "reading": None if reading is None else _reading_answer(reading)})
 
 
-# ---- actions (backlog 0301 A1; spec §7): the dry run and the read-back of a class-A fill, behind the sync key -------
+# ---- actions (backlog 0301 A1, D3a; spec §7): the dry run and the read-back of a class-A fill, behind the sync key ---
 # The service plans and reads back; it never writes the charge boards (spec §7.3). A Claude session shows the plan in
-# chat, writes through the monday connector after Nadav's go, and asks /api/actions/verify.
-ACTION_KINDS = ("b2c_receipt_date_fill",)
+# chat, writes through the monday connector after Nadav's go, and asks /api/actions/verify. Each kind is one rule:
+# `b2c_receipt_date_fill` A1's (app/recon/receipt_dates.py), `b2c_ref_fill` FR-C2's (app/recon/ref_fill.py).
+ACTION_KINDS = ("b2c_receipt_date_fill", "b2c_ref_fill")
 VERIFY_MAX_IDS = 1000
 _ITEM_ID_RE = re.compile(r"\d{1,20}")
 
@@ -636,10 +637,11 @@ def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
     if cfg.company != "analiza":  # the guard would refuse after a whole reading; say it before one (rules' contract §0.6)
         return JSONResponse({"ok": False, "error": "not_ready", "reason": "demo" if cfg.company == "demo" else "company"})
     from .books.store import BooksStoreError
-    from .recon import receipt_dates
+    from .recon import receipt_dates, ref_fill
     from .recon.reading import NotReady
     from .recon.store import ReconStoreError, load_reading
 
+    rule = ref_fill if kind == ref_fill.KIND else receipt_dates
     reading = None
     try:
         reading, answer = _read_and_keep(request, cfg, started + REQUEST_BOX_S)
@@ -649,16 +651,18 @@ def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
         with _books_store(cfg).session(cfg.db + ":actions") as s:  # its own lock id: never waits for a tick
             if s is None:
                 return JSONResponse({"ok": False, "error": "busy"})
-            snapshot = s.matching_snapshot(cfg.db)
+            # FR-C2 judges each document's card (its key and name), in the same one snapshot; A1 never reads a card, so
+            # its snapshot is the narrow one, key for key
+            snapshot = s.matching_snapshot(cfg.db, wide=True) if rule is ref_fill else s.matching_snapshot(cfg.db)
         reason = books_not_ready(snapshot)
         documents = snapshot["documents"] if reason is None else []
         if reason is not None:
             return JSONResponse({"ok": False, "error": "books_not_ready", "reason": reason,
                                  "last_run_reasons": snapshot["last_run_reasons"]})
         if verify:
-            body = receipt_dates.verify(cfg.company, kept, documents, item_ids)
+            body = rule.verify(cfg.company, kept, documents, item_ids)
         else:
-            body = receipt_dates.plan(cfg.company, kept, documents)
+            body = rule.plan(cfg.company, kept, documents)
     except NotReady as exc:
         return JSONResponse({"ok": False, "error": "not_ready", "reason": exc.reason,
                              "reading": _reading_answer(reading) if reading else None})
@@ -676,10 +680,10 @@ def _run_action(request: Request, payload: Any, verify: bool) -> JSONResponse:
 
 @app.post("/api/actions/plan")
 def actions_plan(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
-    """The dry run of a class-A fill (spec §7.1.1), `{"kind": "b2c_receipt_date_fill"}`: monday read now through R0 and
-    kept, the rule run on the reading recon_readings holds and on the books copy, and the answer - every bucket's count,
-    and per row to fill its link, the value now and the value proposed (app/recon/receipt_dates.py). Never a name or an
-    amount; writes nothing."""
+    """The dry run of a class-A fill (spec §7.1.1), `{"kind": "b2c_receipt_date_fill"}` (A1, app/recon/receipt_dates.py)
+    or `{"kind": "b2c_ref_fill"}` (FR-C2, app/recon/ref_fill.py): monday read now through R0 and kept, the rule run on the
+    reading recon_readings holds and on the books copy, and the answer - every bucket's count, and per row to fill its
+    link, the value now and the value proposed. Never a name or an amount; writes nothing."""
     return _run_action(request, payload, verify=False)
 
 

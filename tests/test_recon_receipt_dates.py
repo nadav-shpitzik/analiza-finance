@@ -387,7 +387,8 @@ def test_the_verify_route_reads_back_with_the_service_token(actions_app):
 def test_the_action_routes_need_the_key_a_kind_and_item_ids(actions_app):
     client, fake, pg = actions_app
     assert client.post("/api/actions/plan", json=PLAN).status_code == 401
-    assert client.post("/api/actions/plan", headers=AUTH, json={"kind": "b2c_ref_fill"}).status_code == 400
+    # a kind no rule is built for yet (FR-C3's; b2c_ref_fill is FR-C2's since 26.11, tests/test_recon_ref_fill.py)
+    assert client.post("/api/actions/plan", headers=AUTH, json={"kind": "b2c_credit_ref_fill"}).status_code == 400
     assert client.post("/api/actions/plan", headers=AUTH).status_code == 400
     for ids in (None, [], ["12a"], [True], [{"id": 1}], ["1"] * (main.VERIFY_MAX_IDS + 1)):
         assert client.post("/api/actions/verify", headers=AUTH, json={**PLAN, "item_ids": ids}).status_code == 400

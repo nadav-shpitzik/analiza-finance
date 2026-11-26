@@ -14,8 +14,11 @@ import json
 from datetime import date
 from decimal import Decimal
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from app import main
 from app.desk import books as db
 from app.desk import reading as desk_reading
 from app.desk import view as fd
@@ -23,9 +26,11 @@ from app.recon import cards
 from app.recon import reading as rr
 from app.recon import receipt_dates as a1
 from app.recon import ref_fill as rf
+from tests.conftest import KEY, TEST_DATABASE_URL, drop_all, needs_pg
 from tests.desk_fixtures import TODAY, sc, snap
 from tests.test_desk_books import run as desk_run
-from tests.test_recon_reading import Monday, reader
+from tests.test_desk_books import seed
+from tests.test_recon_reading import SYNC_KEY, TOKEN, Monday, reader
 
 SC_BASE = int(rr.STUDENT_CHARGE[-4:]) * 10000  # the fake's ids of Student Charge, as in A1's tests
 NAME = "נועה ברק"
@@ -515,3 +520,162 @@ def test_a_plan_written_as_proposed_reads_back_verified():
     after = [dict(r, **{rf.COLUMN: written[r["id"]]}) if r["id"] in written else r for r in rows]
     body = rf.verify("analiza", a_reading(after, b2b, accounts_of(keys)), docs, list(written))
     assert body["verified"] == len(written) == 2
+
+
+# ---- the routes ----------------------------------------------------------------------------------------------------
+class Boards(Monday):
+    """The five boards as in R0's tests, with the rows FR-C2 reads: board id -> {item id: {column: text, "name": ...}},
+    a status as (label, index)."""
+
+    def __init__(self, rows: dict):
+        super().__init__()
+        self.rows = rows
+        for board, items in rows.items():
+            self.sizes[board] = len(items)
+
+    def ids(self, board_id: str) -> list:
+        if board_id in self.rows:
+            return [int(i) for i in self.rows[board_id]]
+        return super().ids(board_id)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        response = super().handler(request)
+        if "items(ids:" not in json.loads(request.content)["query"] or response.status_code != 200:
+            return response
+        data = response.json()
+        for item in data["data"]["items"]:
+            cells = next((items[item["id"]] for items in self.rows.values() if item["id"] in items), {})
+            item["name"] = cells.get("name", item["name"])
+            for c in item["column_values"]:
+                value = cells.get(c["id"])
+                if value is None:
+                    continue
+                if c["id"] == a1.STATUS_COLUMN:
+                    c.update(text=value[0], label=value[0], index=value[1])
+                else:
+                    c["text"] = value
+        return httpx.Response(200, json=data)
+
+
+def charge(name: str, ref: str = "", paid: str = PAID, status: tuple = ("שולם", 1)) -> dict:
+    return {"name": name, rf.COLUMN: ref, a1.AMOUNT_COLUMN: paid, a1.COLUMN: "", a1.STATUS_COLUMN: status}
+
+
+ANALIZA = "wizdb2245n5"
+B2_BASE, AC_BASE = int(rr.B2B_CHARGE[-4:]) * 10000, int(rr.ACCOUNTS[-4:]) * 10000
+AUTH = {"Authorization": f"Bearer {SYNC_KEY}"}
+PLAN = {"kind": "b2c_ref_fill"}
+DOCS = [doc(62500), doc(62501, card="20002", name="יואב שטרן"), doc(62502, card="20003", name="מאיה גולן"),
+        doc(62503, card="30001", name="חברה בדויה"), doc(50400, doc_type=1, card="20003", name="מאיה גולן", total="9000")]
+
+
+@pytest.fixture
+def pg():
+    drop_all(TEST_DATABASE_URL)
+    from app.migrate import apply_migrations
+
+    apply_migrations(TEST_DATABASE_URL)
+    yield TEST_DATABASE_URL
+    drop_all(TEST_DATABASE_URL)
+
+
+@pytest.fixture
+def ref_app(pg, monkeypatch):
+    monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
+    monkeypatch.setenv("DATABASE_URL", pg)
+    monkeypatch.setenv("BOOKS_SYNC_KEY", SYNC_KEY)
+    monkeypatch.setenv("MONDAY_TOKEN", TOKEN)
+    monkeypatch.setenv("WIZ_COMPANY", "analiza")
+    fake = Boards({
+        rr.STUDENT_CHARGE: {str(SC_BASE): charge("נועה ברק"), str(SC_BASE + 1): charge("יואב שטרן"),
+                            str(SC_BASE + 2): charge("מאיה גולן", ref="62502"),
+                            str(SC_BASE + 3): charge("שם אחר", status=("לא שולם", 0))},
+        rr.B2B_CHARGE: {str(B2_BASE): {rf.B2B_REF_COLUMN: "62501"}},
+        rr.ACCOUNTS: {str(AC_BASE): {"name": "חברה בדויה", rr.AC["hash_key"]: "30001"}}})
+    main._store_cache.update(at=0.0, key=None, value=None)
+    main.app.state.monday_transport = httpx.MockTransport(fake.handler)
+    yield TestClient(main.app), fake, pg
+    main.app.state.monday_transport = None
+    main._store_cache.update(at=0.0, key=None, value=None)
+
+
+@needs_pg
+def test_the_plan_route_reads_monday_now_and_answers_the_ref_fill_plan(ref_app):
+    client, fake, pg = ref_app
+    seed(pg, DOCS)
+    body = client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()
+    assert body["ok"] is True and body["kind"] == "b2c_ref_fill" and body["books"] == {"documents": 5}
+    assert [(a["item_id"], a["value_now"], a["value_proposed"], a["document_date"]) for a in body["actions"]] == [
+        (str(SC_BASE), "", "62500", "2026-11-12")]
+    assert {k: v for k, v in body["counts"].items() if v} == {"fill": 1, "no_candidate": 1, "has_ref": 1,
+                                                             "not_money_in": 1}
+    # the pool: 62500, and tax invoice 50400 on a students' card (it holds invoice-receipt 62502); 62501 B2B cites
+    assert body["documents"] == {"students": 2, "proposed": 1, "era_listed": 2, "era_left": 1}
+    from app.recon.store import load_reading
+
+    assert body["read_at"] == load_reading(pg)["read_at"]   # the rule ran on the reading kept
+    text = json.dumps(body, ensure_ascii=False)
+    for leak in ("נועה", "ברק", "יואב", "שטרן", "חברה", "שם אחר", PAID, "9000", TOKEN, SYNC_KEY):
+        assert leak not in text, leak
+
+
+@needs_pg
+def test_the_verify_route_reads_back_a_written_number(ref_app):
+    client, fake, pg = ref_app
+    seed(pg, DOCS)
+    fake.rows[rr.STUDENT_CHARGE][str(SC_BASE)][rf.COLUMN] = "62500"      # the session wrote it
+    fake.rows[rr.STUDENT_CHARGE][str(SC_BASE + 1)][rf.COLUMN] = "62501"  # and one B2B Charge cites
+    body = client.post("/api/actions/verify", headers=AUTH,
+                       json={**PLAN, "item_ids": [str(SC_BASE), str(SC_BASE + 1), SC_BASE + 9]}).json()
+    assert body["ok"] is True and body["verified"] == 1
+    assert {k: v["state"] for k, v in body["items"].items()} == {
+        str(SC_BASE): "verified", str(SC_BASE + 1): "cited_by_b2b", str(SC_BASE + 9): "not_found"}
+
+
+@needs_pg
+def test_ref_fill_reads_the_wide_snapshot_and_a1_still_the_narrow_one(ref_app, monkeypatch):
+    """FR-C2 judges cards, so it asks the wide snapshot, in the same one transaction; A1 never reads a card, and its
+    snapshot is asked exactly as before."""
+    client, fake, pg = ref_app
+    seed(pg, DOCS)
+    from app.books.store import BooksStore
+
+    asked, original = [], BooksStore.matching_snapshot
+
+    def record(self, company, **kw):
+        asked.append(kw)
+        return original(self, company, **kw)
+
+    monkeypatch.setattr(BooksStore, "matching_snapshot", record)
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json()["ok"] is True
+    assert client.post("/api/actions/plan", headers=AUTH, json={"kind": "b2c_receipt_date_fill"}).json()["ok"] is True
+    assert asked == [{"wide": True}, {}]
+
+
+@needs_pg
+def test_the_wide_matching_snapshot_is_the_desks_and_the_narrow_one_a1s_key_for_key(pg):
+    seed(pg, DOCS)
+    from app.books.store import BooksStore
+
+    store = BooksStore(pg)
+    with store.session(ANALIZA + ":t") as s:
+        narrow, wide = s.matching_snapshot(ANALIZA), s.matching_snapshot(ANALIZA, wide=True)
+    desk = store.desk_snapshot(ANALIZA)
+    assert wide == desk
+    assert set(narrow) == {"documents", "retry_waiting", "last_run_complete", "last_run_ok", "last_run_reasons",
+                           "ever_completed"}
+    assert set(narrow["documents"][0]) == {"stock_id", "doc_type", "doc_number", "status", "value_date", "total_incl",
+                                           "missing"}
+
+
+@needs_pg
+def test_the_ref_fill_plan_refuses_demo_and_a_copy_that_is_not_whole(ref_app, monkeypatch):
+    client, fake, pg = ref_app
+    seed(pg, DOCS + [doc(62505, card="20009", name="אחר")])  # 62504 is missing between 62503 and 62505
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "books_not_ready", "reason": "holes", "last_run_reasons": []}
+    monkeypatch.setenv("WIZ_COMPANY", "demo")
+    queries = len(fake.queries)
+    assert client.post("/api/actions/plan", headers=AUTH, json=PLAN).json() == {
+        "ok": False, "error": "not_ready", "reason": "demo"}
+    assert len(fake.queries) == queries
