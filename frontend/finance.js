@@ -235,6 +235,8 @@
  *      its press beside each mark's sentence in a row's details, on each document of the books' lists, and ("לא להציע")
  *      beside each proposal; a confirmation floating beside it, as a batch's does; what is hidden under each list, by whom
  *      and when, with "החזרה" on one's own; "חזר" on an alert that came back. Nothing written to monday. Its block "R5".
+ *      Merged with the QA of 26.11: the confirmation and the list of what is hidden say a mark in its whole words (`long`,
+ *      the row's chip being short, D), and its box is placed as every box (A, 1), its remembered spot owned by `NAG`.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1490,7 +1492,8 @@
     if (NAG_MARKS[kind] || NAG_FILLS[kind]) {
       var r = rowByKey("sc:" + subject), m = r ? booksMark(r, kind) : null;
       if (!m || !m.evidence || (NAG_FILLS[kind] && !rowFill(r))) { return null; }
-      return { evidence: m.evidence, what: "\"" + r.name + "\": " + m.chip, alert: m };
+      /* a mark's whole words: its chip on the row is short (QA 26.11, D), and the confirmation has the room */
+      return { evidence: m.evidence, what: "\"" + r.name + "\": " + (m.long || m.chip), alert: m };
     }
     var parts = { books_doc_students: VIEW.b2c && VIEW.b2c.books, books_doc_companies: VIEW.b2b && VIEW.b2b.books,
       books_doc_unclear: VIEW.books_unclear };
@@ -3681,8 +3684,8 @@
     return v ? { v: v, h: h || v } : null;
   }
   /* QA 26.11 (1): where the box was last put beside what was pressed, in the page's own coordinates, and whose box it was
-     (the batch or the action on the screen): when what was pressed has left the page - a newer reading took a written
-     document off the books' list - the box stays beside where it was, following the page's scroll */
+     (the batch, the action or, since R5, the "לא פער" on the screen): when what was pressed has left the page - a newer
+     reading took a written document off the books' list - the box stays beside where it was, following the page's scroll */
   var POP_AT = null;
   function onPage(r) {
     return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width };
@@ -3706,7 +3709,8 @@
     var pop = root && root.querySelector ? root.querySelector(".fin-pop") : null;
     if (!pop || !pop.getBoundingClientRect) { return; }
     var at = popAnchor(pop), vh = window.innerHeight, vw = document.documentElement.clientWidth, edge = stuckHeads();
-    var owner = pop.classList && pop.classList.contains("fin-act-box") ? ACT : BATCH;
+    /* whose box it is: R5's "לא פער" (NAG), a row's action (ACT), or a batch - a spot remembered for one is never another's */
+    var owner = !pop.classList ? BATCH : pop.classList.contains("fin-nag-box") ? NAG : pop.classList.contains("fin-act-box") ? ACT : BATCH;
     pop.style.maxHeight = "";
     var h = pop.offsetHeight, w = pop.offsetWidth, a, x;
     if (at) {

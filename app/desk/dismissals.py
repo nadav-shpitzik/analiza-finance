@@ -171,7 +171,10 @@ def _by(d: dict) -> dict:
 
 
 def _row_item(kind: str, item_id: str, mark: dict, d: dict) -> dict:
-    return dict(_by(d), kind=kind, subject=str(item_id), word=WORD[kind], name=mark.get("name", ""), chip=mark.get("chip", ""))
+    """A hidden mark or proposal as the list of what is hidden says it: its row's name and its words - a mark's whole words
+    (`long`: its chip on the row is short since the QA of 26.11, D, and this list has the room)."""
+    return dict(_by(d), kind=kind, subject=str(item_id), word=WORD[kind], name=mark.get("name", ""),
+                chip=mark.get("long") or mark.get("chip", ""))
 
 
 def _doc_item(e: dict, d: dict) -> dict:

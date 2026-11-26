@@ -275,7 +275,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   **The page** (finance.js, its block "R5"): "לא פער" beside each mark's sentence in a row's details and on each document
   of the three lists (a column with no heading), "לא להציע" beside each proposal (its sentence in the details, its line in
   the list); none for a viewer (`user.view_only`). One press opens a confirmation floating beside it (`nagBox`, `fin-pop`,
-  placed by `placePop`; one floating box at a time) that says what it does and what brings it back; "הסתרה" sends the
+  placed by `placePop` as every box: below a table header stuck at the top, and beside its own remembered spot, `POP_AT`
+  owned by `NAG`, once its press left the page; one floating box at a time) that says what it does and what brings it
+  back, a mark in its whole words (`long`: the chip on the row is short since the QA of 26.11, D), as the list of what is
+  hidden says it too; "הסתרה" sends the
   alert, the server's evidence, `taken_at` and `books.key`, and draws the desk the server answers (every count the
   server's); a refusal is said in the box, and one the screen is behind on (`NAG_RELOAD`) asks the desk again. A newer
   reading closes an open confirmation whose alert changed (`recheckNag`). "הוסתרו כלא פער (N)" under each list opens what

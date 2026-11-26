@@ -360,3 +360,71 @@ def test_in_a_browser_the_confirmation_floats_beside_the_press_and_the_hidden_li
     assert sent[0] == {"path": NAG, "body": {"kind": "books_doc_students", "subject": "62606", "evidence": evidence,
                                              "taken": "2026-11-24T08:00:00+00:00", "books": "k-1"}}
     assert sent[1] == {"path": UNDO, "body": {"kind": "books_doc_students", "subject": "62606", "id": 1}}
+
+
+@pytest.mark.skipif(PW_ROOT is None, reason="node with playwright is not installed")
+def test_in_a_browser_the_confirmation_stays_below_a_stuck_header_and_where_it_was_put_once_its_press_left(serve_nag):
+    """The QA of 26.11 (A and 1) on R5's box, as merged: "לא פער" on a mark in a row's details, the mark put just low enough
+    for the box to fit above it up to the view's top - so above it, under the table's header stuck at the top, is where it
+    would go - opens its confirmation below that header, whole in the view, its first line seen. When its press leaves the
+    page while it is open (the row's details closed), the box stays beside where its press was: its own remembered spot
+    (`POP_AT`, owned by `NAG`), not the view's top; and as the page scrolls on, never cut off nor under a header."""
+    v = nag_view()
+    base, _log = serve_nag(v, v)
+    got = qa_visit(r"""
+  await page.addStyleTag({ content: "body { padding-bottom: 1600px; }" });
+  await page.click('[data-bstate=""]');
+  const row = 'tr[data-row="8"] td.k-student', mark = '.fin-dx-warn [data-nag="books_ref_invalid:8"]';
+  await page.click(row, { position: { x: 4, y: 4 } });
+  await page.waitForSelector(mark);
+  const look = () => page.evaluate(() => {
+    const box = document.querySelector(".fin-nag-box"), p = box.getBoundingClientRect(), first = box.querySelector("p").getBoundingClientRect();
+    const heads = [...document.querySelectorAll("table.fin-t thead")].map((t) => t.getBoundingClientRect())
+      .filter((r) => r.top <= 8 && r.bottom > 0);
+    const hit = document.elementFromPoint(first.left + first.width / 2, first.top + first.height / 2);
+    const press = document.querySelector('.fin-dx-warn [data-nag="books_ref_invalid:8"]'), line = press && press.closest("li,p").getBoundingClientRect();
+    return { top: p.top, bottom: p.bottom, h: p.height, page: p.top + window.scrollY, y: window.scrollY,
+      head: heads.length ? heads[0].bottom : null, inView: p.top >= 0 && p.bottom <= window.innerHeight,
+      firstSeen: !!hit && box.contains(hit), line: line ? [line.top + window.scrollY, line.bottom + window.scrollY] : null };
+  });
+  /* put the mark's line where a box of height h fits above it only up to the view's top, then press it */
+  const pressAt = async (h) => {
+    await page.$eval(mark, (el) => el.scrollIntoView({ block: "center" }));
+    const top = await page.$eval(mark, (el) => el.closest("li,p").getBoundingClientRect().top);
+    await page.evaluate((dy) => window.scrollBy(0, dy), top - (h + 20));
+    await page.waitForTimeout(150);
+    await page.click(mark);
+    await page.waitForSelector(".fin-nag-box [data-nag-go]");
+    await page.waitForTimeout(150);
+  };
+  out.steps[at] = {};
+  await pressAt(0);
+  const h = await page.$eval(".fin-nag-box", (b) => b.getBoundingClientRect().height);
+  await page.click('.fin-nag-box [data-nag-close="1"]');
+  await page.waitForSelector(".fin-nag-box", { state: "detached" });
+  await pressAt(h);
+  out.steps[at].top = await look();
+  /* its press leaves the page while it is open: the row's details closed, by a click that scrolls nothing */
+  await page.$eval(row, (el) => el.click());
+  await page.waitForSelector(mark, { state: "detached" });
+  await page.waitForTimeout(150);
+  out.steps[at].gone = await look();
+  /* the page scrolls on, its spot now above the view */
+  await page.evaluate(() => window.scrollBy(0, 400));
+  await page.waitForTimeout(250);
+  out.steps[at].scrolled = await look();
+""", base, fake_sdk({}), sizes=((1280, 748), (1400, 748)))
+    assert got["errors"] == [], got["errors"]
+    for size, steps in got["steps"].items():
+        top, gone, scrolled = steps["top"], steps["gone"], steps["scrolled"]
+        assert top["head"] is not None and top["line"], (size, top)                     # the header is stuck at the top
+        assert top["top"] >= top["head"] and top["inView"] and top["firstSeen"], (size, top)
+        # beside where the press was - just below its line or just above it, by the room the view has now - never the
+        # view's top, where a box with no spot of its own goes
+        line, gap = top["line"], 6
+        beside = (line[1] + gap, line[0] - gap - gone["h"])
+        assert gone["line"] is None and gone["y"] == top["y"], (size, top, gone)
+        assert min(abs(gone["page"] - b) for b in beside) <= 1, (size, top, gone)
+        assert gone["inView"] and gone["firstSeen"], (size, gone)
+        assert scrolled["head"] is None or scrolled["top"] >= scrolled["head"], (size, scrolled)
+        assert scrolled["inView"] and scrolled["firstSeen"], (size, scrolled)
