@@ -392,8 +392,13 @@ LEGEND = {
          "כשחשבשבת מציעה מה לרשום בתקבול (\"בחשבשבת: ...\" או \"תאריך מחשבשבת: ...\" ליד השורה, ו%s ליד המסמך ברשימה של "
          "מסמכים בחשבשבת בלי חיוב במאנדיי): %s כותב במאנדיי, בשמך ובהרשאות שלך, את מספר המסמך באסמכתת חשבונית ואת "
          "תאריך המסמך בתאריך תקבול, כל אחד רק כשחשבשבת מציעה אותו ורק כשהתא ריק. %s, מעל הרשימה, כותב את כולן יחד (עד 25 "
-         "בכתיבה אחת). לפני הכתיבה המסך קורא את השורות במאנדיי ומראה מה ייכתב בכל אחת; שורה שהשתנתה במאנדיי מאז הקריאה לא "
-         "נכתבת, ותא שאינו ריק לא נכתב אף פעם. אחרי הכתיבה המסך מבקש קריאה חדשה, והמסמך יוצא מהרשימה. רק בתקבולים "
+         "בכתיבה אחת). לפני הכתיבה המסך קורא את השורות במאנדיי ומראה מה ייכתב בכל אחת, וממש לפני הכתיבה קורא כל שורה שוב. "
+         # the hostile review of D4: the promise says exactly what the page checks (frontend/finance.js settleFills,
+         # confirmBatch: the two cells written and the action's `rests_on`, the number in another row, a newer reading)
+         "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת: שורה שאסמכתת חשבונית, תאריך תקבול, סטטוס תשלום או סכום ששולם שבה "
+         "אינם מה שהמסך קרא. שורה לא נכתבת גם כשאסמכתת חשבונית של שורה אחרת בלוח Student Charge היא כבר המספר שהיא "
+         "מקבלת, וכשקריאה חדשה של הלוחות, שנחתה בזמן שהאישור פתוח, כבר לא מציעה לה את אותו הדבר. תא שאינו ריק לא נכתב "
+         "אף פעם. אחרי הכתיבה המסך מבקש קריאה חדשה, והמסמך יוצא מהרשימה. רק בתקבולים "
          "ובמסמכים מ-%s ואילך: מה שלפני כן מטופל בנפרד." % (_q(BOOKS_PROPOSAL), _q(BOOKS_FILL_BUTTON),
                                                           _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
@@ -693,6 +698,13 @@ DESK_ACTIONS = OrderedDict([
                                 "if_empty": True},
                                {"column": SC["paid_date"], "title": "תאריך תקבול", "kind": "date", "books": "date",
                                 "if_empty": True}]],
+                    # what a proposal rests on besides the two cells it writes (FR-C2's conditions 1 and 3: the status says the
+                    # money came in, by its index, and the amount): read with them, in the same request, before the
+                    # confirmation and again right before each write, and held to the row's `field` in the reading - a row
+                    # whose status or amount moved since is skipped and said, never written (the hostile review of D4). Never
+                    # written, so not on desk_writes
+                    "rests_on": [{"column": SC["status"], "title": _PAY_TITLE, "kind": "status", "field": "status_idx"},
+                                 {"column": SC["paid"], "title": "סכום ששולם", "kind": "number", "field": "paid_typed"}],
                     "after": "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."}),
     # a company charge billed: with its invoice's reference when typed (an empty box never clears one), and "מועד דרישת
     # תשלום" today when it is empty (MON-92: a charge that moves to "חויב" without one gets the day it moved)

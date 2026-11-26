@@ -252,6 +252,35 @@ def test_books_fill_writes_only_what_the_books_propose_and_each_cell_only_when_i
     assert all(db.FILL_ACTION not in r["actions"] for r in view["b2c"]["rows"])
 
 
+def test_what_a_proposal_rests_on_is_the_rules_own_status_and_amount_read_never_written():
+    """The hostile review of D4: the page read only the two cells it writes before writing, while the legend promised that a
+    row changed in monday since the reading is not written. The action names what a proposal rests on besides them -
+    FR-C2's conditions 1 and 3, A1's columns: the status by its index, the amount - and the row's field the reading holds
+    each in, so the page reads them with the two cells and holds them to the reading. Read, never written: not on
+    desk_writes."""
+    rests = fd.DESK_ACTIONS[db.FILL_ACTION]["rests_on"]
+    assert [(c["column"], c["title"], c["kind"]) for c in rests] == [
+        (a1.STATUS_COLUMN, "סטטוס תשלום", "status"), (a1.AMOUNT_COLUMN, "סכום ששולם", "number")]
+    row = {r["id"]: r for r in fd.build_view(reading_of(snap([pay(1, "נועה ברק", st="9", paid="3517.5")], [])), TODAY)["b2c"]["rows"]}["1"]
+    assert {c["field"]: fd.json_safe(row[c["field"]]) for c in rests} == {"status_idx": "9", "paid_typed": "3517.5"}
+    # it adds nothing to what the page may write: the amount is not on it, the status only with the refunds' two indexes
+    writes = fd.desk_writes()[fd.STUDENT_CHARGE]
+    assert a1.AMOUNT_COLUMN not in writes and writes[a1.STATUS_COLUMN] == [int(fd.P_REFUNDED), int(fd.P_PART)]
+
+
+def test_the_legend_says_exactly_what_the_page_checks_before_it_writes_a_proposal():
+    """The legend's promise (the hostile review of D4) names each cell the page reads and holds to the reading - the two it
+    writes and what the proposal rests on - another row citing the number, and a newer reading; and nothing it does not."""
+    text = dict(fd.LEGEND["b2c"])["%s · %s · %s" % (fd.BOOKS_FILL_BUTTON, fd.BOOKS_PROPOSAL, fd.BOOKS_FILL_ALL)]
+    a = fd.DESK_ACTIONS[db.FILL_ACTION]
+    said = text[text.index("שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת"):text.index("תא שאינו ריק לא נכתב")]
+    titles = [w["title"] for s in a["steps"] for w in s] + [c["title"] for c in a["rests_on"]]
+    assert "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת: שורה ש%s, %s, %s או %s שבה אינם מה שהמסך קרא." % tuple(titles) in said
+    assert "כשאסמכתת חשבונית של שורה אחרת בלוח Student Charge היא כבר המספר שהיא מקבלת" in said
+    assert "וכשקריאה חדשה של הלוחות, שנחתה בזמן שהאישור פתוח, כבר לא מציעה לה את אותו הדבר" in said
+    assert "וממש לפני הכתיבה קורא כל שורה שוב" in text and "שם" not in said.split()
+
+
 # ---- the merge (D4): a proposal on its row, from a current part of the reading shown only -------------------------------
 def test_each_proposal_is_laid_on_its_row_as_its_chip_its_values_and_the_action_and_moves_no_row():
     """`merge` lays, on a row the books propose a fill to, its chip among the row's flags (in FLAG_ORDER's words, beside

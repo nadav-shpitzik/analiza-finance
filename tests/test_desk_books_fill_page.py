@@ -116,9 +116,20 @@ def draw(view: dict, cases: list) -> list:
                 {"body": body(view), "cases": cases})
 
 
+STATUS_COL, PAID_COL = fd.SC["status"], fd.SC["paid"]
+
+
+def status_of(r: dict):
+    """A row's "סטטוס תשלום" as monday answers it: its label and index, or an empty cell."""
+    idx = r.get(STATUS_COL + "#") or ""
+    return {"text": r[STATUS_COL], "index": int(idx), "label": r[STATUS_COL]} if idx else ""
+
+
 def monday_of(rows=ROWS, **cells) -> dict:
-    """monday as the person reads it now: each row's two cells as the desk read them, then `cells` (by item id) over them."""
-    board = {r["id"]: {"__name": r["name"], NUMBER_COL: r[NUMBER_COL], DATE_COL: r[DATE_COL]} for r in rows}
+    """monday as the person reads it now: each row's two cells as the desk read them, and what a proposal rests on (D4's
+    review: "סטטוס תשלום" and "סכום ששולם", read with them), then `cells` (by item id) over them."""
+    board = {r["id"]: {"__name": r["name"], NUMBER_COL: r[NUMBER_COL], DATE_COL: r[DATE_COL], STATUS_COL: status_of(r),
+                       PAID_COL: r[PAID_COL]} for r in rows}
     for rid, c in cells.items():
         board[rid].update(c)
     return {"boards": {SC_BOARD: board}}
@@ -220,9 +231,14 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
     assert ('<li><b>נועה ברק</b> · אסמכתת חשבונית: עכשיו ריק, ייכתב "62601" · תאריך תקבול: עכשיו ריק, ייכתב 12.11.26</li>'
             in page)
     assert DESK_AFTER in page and page.index('data-books="b2c"') < page.index("fin-pop")   # in the books' list
-    first, again = [s for s in got["sent"] if s["kind"] == "query"]
-    assert first["variables"] == {"i": ["1"], "c": [NUMBER_COL, DATE_COL], "b": [SC_BOARD]} and again["variables"]["i"] == ["1"]
-    assert [s["kind"] for s in got["sent"]] == ["query", "query", "mutation"]
+    # D4's review: the row is read with what its proposal rests on ("סטטוס תשלום", "סכום ששולם"), both times, and right
+    # before the number is written, the rows that already cite it are asked for - one read, as the person
+    first, again, cited = [s for s in got["sent"] if s["kind"] == "query"]
+    assert first["variables"] == {"i": ["1"], "c": [NUMBER_COL, DATE_COL, STATUS_COL, PAID_COL], "b": [SC_BOARD]}
+    assert again["variables"] == first["variables"]
+    assert cited["variables"] == {"b": SC_BOARD, "c": NUMBER_COL, "v": ["62601"]}
+    assert "items_page_by_column_values(" in cited["query"] and cited["apiVersion"] == "2026-07"
+    assert [s["kind"] for s in got["sent"]] == ["query", "query", "query", "mutation"]
     assert writes_of(got) == [(SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
     assert done["batch"]["phase"] == "done" and done["batch"]["items"][0]["result"] == "written"
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
@@ -244,7 +260,8 @@ def test_every_proposal_at_once_writes_exactly_the_proposals_each_its_own():
     plan, done = got["steps"][1], got["steps"][2]
     assert [(i["key"], i["verdict"]) for i in plan["batch"]["items"]] == [
         ("sc:4", "write"), ("sc:2", "write"), ("sc:1", "write"), ("sc:3", "write")]
-    assert got["sent"][0]["variables"] == {"i": ["4", "2", "1", "3"], "c": [NUMBER_COL, DATE_COL], "b": [SC_BOARD]}
+    assert got["sent"][0]["variables"] == {"i": ["4", "2", "1", "3"], "c": [NUMBER_COL, DATE_COL, STATUS_COL, PAID_COL],
+                                           "b": [SC_BOARD]}
     page = h.unescape(plan["html"])
     assert "ייכתב במאנדיי בשמך, ב-4 שורות:" in page
     assert '<li><b>יואב שטרן</b> · אסמכתת חשבונית: עכשיו ריק, ייכתב "62602"</li>' in page
@@ -475,6 +492,97 @@ def test_a_newer_reading_that_lands_between_two_rows_writes_is_held_to_right_bef
         ("sc:4", "written", ""), ("sc:2", "skipped", FILL_GONE), ("sc:1", "written", ""), ("sc:3", "written", "")]
     assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
     assert "<li><b>יואב שטרן</b> · %s</li>" % FILL_GONE in h.unescape(got["steps"][4]["html"])
+
+
+# The same review: the legend promised that a row changed in monday since the reading is not written, and the batch read
+# only the two cells it writes. What a proposal rests on ("סטטוס תשלום", "סכום ששולם": the action's `rests_on`) is read with
+# them and held to the reading; and before a number is written, no other row of Student Charge may cite it.
+CITED_UNCHECKED = "לא נבדק במאנדיי אם שורה אחרת כבר מפנה למספר הזה"
+PROBLEM = {"text": "יש בעיה", "index": 2, "label": "יש בעיה"}
+
+
+def citing_reads(got: dict) -> list:
+    return [s["variables"]["v"] for s in got["sent"] if "items_page_by_column_values(" in s["query"]]
+
+
+@pytest.mark.parametrize("now, why", [
+    ({STATUS_COL: PROBLEM}, 'השתנתה במאנדיי מאז הקריאה, ועכשיו סטטוס תשלום "יש בעיה"'),
+    ({STATUS_COL: ""}, "השתנתה במאנדיי מאז הקריאה, ועכשיו סטטוס תשלום ריק"),
+    ({PAID_COL: "4000"}, "השתנתה במאנדיי מאז הקריאה, ועכשיו סכום ששולם 4,000.00 ₪"),
+    ({PAID_COL: ""}, "השתנתה במאנדיי מאז הקריאה, ועכשיו סכום ששולם ריק"),
+])
+def test_a_row_whose_status_or_amount_moved_since_the_reading_is_said_in_the_confirmation_and_not_written(now, why):
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"batchGo": "1"}]}], monday=monday_of(**{"2": now}))
+    assert items_of(got["steps"][1])[1] == ("sc:2", "skip", why)
+    assert "<li><b>יואב שטרן</b> · %s</li>" % why in h.unescape(got["steps"][1]["html"])
+    assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
+
+
+@pytest.mark.parametrize("cells, why", [
+    ({"2": {STATUS_COL: PROBLEM}}, 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו סטטוס תשלום "יש בעיה"'),
+    ({"2": {PAID_COL: "4000"}}, "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו סכום ששולם 4,000.00 ₪"),
+])
+def test_a_row_whose_status_or_amount_moved_after_the_confirmation_was_shown_is_not_written(cells, why):
+    """Read again right before its write, with what its proposal rests on: the payment bounced ("יש בעיה") or its amount
+    was corrected after "לרשום את כל ההצעות" showed the confirmation. The row is skipped and said; the rest is written."""
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"mutate": {SC_BOARD: cells}}, {"click": [{"batchGo": "1"}]}])
+    done = got["steps"][3]["batch"]
+    assert [(i["key"], i["result"], i["why"]) for i in done["items"]] == [
+        ("sc:4", "written", ""), ("sc:2", "skipped", why), ("sc:1", "written", ""), ("sc:3", "written", "")]
+    assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
+
+
+def test_an_amount_monday_writes_with_its_agorot_is_the_amount_the_desk_read():
+    """"3517.00" in monday and 3517 in the reading are one amount, in whole agorot: the row is not taken as changed."""
+    got = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}, {"click": [{"batchGo": "1"}]}],
+              monday=monday_of(**{"1": {PAID_COL: "3517.00"}}))
+    assert items_of(got["steps"][1]) == [("sc:1", "write", "")]
+    assert writes_of(got) == [(SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
+
+
+def test_before_a_number_is_written_the_rows_that_already_cite_it_are_read_once_and_another_one_stops_it():
+    """FR-C2's condition 6 at the write: after the reading, 62602 was typed into another row of Student Charge (row 12).
+    Right before each number is written, one read as the person asks monday for the rows whose "אסמכתת חשבונית" is that
+    number - one per row that writes a number, none for the date alone - and row 2 is not written; the report names the row
+    that cites it, as monday does."""
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"batchGo": "1"}]}],
+              monday=monday_of(**{"12": {NUMBER_COL: "62602"}}))
+    assert citing_reads(got) == [["62604"], ["62602"], ["62601"]]
+    why = 'כבר יש "62602" באסמכתת חשבונית של שורה אחרת במאנדיי: "אפרת חן"'
+    done = got["steps"][2]["batch"]
+    assert [(i["key"], i["result"], i["why"]) for i in done["items"]] == [
+        ("sc:4", "written", ""), ("sc:2", "skipped", why), ("sc:1", "written", ""), ("sc:3", "written", "")]
+    assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
+    assert "<li><b>יואב שטרן</b> · %s</li>" % why in h.unescape(got["steps"][2]["html"])
+
+
+def test_the_row_itself_in_monday_s_answer_is_not_another_row():
+    """monday answers the row being written itself (its number typed into it a moment before): no other row cites it, and
+    the write goes on - its own cell, read right before, was empty."""
+    monday = monday_of()
+    monday["answers"] = [{}, {}, {"answer": {"data": {"items_page_by_column_values": {"items": [{"id": "1", "name": "נועה ברק"}]}}}}]
+    got = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}, {"click": [{"batchGo": "1"}]}],
+              monday=monday)
+    assert writes_of(got) == [(SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
+
+
+@pytest.mark.parametrize("answer, why, then", [
+    # another shape: never taken as "none"
+    ({"answer": {"data": {"items": []}}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
+    ({"answer": {"data": {"items_page_by_column_values": {"cursor": None}}}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
+    ({"reject": {"message": "Internal server error"}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
+    # monday asking to slow down: said, and it stops the rest as a write's would
+    ({"reject": {"message": "Rate limit exceeded"}}, CITED_UNCHECKED + " (מאנדיי ביקשה להאט; לנסות שוב בעוד דקה). לא נכתב כלום.",
+     "failed"),
+])
+def test_a_row_whose_check_could_not_be_made_is_not_written(answer, why, then):
+    monday = monday_of()
+    monday["answers"] = [{}, {}, answer]           # the batch's read, row 4 read again, the rows that cite 62604
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"batchGo": "1"}]}], monday=monday)
+    done = got["steps"][2]["batch"]
+    assert (done["items"][0]["key"], done["items"][0]["result"], done["items"][0]["why"]) == ("sc:4", "failed", why)
+    assert "4" not in [w[1] for w in writes_of(got)]
+    assert {i["result"] for i in done["items"][1:]} == {then}
 
 
 # ---- in a browser (Chromium through Playwright, as tests/test_desk_browser.py; skipped without it) -------------------------

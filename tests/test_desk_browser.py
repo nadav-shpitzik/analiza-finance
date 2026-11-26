@@ -137,6 +137,13 @@ window.mondaySdk = function () {
     api: function (query, opts) {
       var v = (opts || {}).variables || {};
       window.__monday.push({ query: query, variables: v, apiVersion: (opts || {}).apiVersion });
+      /* D4's review: the rows of a board whose cell in a column is one of the values, by its whole text */
+      if (query.indexOf("items_page_by_column_values(") !== -1) {
+        var on = store[String(v.b)] || {};
+        return Promise.resolve({ data: { items_page_by_column_values: { cursor: null, items: Object.keys(on).filter(function (id) {
+          return (v.v || []).indexOf(cell(on[id], v.c).text) !== -1;
+        }).map(function (id) { return { id: id, name: on[id].__name || "" }; }) } } });
+      }
       var board = String((v.b || [])[0]), cells = store[board] || {};
       var items = (v.i || []).filter(function (id) { return Object.prototype.hasOwnProperty.call(cells, id); }).map(function (id) {
         return { id: id, name: (cells[id] || {}).__name || "", board: { id: board },

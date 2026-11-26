@@ -158,6 +158,13 @@
  *      current rows when the confirmation is made (settleFills), held to each newer reading while it is open (recheckBatch:
  *      one withdrawn or changed leaves for "לא ייכתב" with why, the count follows, and with none left the confirmation
  *      closes, said), and checked again right before each row's write (confirmBatch).
+ * 2  The legend promised "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת", and the batch read only the two cells it writes. What a
+ *      proposal rests on (the server's `rests_on`: "סטטוס תשלום" by its index and "סכום ששולם") is read with them, in the
+ *      same request, when the confirmation is made and again right before each write, and a row whose status or amount
+ *      moved is skipped and said (restsMoved). Right before a number is written, one read as the person (READ_CITING,
+ *      items_page_by_column_values) asks for the rows of Student Charge whose "אסמכתת חשבונית" is that number, and another
+ *      one stops it (citedElsewhere; a check that cannot be made fails the row, never passes it). The legend says exactly
+ *      what is checked.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1525,6 +1532,11 @@
     CELL + " } boards(ids: $b) { columns(ids: $c) { id type settings_str } } }";
   var WRITE_ROW = "mutation ($b: ID!, $i: ID!, $v: JSON!, $c: [String!]) { change_multiple_column_values(board_id: $b, " +
     "item_id: $i, column_values: $v, create_labels_if_missing: false) { id column_values(ids: $c) " + CELL + " } }";
+  /* D4's review: the rows of a board whose cell in one column is a value, by monday's own search (read only, as the
+     person) - before the books' number is written, the rows that already cite it (citedElsewhere). That the search matches
+     a text cell by its whole value is the documented behaviour, not yet seen in a live answer */
+  var READ_CITING = "query ($b: ID!, $c: String!, $v: [String]!) { items_page_by_column_values(board_id: $b, limit: 10, " +
+    "columns: [{ column_id: $c, column_values: $v }]) { items { id name } } }";
   /* the page's one other write (D2, ADR-0188): an Update on an item, a billing edit's before and after (MON-41) - sent by
      mondayUpdate only */
   var WRITE_UPDATE = "mutation ($i: ID!, $body: String!) { create_update(item_id: $i, body: $body) { id } }";
@@ -2198,6 +2210,59 @@
     if (!offersFill(r)) { return FILL_GONE; }
     return JSON.stringify(proposalOf(r, a)) === JSON.stringify(it.typed || {}) ? "" : FILL_CHANGED;
   }
+  /* The same review: the legend promised that a row changed in monday since the reading is not written, and the batch read
+     only the two cells it writes. What a proposal rests on besides them (the server's `rests_on`: "סטטוס תשלום" by its index
+     and "סכום ששולם", FR-C2's conditions 1 and 3) is read with them, in the same request, and held to the reading - when the
+     confirmation is made (settleFills) and again right before each write (confirmBatch, against what the confirmation
+     showed); and before a number is written, no other row may cite it (citedElsewhere, FR-C2's condition 6). Never written */
+  function restsOn(a) { return (a && a.rests_on) || []; }
+  /* the columns a batch reads, in one request: what it writes, then what its proposals rest on */
+  function batchCols(a) { return stepWrites(a).concat(restsOn(a)).map(function (w) { return w.column; }); }
+  /* two amounts as monday and the reading hold them, in whole agorot: "3517" and "3517.00" are one amount, empty is empty */
+  function sameAmount(x, y) {
+    x = String(x == null ? "" : x).trim(); y = String(y == null ? "" : y).trim();
+    if (x === "" || y === "") { return x === y; }
+    var a = agorot(x), b = agorot(y);
+    return a !== null && b !== null ? a === b : x === y;
+  }
+  /* why a row is not planned for what its proposal rests on ("" when it may be): the first such cell whose value in monday is
+     not the row's in the reading - a status by its index, an amount by its value - said as monday holds it now */
+  function restsMoved(a, r, live) {
+    var x = restsOn(a).filter(function (c) {
+      var cell = live.cells[c.column] || { text: "", index: null, label: "" }, shown = r[c.field];
+      if (c.kind === "status") { return (cell.index == null ? "" : cell.index) !== String(shown == null ? "" : shown); }
+      return c.kind === "number" ? !sameAmount(cell.text, shown) : cell.text !== String(shown == null ? "" : shown);
+    })[0];
+    return x ? "השתנתה במאנדיי מאז הקריאה, ועכשיו " + x.title + " " +
+      shownCell(x.kind, live.cells[x.column] || { text: "", index: null, label: "" }) : "";
+  }
+  /* the number a row's plan writes, under the books' "number" key: { column, title, value }, or null (the date alone) */
+  function numberWritten(a, plan) {
+    var w = stepWrites(a).filter(function (x) { return x.books === "number"; })[0], v;
+    (plan.steps || []).forEach(function (s) { if (w && s[w.column] !== undefined) { v = String(s[w.column]); } });
+    return v ? { column: w.column, title: w.title, value: v } : null;
+  }
+  /* right before a row is written the books' number: the rows of the board whose cell already holds it, read as the person
+     in one request (READ_CITING). "" when none but this row; else why, naming the other row as monday does. An answer of
+     another shape fails the row - it is never taken as "none" */
+  var CITED_UNCHECKED = "לא נבדק במאנדיי אם שורה אחרת כבר מפנה למספר הזה";
+  function citedElsewhere(boardId, a, it) {
+    var n = fillAction(a) ? numberWritten(a, it.plan) : null;
+    if (!n) { return Promise.resolve(""); }
+    return mondayCall(READ_CITING, { b: String(boardId), c: n.column, v: [n.value] }).then(function (data) {
+      var page = data && data.items_page_by_column_values;
+      if (!page || !Array.isArray(page.items)) { throw { code: "monday", text: "items_page_by_column_values" }; }
+      var others = page.items.filter(function (x) { return x && x.id != null && String(x.id) !== String(it.row.id); });
+      if (!others.length) { return ""; }
+      return "כבר יש \"" + n.value + "\" ב" + n.title + " של שורה אחרת במאנדיי: \"" + (others[0].name || others[0].id) + "\"" +
+        (others.length > 1 ? " ועוד " + NF.format(others.length - 1) : "");
+    }).catch(function (e) { e = e || {}; e.unchecked = true; throw e; });
+  }
+  /* a row whose check could not be made: not written, and why (a timeout or monday asking to slow down said as such) */
+  function uncheckedWords(e) {
+    var why = e.code === "timeout" || e.code === "rate_limited" ? WRITE_ERRORS[e.code] : "";
+    return CITED_UNCHECKED + (why ? " (" + why + ")" : "") + ". לא נכתב כלום.";
+  }
   function settleFills(batch, got) {
     batch.items.forEach(function (it) {
       var live = got[String(it.row.id)];
@@ -2209,7 +2274,8 @@
       if (!offersFill(r)) { it.verdict = "skip"; it.why = FILL_GONE; return; }
       it.row = r;
       it.typed = proposalOf(r, batch.a);
-      var why = fillMoved(batch.a, it.row, live, it.typed), plan = planAction(batch.a, live, it.typed, israelToday(), {});
+      var why = fillMoved(batch.a, it.row, live, it.typed) || restsMoved(batch.a, it.row, live);
+      var plan = planAction(batch.a, live, it.typed, israelToday(), {});
       if (why) { it.verdict = "skip"; it.why = why; return; }
       if (!plan.steps.length) { it.verdict = "skip"; it.why = "כבר כך במאנדיי"; return; }
       it.verdict = "write";
@@ -2271,7 +2337,7 @@
     use("act", { action: actionKey, phase: "batch_start" });
     if (books) { use("books_fill", { from: from === "all" ? "all" : from === "list" ? "list" : "detail", rows: Math.min(items.length, 100) }); }
     redraw();
-    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), stepWrites(a).map(function (w) { return w.column; }))
+    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), batchCols(a))
       .then(function (got) {
         if (BATCH === batch) { settleBatch(batch, got); }
       }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
@@ -2332,7 +2398,8 @@
     var batch = BATCH;
     if (!batch || batch.phase !== "confirm" || busyAct()) { return; }
     var w = batch.a.steps[0][0], boardId = boardIdOf(batch.items[0].row), stop = "", maybe = false;
-    var writes = stepWrites(batch.a), cols = writes.map(function (x) { return x.column; });
+    /* D4's review: each row read again with what its proposal rests on too, as the confirmation's own read was */
+    var writes = stepWrites(batch.a), cols = batchCols(batch.a), read = writes.concat(restsOn(batch.a));
     var todo = batch.items.filter(function (it) { return it.verdict === "write"; });
     batch.phase = "writing"; batch.at = 0; batch.total = todo.length;
     /* the picks are the batch's now: whatever happens, the report says it row by row (D4: a proposal of the books takes
@@ -2352,19 +2419,23 @@
           if (changedSince(it.live, live, cols) || now.problems.length ||
               JSON.stringify(now.steps) !== JSON.stringify(it.plan.steps)) {
             /* the first cell that moved is said, as monday holds it now */
-            var x = writes.filter(function (c) { return changedSince(it.live, live, [c.column]); })[0] || w;
+            var x = read.filter(function (c) { return changedSince(it.live, live, [c.column]); })[0] || w;
             it.result = "skipped";
             it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + x.title + " " +
               shownCell(x.kind, live.cells[x.column] || { index: null, text: "" });
             return null;
           }
-          /* D4's review: what the books propose is the reading's on the screen, right before the write - a newer reading
-             may have landed since the confirmation was shown, or while the rows before this one were written */
-          var moved = fillAction(batch.a) ? proposalMoved(batch.a, it) : "";
-          if (moved) { it.result = "skipped"; it.why = moved; return null; }
-          return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
-            noteWritten(it.key, cells, it.live);
-            it.result = "written";
+          /* D4's review: no other row cites the number about to be written (one read, as the person) */
+          return citedElsewhere(boardId, batch.a, it).then(function (cited) {
+            if (cited) { it.result = "skipped"; it.why = cited; return null; }
+            /* and what the books propose is the reading's on the screen, right before the write - a newer reading may
+               have landed since the confirmation was shown, or while the rows before this one were written */
+            var moved = fillAction(batch.a) ? proposalMoved(batch.a, it) : "";
+            if (moved) { it.result = "skipped"; it.why = moved; return null; }
+            return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
+              noteWritten(it.key, cells, it.live);
+              it.result = "written";
+            });
           });
         }).catch(function (e) {
           e = e || {};
@@ -2373,7 +2444,7 @@
              answer in time */
           if ((e.landed && e.landed.length) || e.code === "unverified" || (e.code === "timeout" && e.landed)) { maybe = true; }
           it.result = "failed";
-          it.why = errorWords(e);
+          it.why = e.unchecked ? uncheckedWords(e) : errorWords(e);
           /* what fails every row alike stops the rest: the app's permission, or monday asking to slow down */
           if (e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; stop = WRITE_ERRORS.no_scope; }
           if (e.code === "rate_limited") { stop = WRITE_ERRORS.rate_limited; }

@@ -93,6 +93,13 @@ function reply(query, v, a) {
   if (a.reject) { return Promise.reject(a.reject); }
   if (a.hold) { return new Promise(() => {}); }
   if (a.answer) { return Promise.resolve(a.answer); }
+  if (query.indexOf("items_page_by_column_values(") !== -1) {
+    /* D4's review: the rows of a board whose cell in a column is one of the values, by its whole text (`noItems`: none) */
+    const on = boards[String(v.b)] || {};
+    const found = Object.keys(on).filter((id) => (v.v || []).indexOf(cv(on[id], v.c).text) !== -1)
+      .map((id) => ({ id: id, name: on[id].__name || "" }));
+    return Promise.resolve({ data: { items_page_by_column_values: { cursor: null, items: a.noItems ? [] : found } } });
+  }
   if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
     updates.push(v);
     return Promise.resolve({ data: { create_update: { id: "9001" } } });
@@ -685,7 +692,11 @@ def test_every_monday_request_of_the_page_goes_through_the_one_door():
     door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
     assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
     assert page.count('"mutation ') == 2 and page.count("mondayCall(WRITE_ROW") == 1 and page.count("mondayCall(WRITE_UPDATE") == 1
-    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == ["READ_CELLS", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too
+    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == [
+        "READ_CELLS", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    citing = re.search(r'var READ_CITING = ("[^;]*);', page).group(1)
+    assert citing.startswith('"query (') and "mutation" not in citing and "items_page_by_column_values(" in citing
     update = page[page.index("function mondayUpdate("):page.index("function readRows(")]
     assert "mondayCall(WRITE_UPDATE" in update and "!CAN_UPDATE" in update and "UPDATE_BOARDS" in update
     assert ".api(" not in code_of(GLUE)

@@ -902,7 +902,8 @@ def test_each_tab_carries_its_own_actions_and_a_tab_the_reader_may_not_see_carri
 
 def test_the_house_style_holds_in_every_word_an_action_shows():
     for a in fd.DESK_ACTIONS.values():
-        for text in [a["button"], a.get("after", "")] + [w["title"] for s in a["steps"] for w in s]:
+        for text in [a["button"], a.get("after", "")] + [w["title"] for s in a["steps"] for w in s] + [
+                c["title"] for c in a.get("rests_on", [])]:
             assert "\u2014" not in text and "\u2192" not in text and "->" not in text, text
     form = fd.account_form()
     for text in [form["mon43"]] + [f["title"] for f in form["fields"]] + [f["hint"] for f in form["fields"]]:
