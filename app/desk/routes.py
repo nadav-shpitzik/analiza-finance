@@ -19,7 +19,8 @@
   REFRESH_GAP_S per instance (429 `rate_limited`).
 - GET /api/desk/totals: a list's totals exactly as the page filters it, from the reading the page shows; never a read.
 - POST /api/desk/export-link, GET /api/desk/export.xlsx: a list as an Excel file (app/desk/export.py) behind a link signed
-  with this service's own key, EXPORT_LINK_S long.
+  with this service's own key, EXPORT_LINK_S long. D4: the students by cohort too (`b2c_cohorts`, app/desk/cohorts.py and
+  cohorts_export.py), its totals and its file gated as the students' list is.
 - POST /api/usage: what the reader did on the page, as closed words and counts (app/desk/usage.py), kept in `desk_events`
   (app/desk/usage_store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
 
@@ -59,6 +60,7 @@ from .. import config
 from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
 from .books import BOOKS_KEY_MAX, DeskBooks, merge as books_merge
+from .cohorts import VIEW_WORD as COHORTS_WORD, cohort_totals, filter_cohorts, filter_unpriced
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
 from .usage_store import UsageStoreError, append_events
@@ -98,8 +100,9 @@ STALE_S = 600
 EXPORT_LINK_S = 120
 # the context of the link's key: this service's own, so analiza-metrics' links (`b"finance-export|"`) are not valid here
 EXPORT_KEY_CONTEXT = b"analiza-finance-desk-export|"
-# the lists a total or a file is of: the students', the companies', the aging by customer
-TABS = ("b2c", "b2b", "b2b_customers")
+# the lists a total or a file is of: the students', the companies', the aging by customer, and since D4 the students by
+# cohort - a list of the students' tab (`b2c_` opens it for Student Charge's members, `_opens`)
+TABS = ("b2c", "b2b", "b2b_customers", "b2c_cohorts")
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # How the desk is used (analiza-metrics' limits, app/finance_api.py at da671b2): the page sends its events in batches -
 # when 20 wait, 30 seconds after the first, and when it goes out of sight - so an hour of steady work is some 120 batches
@@ -374,7 +377,7 @@ def _gated(request: Request, endpoint: str) -> Any:
 def _opens(got: Visitor, tab: str) -> bool:
     """Whether this reader may see a list of this tab: the students' for Student Charge's members, the companies' and
     their aging for B2B Charge's. Only True opens one: None (the members could not be read) is no."""
-    return (got.b2c if tab == "b2c" else got.b2b) is True
+    return (got.b2c if tab.startswith("b2c") else got.b2b) is True
 
 
 def _view_of(st: Any, reading: dict) -> tuple:
@@ -526,6 +529,10 @@ def _filtered(whole: dict, tab: str, state: str, period: str, customer: str, q: 
     """A list exactly as the page filters it; ValueError for a filter the desk does not know."""
     if tab == "b2c":
         return filter_b2c(whole["b2c"], state, period, q)
+    if tab == "b2c_cohorts":   # D4: the search box only, as the page filters the view
+        if state or period or customer:
+            raise ValueError("the cohorts take no state, period or customer")
+        return filter_cohorts(whole["b2c"].get("cohorts"), q)
     if tab == "b2b":
         return filter_b2b(whole["b2b"], state, customer, q)
     return filter_customers(whole["b2b"]["customers"], q)
@@ -569,7 +576,8 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
     except ValueError:
         return err(400, "bad_filter")
     audit(visitor.identity, "desk-totals", "ok", len(rows))
-    return JSONResponse(json_safe({"count": len(rows), "sums": list_totals(tab, rows), "taken_at": taken_at}))
+    sums = cohort_totals(rows) if tab == "b2c_cohorts" else list_totals(tab, rows)
+    return JSONResponse(json_safe({"count": len(rows), "sums": sums, "taken_at": taken_at}))
 
 
 class ExportBody(BaseModel):
@@ -623,7 +631,8 @@ async def desk_export_link(request: Request) -> JSONResponse:
         audit(visitor.identity, "desk-export", "not_a_member")
         return err(403, "not_a_board_member")
     states = B2C_STATES if body.tab == "b2c" else B2B_STATES
-    if (body.state and body.state != "tasks" and body.state not in states) or len(body.period) > 32 \
+    if (body.tab == "b2c_cohorts" and (body.state or body.period or body.customer)) \
+            or (body.state and body.state != "tasks" and body.state not in states) or len(body.period) > 32 \
             or len(body.q) > 100 or len(body.taken) > 40 or len(body.books) > BOOKS_KEY_MAX \
             or not (body.customer == "" or (body.customer.isascii() and body.customer.isalnum() and len(body.customer) <= 32)) \
             or not query_exportable(body.q):
@@ -669,7 +678,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         _audit_link(u, "link_expired")
         return err(403, "link_expired")
     st = desk_state(request.app.state, cfg)
-    member = st.members.member(u, STUDENT_CHARGE if tab == "b2c" else B2B_CHARGE)
+    member = st.members.member(u, STUDENT_CHARGE if tab.startswith("b2c") else B2B_CHARGE)
     if member is None:
         _audit_link(u, "members_unknown")
         return err(503, "members_unavailable")
@@ -699,7 +708,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     states = B2C_STATES if tab == "b2c" else B2B_STATES
     # "לטיפול": the tile's own word for every state that waits for her (one name for one thing, round 3)
     state_label = "לטיפול" if state == "tasks" else (states[state]["label"] if state in states else "הכל")
-    side = "b2c" if tab == "b2c" else "b2b"
+    side = "b2c" if tab.startswith("b2c") else "b2b"
     # whole when the view's own checks of the tab hold and the reading read every board of the tab whole (stricter than
     # analiza-metrics, whose reading could not come short and still be held)
     complete = bool(whole["checks"].get(side + "_ok")) and _visible_complete(reading.get("checks") or {}, TAB_BOARDS[side])
@@ -723,6 +732,16 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         period_label = p["label"] if p else ("כל התקופה" if not period else period)
         data = b2c_workbook(rows, dict(about, period_label=period_label), sheets=sheets)
         name, ascii_name = b2c_file_names(state_label, state, period_label, period, today)
+    elif tab == "b2c_cohorts":
+        # D4: whole when the students' tab is, and the cohorts' lines tie to their students
+        from .cohorts_export import cohorts_file_names, cohorts_workbook
+
+        part = whole["b2c"].get("cohorts") or {}
+        tied = bool((part.get("checks") or {}).get("ties"))
+        data = cohorts_workbook(rows, filter_unpriced(part, q), dict(about, complete=complete and tied,
+                                                                     state_label=COHORTS_WORD,
+                                                                     period_label="כל המחזורים עם מחיר"))
+        name, ascii_name = cohorts_file_names(q, today)
     elif tab == "b2b_customers":
         # a company is monday's "חברה" (round 3); only the view keeps its name "לפי לקוח"
         data = customers_workbook(rows, dict(about, state_label="לפי לקוח", period_label="כל החברות עם משהו פתוח"))

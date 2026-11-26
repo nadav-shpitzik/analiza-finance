@@ -154,7 +154,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   money), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
   17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out, listed and in no sum. A line is its students'
   sums (`checks.ties`). The reading reads the enrollments of the cohorts with a price through `board_relation_mm1hetrb`
-  (step 5, `roster_ids`), and a refresh reads those cohorts again every time (`BODY_SCHEMA` 4). Tests:
+  (step 5, `roster_ids`), and a refresh reads those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
+  file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
+  cohort, every student under the same money columns so they sum to their line, the cohorts without a price). Tests:
   `tests/test_desk_cohorts.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`

@@ -14,19 +14,22 @@ refresh holds the students a full reading holds.
 """
 from __future__ import annotations
 
+import io
 import json
 import random
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import quote
 
+import openpyxl
 import pytest
 
 from app.desk import cohorts as ch
 from app.desk import reading as rd
 from app.desk import view as fd
 from app.monday.client import NEVER_READ
-from tests.desk_fixtures import TODAY, lead, sc, snap
-from tests.test_desk import SC, World, reader_of, rel, status
+from tests.desk_fixtures import TODAY, lead, sc, served, snap
+from tests.test_desk import SC, World, desk, reader_of, rel, session_token, status  # noqa: F401 - `desk` is the fixture
 
 D = Decimal
 STATUS = {"0": "Registered", "1": "נרשם", "2": "פעיל", "3": "At Risk", "4": "סיים", "5": "עבר לקורס אחר",
@@ -628,3 +631,108 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
         assert mine == theirs and mine["checks"]["ties"] is True
         students += sum(len(x["students_list"]) for x in mine["cohorts"])
     assert students > 200
+
+
+# ---- the routes: the totals and the file of the view, gated as the students' list ------------------------------------
+def cohort_snapshot() -> dict:
+    """A701 (10,000): E1 approved, 4,000 paid; E2 settled, its deposit and the helper's balance row; E3 waived. A702
+    (12,000): E4 not submitted, 4,000 paid; E5 submitted, nothing paid. A703 without a price."""
+    balance = sc(3, paid="6000", enr=["E2"], receipt="0", invoice="", ctype="השלמת תשלום")
+    balance["name"] = "סטודנט/ית E2 | השלמת תשלום"
+    payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), balance, sc(4, paid="4000", enr=["E4"])]
+    cohorts = [coh("C1", "A701", roster=["E1", "E2", "E3"]), coh("C2", "A702", price="12000", roster=["E4", "E5"]),
+               coh("C3", "A703", price="")]
+    enrollments = [enr("E1", "C1", voucher="1", name="רונית כהן"), enr("E2", "C1", voucher="4"),
+                   enr("E3", "C1", voucher="2"), enr("E4", "C2", voucher="17"), enr("E5", "C2", voucher="0"),
+                   enr("E6", "C3", voucher="1")]
+    return snap(payments, cohorts=cohorts, enrollments=enrollments)
+
+
+def _auth(user: int = 1) -> dict:
+    return {"Authorization": "Bearer " + session_token(user)}
+
+
+def test_the_cohorts_totals_are_the_servers_for_the_list_as_filtered_and_for_its_members_only(desk, monkeypatch):  # noqa: F811
+    served(monkeypatch, cohort_snapshot())
+    body = desk.get(session_token(1)).json()
+    taken = body["taken_at"]
+    part = body["view"]["b2c"]["cohorts"]
+    assert [x["code"] for x in part["cohorts"]] == ["A701", "A702"] and part["checks"]["ties"] is True
+    assert body["view"]["b2c"]["cohorts"]["totals"]["balance"] == "26000"          # money as strings, never a float
+
+    def get(qs, user=1):
+        return desk.client.get("/api/desk/totals?" + qs + "&taken=" + quote(taken), headers=_auth(user))
+    t = get("tab=b2c_cohorts").json()
+    assert t["count"] == 2 and t["taken_at"] == taken
+    assert {k: t["sums"][k] for k in ("expected", "paid", "balance", "part_approved", "part_submitted",
+                                       "part_not_submitted", "part_settled", "students", "waived")} == {
+        "expected": "44000", "paid": "18000", "balance": "26000", "part_approved": "6000", "part_submitted": "12000",
+        "part_not_submitted": "8000", "part_settled": "0", "students": 4, "waived": 1}
+    t = get("tab=b2c_cohorts&q=%D7%9B%D7%94%D7%9F").json()                            # "כהן": a student of A701
+    assert t["count"] == 1 and t["sums"]["balance"] == "6000"
+    assert get("tab=b2c_cohorts", user=3).json() == {"error": "not_a_board_member"}   # B2B Charge only
+    assert get("tab=b2c_cohorts", user=2).status_code == 200                          # Student Charge only
+    assert get("tab=b2c_cohorts&state=tasks").json() == {"error": "bad_filter"}
+    assert get("tab=b2c_cohorts&period=2026-10").json() == {"error": "bad_filter"}
+
+
+def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_cohort_and_its_unpriced_listed(desk, monkeypatch):  # noqa: F811
+    served(monkeypatch, cohort_snapshot())
+    desk.get(session_token(1))
+
+    def link(user=1, **body):
+        return desk.client.post("/api/desk/export-link", headers=_auth(user), json={"tab": "b2c_cohorts", **body})
+    r = link()
+    assert r.status_code == 200
+    f = desk.client.get(r.json()["url"])
+    assert f.status_code == 200 and 'filename="finance-by-cohort-' in f.headers["content-disposition"]
+    wb = openpyxl.load_workbook(io.BytesIO(f.content))
+    assert wb.sheetnames == ["לפי מחזור", "פרטים", "סטודנטים", "בלי מחיר"]
+    ws = wb["לפי מחזור"]
+    assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2"
+    heads = [x.value for x in ws[1]]
+    assert heads[:8] == ["מחזור", "שם המחזור", fd.FLOW_LABEL, "מחיר", ch.STUDENTS_WORD, ch.EXPECTED_WORD, ch.PAID_WORD,
+                         ch.PARTS["approved"]["label"]]
+    # "אושר - יתרה שולמה, וחסר בתקבולים" holds nothing here, so it is not a column, as on the page
+    assert ch.PARTS["settled"]["label"] not in heads and ch.PARTS["no_status"]["label"] in heads
+    lines = {ws.cell(row=i, column=1).value: dict(zip(heads, [x.value for x in ws[i]])) for i in (2, 3)}
+    assert lines["A701"][ch.PARTS["approved"]["label"]] == 6000 and lines["A701"][ch.BALANCE_WORD] == 6000
+    assert lines["A701"]["מחיר"] == 10000 and lines["A701"][ch.STUDENTS_WORD] == 2 and lines["A701"][ch.WAIVED_WORD] == 1
+    assert lines["A702"][ch.EXPECTED_WORD] == 24000 and lines["A702"][ch.PARTS["submitted"]["label"]] == 12000
+    money = [h for h in heads if h in (ch.EXPECTED_WORD, ch.PAID_WORD, ch.BALANCE_WORD)
+             or h in [p["label"] for p in ch.PARTS.values()]]
+    # the students: each money column of a cohort's students sums to its line
+    st = wb["סטודנטים"]
+    sheads = [x.value for x in st[1]]
+    srows = [r for r in (dict(zip(sheads, [x.value for x in st[i]])) for i in range(2, st.max_row + 1)) if r["מזהה במאנדיי"]]
+    # under them, what the sheet is: its students sum to their cohort's line
+    assert any("שווים לשורת המחזור" in str(st.cell(row=i, column=1).value) for i in range(2, st.max_row + 1))
+    assert {s["מזהה במאנדיי"] for s in srows} == {"E1", "E2", "E3", "E4", "E5"}
+    for code, ln in lines.items():
+        for h in money:
+            assert sum(s[h] or 0 for s in srows if s["מחזור"] == code) == (ln[h] or 0), (code, h)
+    waived = next(s for s in srows if s["מזהה במאנדיי"] == "E3")
+    assert waived[ch.PAID_WORD] is None and waived["בחשבון"].startswith(ch.WAIVED_WORD)
+    unpriced = wb["בלי מחיר"]
+    assert [unpriced.cell(row=2, column=c).value for c in (1, 5)] == ["A703", "אין מחיר"]
+    info = {row[0].value: row[1].value for row in wb["פרטים"].iter_rows()}
+    assert info["רשימה"] == ch.VIEW_WORD and info["שורות"] == 2 and "שימו לב" not in info
+    assert "039482716" not in json.dumps([[c.value for c in row] for s in wb for row in s.iter_rows()], default=str)
+    # a search: the cohorts the page shows for it, and the file's name says it
+    f = desk.client.get(link(q="כהן").json()["url"])
+    wb = openpyxl.load_workbook(io.BytesIO(f.content))
+    assert [wb["לפי מחזור"].cell(row=i, column=1).value for i in (2, 3)] == ["A701", None]
+    assert "%D7%97%D7%99%D7%A4%D7%95%D7%A9" in f.headers["content-disposition"]           # "חיפוש" in the Hebrew name
+    # gated as the students' list; no state, period or company
+    assert link(user=3).status_code == 403 and link(state="tasks").status_code == 400 and link(period="2026-10").status_code == 400
+
+
+def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, monkeypatch):  # noqa: F811
+    served(monkeypatch, cohort_snapshot())
+    real = ch.build_cohorts
+    monkeypatch.setattr(ch, "build_cohorts", lambda s, r: dict(real(s, r), checks={"ties": False}))
+    desk.get(session_token(1))
+    url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
+    info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
+        io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
+    assert "לא שלמה" in info["שימו לב"]
