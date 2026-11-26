@@ -78,8 +78,21 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (checked before the body is read), `{"month": "YYYY-MM", "company": ...}`: always 200 after the key, with an `error` from
   `PROBE_ERRORS`, boxed like a tick, nothing of the answer kept or logged. **The deployment reaches only `WIZ_COMPANY`**
   (`other_company`; one session, the tick's), so Demo is probed from the Repl's Shell on a local server (the README has
-  both commands). `/health` `books.ledger_report`: `set`, `missing` or `bad`, never a field. Nothing is kept yet; no schema
-  change.
+  both commands). `/health` `books.ledger_report`: `set`, `missing` or `bad`, never a field.
+- **The ledger's totals (B3, 26.11; ADR-0187 §2-§5):** `app/books/ledger_totals.py` sums, `app/books/ledger_store.py` keeps,
+  in `migrations/007` (CREATE only, five tables). Never a row. Kept: (a) per month (by "תאריך") and sort code a line's debit,
+  credit, rows, accounts and `masked_keys`; (b) each code's name, cleaned; (c) each account key's code, **only a key the copy's
+  cleaning keeps whole with at most five digits** (`storable_key`): student cards are keyed by ID numbers (ADR-0173 §1), so
+  such a key is never stored, hashed or kept, only counted. **A line of one account is never stored** (`single_account`),
+  and a side one account alone fills is NULL (`single_sides`); the database's CHECKs also refuse a line of one account and a
+  key with six digits or a "#". Batch 9998 never
+  enters a line: its rows and totals per month are in `ledger_months`. A run replaces each month whole in one transaction,
+  and only a month read whole: a part at the report's `limit` is split by sort code at the median of the codes it carried
+  (at most `MAX_PARTS` calls, else `cut`); every row readable and inside its cut (`unreadable`, `outside`, `columns`); the
+  month balanced (`unbalanced`, the guard that does not depend on the vendor's own cap, since `limit` is not sent; a
+  hypothesis the first run settles); an empty answer for a month held with rows is `emptied`, never trusted.
+  `tests/test_ledger_totals.py` scans every table for every form of the fixture's ID keys, and every answer and log for
+  every fixture value. No route reaches it yet.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
   `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
   bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the
