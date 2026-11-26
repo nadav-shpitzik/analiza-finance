@@ -280,7 +280,8 @@ class KillLock(Monday):
         if "columns(ids:" in json.loads(request.content)["query"]:
             with psycopg.connect(self.url, autocommit=True) as c:  # a network blip, a pooler restart, an idle timeout
                 self.killed = c.execute("SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
-                                        "WHERE query LIKE 'SELECT pg_try_advisory_xact_lock%' AND pid <> pg_backend_pid()"
+                                        "WHERE query LIKE 'SELECT pg_try_advisory_xact_lock%' AND pid <> pg_backend_pid() "
+                                        "AND datname = current_database()"
                                         ).fetchone()[0]
             with rs.reading_lock(self.url) as second:  # a second /api/recon/run arriving now
                 self.second = second
