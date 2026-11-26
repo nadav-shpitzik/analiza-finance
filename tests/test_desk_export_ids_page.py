@@ -398,7 +398,8 @@ const [base, sdk, file] = process.argv.slice(1);
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1434, height: 900 } });
   const page = await context.newPage();
   page.on("pageerror", (e) => out.errors.push("pageerror: " + e));
-  page.on("console", (m) => out.errors.push("console " + m.type() + ": " + m.text()));
+  /* the page writes nothing to the console (the node test holds every call); Chromium's own warnings are not the page's */
+  page.on("console", (m) => { if (m.type() !== "warning" && m.type() !== "verbose") { out.errors.push("console " + m.type() + ": " + m.text()); } });
   /* every request the page makes, to this service or anywhere else: where, how, and what it carried */
   page.on("request", (r) => out.requests.push({ url: r.url(), method: r.method(), body: r.postData() || "",
     headers: JSON.stringify(r.headers()) }));
@@ -420,9 +421,9 @@ const [base, sdk, file] = process.argv.slice(1);
   out.steps.flash = await page.$eval(".fin-toast", (t) => t.innerText);
   out.steps.after = await page.$$eval("[data-export-ids]", (b) => b.map((x) => x.disabled));
   /* the usage batch of the export goes out when the view is left */
-  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
-    document.dispatchEvent(new Event("visibilitychange")); });
-  await page.waitForTimeout(300);
+  await Promise.all([page.waitForRequest((r) => r.url().endsWith("/api/usage"), { timeout: 15000 }),
+    page.evaluate(() => { Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange")); })]);
   out.steps.monday = await page.evaluate(() => window.__monday.slice());
   out.steps.executed = await page.evaluate(() => window.__executed.slice());
   out.steps.stored = await page.evaluate(async () => ({ local: JSON.stringify(Object.assign({}, localStorage)),
