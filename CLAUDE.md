@@ -246,6 +246,17 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   it is after the press (`dismissed` / `undone`). They write the service's own database only: nothing to monday or the
   books. Tests: `tests/test_desk_dismissals.py` (each kind hidden and back by each of its fields and by nothing else; the
   routes, membership per kind, a forged hash, undo by another, on Postgres too).
+  **The page** (finance.js, its block "R5"): "לא פער" beside each mark's sentence in a row's details and on each document
+  of the three lists (a column with no heading), "לא להציע" beside each proposal (its sentence in the details, its line in
+  the list); none for a viewer (`user.view_only`). One press opens a confirmation floating beside it (`nagBox`, `fin-pop`,
+  placed by `placePop`; one floating box at a time) that says what it does and what brings it back; "הסתרה" sends the
+  alert, the server's evidence, `taken_at` and `books.key`, and draws the desk the server answers (every count the
+  server's); a refusal is said in the box, and one the screen is behind on (`NAG_RELOAD`) asks the desk again. A newer
+  reading closes an open confirmation whose alert changed (`recheckNag`). "הוסתרו כלא פער (N)" under each list opens what
+  is hidden of it - what, "בידי אתה" or the monday user id (the page holds no other person's name), when - and "החזרה" on
+  one's own. "חזר" beside an alert that came back. Its words are the legend's (view.py `NAG_WORD` and the rest). Usage:
+  `not_a_gap` (`alert`, `phase`, `code`, `from`), `not_a_gap_undo`, `not_a_gap_list` (`open`, `list`). Tests:
+  `tests/test_desk_dismissals_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

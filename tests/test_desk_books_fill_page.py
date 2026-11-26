@@ -170,8 +170,11 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
     assert set(rows) == {"62601", "62602", "62604", "62606", "62613"}
     for number, (rid, name) in {"62601": ("1", "נועה ברק"), "62602": ("2", "יואב שטרן"),
                                 "62604": ("4", "עידו רז | השלמת תשלום")}.items():
+        # R5: and "לא להציע" beside its button, naming the row's proposal
         assert ('<div class="fin-fill">הצעה: לרשום בשורה של %s <button type="button" class="fin-btn fin-fill-btn" '
-                'data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button></div>' % (h.escape(name), rid)) in rows[number]
+                'data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button> <button type="button" '
+                'class="fin-linkbtn fin-nag" data-nag="books_ref_fill:%s" data-nag-from="list">לא להציע</button></div>'
+                % (h.escape(name), rid, rid)) in rows[number]
     assert "fin-fill" not in rows["62606"] + rows["62613"]
     assert 'data-books-all="1">לרשום את כל ההצעות <span class="fin-subtle">(4)</span></button>' in part
     assert part.index('data-books-all="1"') < part.index("<table")                     # above the list
@@ -198,7 +201,9 @@ def test_a_proposed_row_carries_its_chip_its_sentence_and_its_button_and_never_j
         detail = detail[:detail.index("</td></tr>")]
         mark = {r["id"]: r for r in merged["b2c"]["rows"]}[rid]["books"][0]
         # the server's sentence, quietly under the actions - a proposal is no warning
-        assert '<p class="fin-dx-books fin-fill-said">%s</p>' % h.escape(mark["text"]) in detail
+        # R5: and "לא להציע" beside it
+        assert ('<p class="fin-dx-books fin-fill-said">%s <button type="button" class="fin-linkbtn fin-nag" data-nag="%s:%s" '
+                'data-nag-from="detail">לא להציע</button></p>' % (h.escape(mark["text"]), mark["kind"], rid)) in detail
         assert "fin-dx-warn" not in detail or h.escape(mark["text"]) not in detail[detail.index("fin-dx-warn"):]
         assert ('<button type="button" class="fin-btn" data-books-fill="sc:%s" data-books-from="detail">רישום מחשבשבת'
                 '</button>' % rid) in detail

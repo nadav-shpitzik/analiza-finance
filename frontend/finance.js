@@ -827,9 +827,11 @@
   function warnings(r) {
     var w = r.flags.filter(function (f) { return WARN[f]; }).map(function (f) {
       var t = (WARN_ON[r.board] || {})[f] || WARN[f];
-      return typeof t === "function" ? t(r) : t;
+      /* R5: a mark of the books says it in its own sentence, then "לא פער", and that it came back when it did */
+      var m = NAG_MARKS[f] ? booksMark(r, f) : null;
+      return esc(typeof t === "function" ? t(r) : t) + (m ? " " + nagButton(f, r.id, m.evidence, "detail") + nagBack(m) : "");
     });
-    return w.length ? "<ul class=\"fin-dx-warn\">" + w.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>" : "";
+    return w.length ? "<ul class=\"fin-dx-warn\">" + w.map(function (t) { return "<li>" + t + "</li>"; }).join("") + "</ul>" : "";
   }
   /* every field always, in the same place, "-" where monday holds nothing (QA 2.9: the fields moved from row to row) */
   function facts(pairs) {
@@ -1191,9 +1193,9 @@
   var BOOKS_HEADS = { number: "מספר מסמך", type: "סוג מסמך", date: "תאריך מסמך", card: "שם בכרטיס",
     incl: "סכום בחשבשבת (כולל מע\"מ)", excl: "סכום בחשבשבת (ללא מע\"מ)", candidates: "מועמדת לפי שם", accounts: "חברה",
     why: "למה לא ברור" };
-  var BOOKS_COLS = { b2c: ["number", "type", "date", "incl", "card", "candidates"],
-    b2b: ["number", "type", "date", "excl", "incl", "card", "accounts"],
-    unclear: ["number", "type", "date", "excl", "incl", "card", "why"] };
+  var BOOKS_COLS = { b2c: ["number", "type", "date", "incl", "card", "candidates", "nag"],
+    b2b: ["number", "type", "date", "excl", "incl", "card", "accounts", "nag"],
+    unclear: ["number", "type", "date", "excl", "incl", "card", "why", "nag"] };
   /* a time as the page writes it: the reading's (asOf), and the books' copy's */
   function stamp(iso) {
     return iso ? new Date(iso).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
@@ -1221,9 +1223,12 @@
   function proposalHtml(e) {
     var p = e.proposal, r = p ? rowByKey("sc:" + p.item_id) : null, a = r ? rowFill(r) : null;
     if (!p) { return ""; }
+    /* R5: "לא להציע" beside its button: the proposal is the row's, and hidden it leaves the row and this line */
+    var m = r ? booksMark(r, "books_ref_fill") : null;
     return "<div class=\"fin-fill\">" + esc(PROPOSAL_SAID + p.name) + (r && r.written ? writtenMark(r)
       : a && fillable(r) ? " <button type=\"button\" class=\"fin-btn fin-fill-btn\" data-books-fill=\"" + esc(rowKey(r)) +
-        "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" : "") + "</div>";
+        "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" +
+        (m ? " " + nagButton(m.kind, r.id, m.evidence, "list") : "") : "") + "</div>";
   }
   /* above the students' list: every proposal at once, its count (the documents' and the dates alone, allFills), and under
      the list how many of them are a date alone, whose rows already cite their number and are not on it */
@@ -1249,12 +1254,16 @@
     if (k === "card") { return e.card ? esc(e.card) : NOT_SET; }
     if (k === "accounts") { return (e.accounts || []).length ? e.accounts.map(esc).join(" · ") : NOT_SET; }
     if (k === "why") { return esc(e.why_text || ""); }
+    if (k === "nag") { return nagButton(e.kind, e.subject, e.evidence, "list") + nagBack(e); }   /* R5 */
     return candidatesHtml(e);
   }
   function booksTable(kind, docs) {
     var cols = BOOKS_COLS[kind], at = function (k) { return " class=\"b-" + k + (k === "incl" || k === "excl" ? " n" : "") + "\""; };
     return "<div class=\"fin-tw\" data-list=\"" + esc(listKey() + "|books|" + kind) + "\"><table class=\"fin-t fin-books-t\"><thead><tr>" +
-      cols.map(function (k) { return "<th" + at(k) + ">" + esc(BOOKS_HEADS[k]) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      cols.map(function (k) {
+        /* R5: the press's column has no heading of its own - its button says what it does - and is named for a reader */
+        return k === "nag" ? "<th" + at(k) + " aria-label=\"" + NAG_WORD.gap + "\"></th>" : "<th" + at(k) + ">" + esc(BOOKS_HEADS[k]) + "</th>";
+      }).join("") + "</tr></thead><tbody>" +
       docs.map(function (e) {
         return "<tr>" + cols.map(function (k) { return "<td" + at(k) + ">" + booksCell(k, e) + "</td>"; }).join("") + "</tr>";
       }).join("") + "</tbody></table></div>";
@@ -1273,14 +1282,183 @@
     var pop = kind === "b2c" && popInBooks(BATCH) ? batchBox(BATCH) : "";
     if (pop) { POP_IN_BOOKS = true; }
     return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body + datesAloneSaid(fills) +
-      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + pop + "</div>";
+      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + nagListHtml(kind, part) +
+      pop + "</div>";
   }
   /* under "לטיפול" of a tab: its list, and the unclear documents when the server sent them (a member of both boards) */
   function booksHtml(tab) {
     var part = VIEW[tab] && VIEW[tab].books;
     if (!VIEW.books || VIEW.books.state === "off" || !part) { return ""; }
     var unclear = VIEW.books_unclear;
-    return booksPanel(tab, part) + (unclear && (unclear.documents || []).length ? booksPanel("unclear", unclear) : "");
+    /* R5: and when all its documents are hidden, for its list of what is hidden */
+    return booksPanel(tab, part) + (unclear && ((unclear.documents || []).length || (unclear.hidden || []).length)
+      ? booksPanel("unclear", unclear) : "");
+  }
+
+  /* ---------- R5 (26.11, "לא פער", the spec §6.1 item 4): an alert of the books hidden for everyone ----------
+     Beside each mark's sentence in a row's details, on each document of the books' lists and beside each proposal ("לא
+     להציע": a wrong proposal must stop showing too), one press opens a small confirmation floating beside it (fin-pop, as a
+     batch and a row's action do, placePop) that says what it does; "הסתרה" sends the alert, the evidence the server sent with
+     it, and the reading and the books' part on the screen to POST /api/alerts/not-a-gap. The server keeps its OWN evidence
+     (the page's is only compared: one that is not the server's is refused) and answers the desk as it is after the press,
+     which is drawn as any answer is: the alert is gone from the screen, and every count is the server's. Under each list,
+     "הוסתרו כלא פער (N)" opens what is hidden of it - what, by whom ("אתה", or the monday user id: the page holds no other
+     person's name, and none is kept), when - and "החזרה" on one's own (the server refuses anyone else's). An alert whose
+     evidence changed since it was hidden is shown again, and says so ("חזר"). Nothing is written to monday or the books.
+     A viewer (the server's `user.view_only`) is shown no press: the server refuses one. */
+  var NAG_WORD = { gap: "לא פער", fill: "לא להציע" };
+  var NAG_FILLS = { books_ref_fill: 1, books_date_fill: 1 };
+  var NAG_MARKS = { books_ref_invalid: 1, books_amount_differs: 1, books_receipt_unpaid: 1 };
+  var NAG_LIST_WORD = "הוסתרו כלא פער";
+  var NAG_SAID = {
+    mark: "הסימון יוסתר לכולם כ\"לא פער\", כל עוד השורה והמסמכים שלה בחשבשבת נשארים כמו עכשיו: המספרים באסמכתת חשבונית, " +
+      "סכום ששולם, סטטוס תשלום, והמסמכים עצמם. כשמשהו מהם משתנה, הוא חוזר.",
+    doc: "המסמך יוסתר מהרשימה לכולם כ\"לא פער\", כל עוד הוא נשאר בחשבשבת כמו עכשיו: הסוג, הסכום, התאריך, השם בכרטיס, " +
+      "והרשימה שהוא בה. כשמשהו מהם משתנה, הוא חוזר לרשימה.",
+    fill: "ההצעה לא תוצג יותר, לאף אחד, כל עוד חשבשבת מציעה לשורה הזאת בדיוק את אותו מספר ואותו תאריך. הצעה אחרת תוצג.",
+    kept: "נשמר בשולחן מי הסתיר ומתי, ולא נכתב כלום במאנדיי או בחשבשבת. מי שהסתיר יכול להחזיר, מתחת לרשימה."
+  };
+  var NAG_ERRORS = {
+    other_reading: "המסך התעדכן מאז שנלחץ, ולכן לא הוסתר. המסך נטען מחדש: אפשר ללחוץ שוב.",
+    not_shown: "ההתראה כבר לא מוצגת, ולכן לא הוסתרה. המסך נטען מחדש.",
+    already_hidden: "ההתראה כבר הוסתרה. המסך נטען מחדש.",
+    evidence_changed: "ההתראה השתנתה מאז שהוצגה, ולכן לא הוסתרה. המסך נטען מחדש: אפשר ללחוץ שוב.",
+    dismissals_unavailable: "לא הצלחנו לשמור עכשיו. לא הוסתר כלום; אפשר לנסות שוב עוד מעט.",
+    busy: "ההשוואה לחשבשבת עוד מחושבת. לא הוסתר כלום; אפשר לנסות שוב עוד מעט.",
+    view_only: "לצופה במאנדיי אין אפשרות להסתיר התראה.",
+    not_a_board_member: "ההתראה שייכת ללוח שאינך חבר/ה בו.",
+    not_yours: "רק מי שהסתיר יכול להחזיר.",
+    not_live: "ההסתרה כבר הוחזרה או הוחלפה. המסך נטען מחדש."
+  };
+  /* what the server's answer to a refusal leaves on the screen behind: the desk is asked again */
+  var NAG_RELOAD = { other_reading: 1, not_shown: 1, already_hidden: 1, evidence_changed: 1, not_live: 1 };
+  var NAG = null;        /* the press on the screen: { kind, subject, evidence, from, what, phase, error } */
+  var NAG_OPEN = {};     /* the lists of what is hidden that are open: b2c, b2b, unclear */
+  var UNDOING = "";      /* "kind:subject:id" of the "החזרה" on its way */
+  function nagWord(kind) { return NAG_FILLS[kind] ? NAG_WORD.fill : NAG_WORD.gap; }
+  function nagSaid(kind) { return NAG_FILLS[kind] ? NAG_SAID.fill : NAG_MARKS[kind] ? NAG_SAID.mark : NAG_SAID.doc; }
+  function mayNag() { return !(BODY && BODY.user && BODY.user.view_only === true); }
+  function busyNag() { return !!NAG && NAG.phase === "saving"; }
+  function nagKey(kind, subject) { return kind + ":" + subject; }
+  /* the press: only for an alert the server sent with its evidence, never for a viewer; while anything is written, off */
+  function nagButton(kind, subject, evidence, from) {
+    if (!kind || !subject || !evidence || !mayNag()) { return ""; }
+    return "<button type=\"button\" class=\"fin-linkbtn fin-nag\" data-nag=\"" + esc(nagKey(kind, subject)) + "\" data-nag-from=\"" +
+      from + "\"" + (busy() ? " disabled" : "") + ">" + esc(nagWord(kind)) + "</button>";
+  }
+  /* who hid it: "אתה", or the monday user id - the page knows no other person's name, and the server keeps none */
+  function nagWho(by) { return BODY && BODY.user && String(BODY.user.id) === String(by) ? "אתה" : "משתמש/ת " + by; }
+  function nagWhen(at) { return stamp(at); }
+  /* an alert whose evidence changed since it was hidden is shown again, and says so */
+  function nagBack(alert) {
+    var b = alert && alert.returned;
+    return b ? "<div class=\"fin-nag-back\">" + esc("חזר: הוסתר כ\"" + nagWord(alert.kind) + "\" ב-" + nagWhen(b.at) + " בידי " +
+      nagWho(b.by) + ", והראיה השתנתה מאז.") + "</div>" : "";
+  }
+  /* the alert a press names, as the answer on the screen holds it: { evidence, what } or null */
+  function nagAlert(kind, subject) {
+    if (NAG_MARKS[kind] || NAG_FILLS[kind]) {
+      var r = rowByKey("sc:" + subject), m = r ? booksMark(r, kind) : null;
+      if (!m || !m.evidence || (NAG_FILLS[kind] && !rowFill(r))) { return null; }
+      return { evidence: m.evidence, what: "\"" + r.name + "\": " + m.chip, alert: m };
+    }
+    var parts = { books_doc_students: VIEW.b2c && VIEW.b2c.books, books_doc_companies: VIEW.b2b && VIEW.b2b.books,
+      books_doc_unclear: VIEW.books_unclear };
+    var e = ((parts[kind] || {}).documents || []).filter(function (x) { return x.kind === kind && x.subject === subject; })[0];
+    return e && e.evidence ? { evidence: e.evidence, what: e.type_name + " " + e.number + (e.card ? ", " + e.card : ""), alert: e } : null;
+  }
+  function startNag(key, from) {
+    if (busy() || !mayNag()) { return; }
+    var cut = key.indexOf(":"), kind = key.slice(0, cut), subject = key.slice(cut + 1), found = nagAlert(kind, subject);
+    if (!found) { return; }
+    /* one floating box at a time: a confirmation of a row's action or of a batch that is not being written gives way */
+    if (ACT && !busyAct()) { ACT = null; }
+    if (BATCH && !busyBatch()) { BATCH = null; }
+    NAG = { kind: kind, subject: subject, evidence: found.evidence, what: found.what, from: from, phase: "confirm", error: "" };
+    use("not_a_gap", { alert: kind, phase: "open", from: from === "list" ? "list" : "detail" });
+    redraw();
+    var box = root.querySelector && root.querySelector(".fin-nag-box");
+    if (box && box.focus) { box.focus({ preventScroll: true }); }
+  }
+  /* a newer reading on the screen while the confirmation is open: it stays only for the very alert it was opened on */
+  function recheckNag() {
+    if (!NAG || NAG.phase !== "confirm") { return; }
+    var found = nagAlert(NAG.kind, NAG.subject);
+    if (!found || found.evidence !== NAG.evidence) {
+      NAG = null;
+      flash("ההתראה השתנתה בקריאה החדשה, ולכן האישור נסגר ולא הוסתר כלום.");
+    }
+  }
+  function confirmNag() {
+    if (!NAG || NAG.phase !== "confirm") { return; }
+    var nag = NAG;
+    nag.phase = "saving";
+    redraw();
+    deps.post("/api/alerts/not-a-gap", { kind: nag.kind, subject: nag.subject, evidence: nag.evidence,
+      taken: (BODY && BODY.taken_at) || "", books: (VIEW.books && VIEW.books.key) || "" }).then(function (body) {
+      use("not_a_gap", { alert: nag.kind, phase: "done" });
+      if (NAG === nag) { NAG = null; }
+      took(body); VIEW = body.view || VIEW; index(VIEW);
+      landed();
+      flash("הוסתר כ\"" + nagWord(nag.kind) + "\". אפשר להחזיר מ\"" + NAG_LIST_WORD + "\", מתחת לרשימה.");
+      followUp(body);
+    }, function (e) {
+      var word = (e && e.error) || "";
+      use("not_a_gap", { alert: nag.kind, phase: "failed", code: useWord(word) || "unknown" });
+      if (NAG === nag) { nag.phase = "failed"; nag.error = NAG_ERRORS[word] || errorText(e); }
+      landed();
+      if (NAG_RELOAD[word]) { load(false); }
+    });
+  }
+  function nagBox() {
+    if (!NAG) { return ""; }
+    var close = "<button type=\"button\" class=\"fin-linkbtn\" data-nag-close=\"1\">סגירה</button>";
+    if (NAG.phase === "saving") { return "<div class=\"fin-nag-box fin-pop\"><p class=\"fin-act-msg\" role=\"status\">שומר...</p></div>"; }
+    if (NAG.phase === "failed") {
+      return "<div class=\"fin-nag-box fin-pop\"><p class=\"fin-act-msg bad\" role=\"alert\">" + esc(NAG.error) + " " + close + "</p></div>";
+    }
+    return "<div class=\"fin-nag-box fin-act-plan fin-pop\" role=\"group\" aria-label=\"" + esc(nagWord(NAG.kind)) + "\" tabindex=\"-1\">" +
+      "<p><b>" + esc(NAG.what) + "</b></p><p>" + esc(nagSaid(NAG.kind)) + "</p><p class=\"fin-subtle\">" + esc(NAG_SAID.kept) + "</p>" +
+      "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-nag-go=\"1\">הסתרה</button>" +
+      "<button type=\"button\" class=\"fin-btn\" data-nag-close=\"1\">ביטול</button></div></div>";
+  }
+  /* under a list: "הוסתרו כלא פער (N)" and, open, what is hidden of it - what, by whom, when - and "החזרה" on one's own */
+  function nagListHtml(kind, part) {
+    var hidden = part.hidden || [];
+    if (!hidden.length) { return ""; }
+    var open = !!NAG_OPEN[kind];
+    return "<div class=\"fin-nag-hidden\"><button type=\"button\" class=\"fin-linkbtn\" data-nag-list=\"" + kind + "\" aria-expanded=\"" +
+      open + "\">" + esc(NAG_LIST_WORD + " (" + NF.format(hidden.length) + ")") + "</button>" + (open ? "<ul class=\"fin-nag-list\">" +
+      hidden.map(function (x) {
+        var what = x.number ? "<bdi dir=\"ltr\">" + esc(x.number) + "</bdi> " + esc([x.type_name, d(x.date), x.card].filter(Boolean).join(" · ")) +
+          (x.total_incl != null ? " · " + money2(x.total_incl) : "")
+          : "<b>" + esc(x.name) + "</b> · " + esc(x.chip);
+        var key = x.kind + ":" + x.subject + ":" + x.id, mine = nagWho(x.by) === "אתה";
+        return "<li>" + what + " <span class=\"fin-subtle\">" + esc(x.word + " · בידי " + nagWho(x.by) + " · " + nagWhen(x.at)) + "</span>" +
+          (mine && mayNag() ? " <button type=\"button\" class=\"fin-linkbtn\" data-nag-undo=\"" + esc(key) + "\"" +
+            (UNDOING || busy() ? " disabled" : "") + ">" + (UNDOING === key ? "מחזיר..." : "החזרה") + "</button>" : "") + "</li>";
+      }).join("") + "</ul>" : "") + "</div>";
+  }
+  function undoNag(key) {
+    if (UNDOING || busy()) { return; }
+    var parts = key.split(":"), kind = parts[0], subject = parts[1], id = Number(parts[2]);
+    UNDOING = key;
+    redraw();
+    deps.post("/api/alerts/not-a-gap/undo", { kind: kind, subject: subject, id: id }).then(function (body) {
+      UNDOING = "";
+      use("not_a_gap_undo", { alert: kind, phase: "done" });
+      took(body); VIEW = body.view || VIEW; index(VIEW);
+      landed();
+      flash("הוחזר: ההתראה מוצגת שוב.");
+      followUp(body);
+    }, function (e) {
+      UNDOING = "";
+      var word = (e && e.error) || "";
+      use("not_a_gap_undo", { alert: kind, phase: "failed", code: useWord(word) || "unknown" });
+      landed();
+      flash(NAG_ERRORS[word] || errorText(e));
+      if (NAG_RELOAD[word]) { load(false); }
+    });
   }
 
   /* ---------- companies: one list by state, and the customers' aging ---------- */
@@ -1987,6 +2165,7 @@
     var a = r && rowActions(r).filter(function (x) { return x.key === key; })[0];
     if (!a || CAN.state === "no" || busy()) { return; }
     if (BATCH && !busyBatch()) { BATCH = null; }          /* a batch's confirmation, not being written, gives way */
+    NAG = null;                                           /* and one of "לא פער" (R5): busy() says none is being saved */
     var typed = {}, untouched = {}, bad = "";
     stepWrites(a).forEach(function (w) {
       if (!w.input) { return; }
@@ -2117,7 +2296,9 @@
      quietly under the actions: a proposal, never a warning */
   function fillSaid(r) {
     var m = booksMark(r, "books_ref_fill") || booksMark(r, "books_date_fill");
-    return m && rowFill(r) ? "<p class=\"fin-dx-books fin-fill-said\">" + esc(m.text) + "</p>" : "";
+    /* R5: and "לא להציע" beside it */
+    return m && rowFill(r) ? "<p class=\"fin-dx-books fin-fill-said\">" + esc(m.text) + " " + nagButton(m.kind, r.id, m.evidence, "detail") +
+      "</p>" + nagBack(m) : "";
   }
   /* D4: "רישום מחשבשבת" in a row's details - nothing to type: the batch of one row, floating beside this button */
   function fillControl(r, a, off) {
@@ -2170,7 +2351,8 @@
   var BATCH = null;    /* the batch on the screen: { action, a, items: [{ key, row, name, verdict, why, live, plan, result }],
                           phase: "reading" | "confirm" | "nothing" | "writing" | "done" | "failed", at, total, error } */
   function busyBatch() { return !!BATCH && (BATCH.phase === "reading" || BATCH.phase === "writing"); }
-  function busy() { return busyAct() || busyBatch(); }
+  /* R5: and a "לא פער" being saved - one write at a time, whatever it writes to */
+  function busy() { return busyAct() || busyBatch() || busyNag(); }
   /* the row's one action of the two, as the server offers it: one step that sets one status, nothing typed */
   function rowAction(r) {
     return rowActions(r).filter(function (a) {
@@ -2349,6 +2531,7 @@
      its document's in the books' list, or "all", above that list - beside which the batch floats (QA2 3) */
   function startBatch(actionKey, keys, from) {
     if (CAN.state === "no" || busy()) { return; }
+    NAG = null;   /* R5: a confirmation of "לא פער" gives way; busy() says none is being saved */
     var items = [], a = null, left = 0;
     keys.forEach(function (k) {
       var r = rowByKey(k), x = r ? batchAction(r, actionKey) : null;
@@ -3267,6 +3450,7 @@
   function asOf() { return stamp((BODY && BODY.taken_at) || VIEW.read_at); }
   var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend", "scview", "cohort", "unpriced",
     "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
+    "nag", "nagGo", "nagClose", "nagList", "nagUndo",
     "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
   function focusKey() {
     var a = document.activeElement;
@@ -3316,6 +3500,12 @@
   var POP_GAP = 6, POP_EDGE = 8;
   function popAnchor(pop) {
     var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
+    /* R5: "לא פער" - beside the press, never over it, nor over the document's row of a list */
+    if (pop.classList && pop.classList.contains("fin-nag-box")) {
+      var nb = NAG && root.querySelector ? root.querySelector("[data-nag=\"" + quote(nagKey(NAG.kind, NAG.subject)) +
+        "\"][data-nag-from=\"" + quote(NAG.from) + "\"]") : null;
+      return nb ? { v: (NAG.from === "list" && nb.closest && nb.closest("tr")) || (nb.closest && nb.closest("li,p")) || nb, h: nb } : null;
+    }
     /* D4's review (4b): a row's own action, in its details - beside its button, never over it nor over the boxes it takes
        what is typed from (its .fin-act) */
     if (pop.classList && pop.classList.contains("fin-act-box")) {
@@ -3356,7 +3546,7 @@
   }
   var follow = false;
   function onScroll() {
-    if (follow || !(BATCH || ACT)) { return; }
+    if (follow || !(BATCH || ACT || NAG)) { return; }
     follow = true;
     var again = function () { follow = false; placePop(); };
     if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
@@ -3406,7 +3596,7 @@
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
       overviewHtml() + "<div class=\"fin-foot\">" + healthHtml() +
-      "</div></div>";
+      "</div>" + nagBox() + "</div>";
   }
   function message(text) {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">" + esc(text) + "</p>" +
@@ -3441,6 +3631,7 @@
     applyWritten();
     /* D4's review: a confirmation of the books' proposals on the screen is held to this reading */
     recheckBatch();
+    recheckNag();   /* R5: and one of "לא פער" to its alert */
   }
   function errorText(e) {
     var key = e && e.error;
@@ -3625,7 +3816,7 @@
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
-      "[data-books-fill],[data-books-all]," +
+      "[data-books-fill],[data-books-all],[data-nag],[data-nag-go],[data-nag-close],[data-nag-list],[data-nag-undo]," +
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
@@ -3659,6 +3850,22 @@
       if (fills.length) { startBatch(rowFill(fills[0]).key, fills.map(rowKey), "all"); }
       return;
     }
+    /* R5: "לא פער" / "לא להציע", its confirmation, the list of what is hidden, and "החזרה" */
+    if (el.dataset.nag) { startNag(el.dataset.nag, el.dataset.nagFrom === "list" ? "list" : "detail"); return; }
+    if (el.dataset.nagGo) { confirmNag(); return; }
+    if (el.dataset.nagClose) {
+      if (!busyNag()) {
+        if (NAG && NAG.phase === "confirm") { use("not_a_gap", { alert: NAG.kind, phase: "cancel" }); }
+        NAG = null; redraw();
+      }
+      return;
+    }
+    if (el.dataset.nagList) {
+      NAG_OPEN[el.dataset.nagList] = !NAG_OPEN[el.dataset.nagList];
+      use("not_a_gap_list", { open: !!NAG_OPEN[el.dataset.nagList], list: el.dataset.nagList });
+      redraw(); return;
+    }
+    if (el.dataset.nagUndo) { undoNag(el.dataset.nagUndo); return; }
     if (el.dataset.batchGo) { confirmBatch(); return; }
     if (el.dataset.batchClose) {
       if (!busyBatch()) {
@@ -3881,6 +4088,8 @@
     _confirm: confirmAction, _actState: function () { return ACT; }, _can: function () { return CAN; },
     /* 1.1 (D2): a batch, and the rows picked for one */
     _batchState: function () { return BATCH; }, _picked: function () { return PICKED; }, _batchMax: BATCH_MAX,
+    /* R5: the press of "לא פער" on the screen, and the page's words for it */
+    _nagState: function () { return NAG; }, _nagWords: function () { return { word: NAG_WORD, list: NAG_LIST_WORD }; },
     /* D2 (ADR-0188): a company's billing edit, the Update's door and whether monday's context lets the app write one */
     _billState: function () { return BILL; }, _canUpdate: function () { return CAN_UPDATE; },
     _update: function (boardId, itemId, body) { return mondayUpdate(boardId, itemId, body); },
