@@ -190,6 +190,49 @@ def test_money_filed_by_its_lead_that_no_student_holds_is_said_on_the_cohorts_li
     assert ch.UNLINKED_WORD not in quiet["cohort"]
 
 
+def test_everything_that_came_in_is_the_cohorts_paid_the_money_no_student_holds_too():
+    """QA 26.11 (3): A667 said "תקבולים בלי הרשמה 20,000 ₪" under its name and nothing in "שולם בפועל (כל מה שנכנס)". The
+    line's "שולם בפועל" is everything that came in for it: its students' and the money filed under it that no student holds
+    - by its lead and no one's (`unlinked`), or of two students (`shared`). The students' rows are as they were (the money
+    is no student's), the balance is still the students' (said, may be more than is really missing), and the line ties: the
+    page, the figures, the totals and the file alike."""
+    import io
+
+    import openpyxl
+
+    from app.desk.cohorts_export import cohorts_workbook
+
+    s = snap([sc(1, paid="12000", lead=["L1"]), sc(2, paid="8000", lead=["L1"]), sc(3, paid="3000", enr=["E1", "E2"])],
+             cohorts=[coh(code="A667", roster=["E1", "E2"])], leads=[lead("L1", "C1")],
+             enrollments=[enr("E1", voucher="1", person="P1"), enr("E2", voucher="17", person="P2")])
+    v = real_view(s)
+    part = v["b2c"]["cohorts"]
+    ln = part["cohorts"][0]
+    assert part["checks"]["ties"] is True and ln["unlinked"]["money"] == 20000 and ln["shared"]["money"] == 3000
+    assert ln["paid"] == 23000 and ln["balance"] == ln["expected"] == 20000
+    assert part["totals"]["paid"] == 23000 == ch.cohort_totals(part["cohorts"])["paid"]
+    shut, opened = render([case(), case(cohorts={"C1": True})], v)
+    line = cells_of(shut, "fin-rowbtn")[0]
+    assert line["paid"] == "23,000 ₪" and line["balance"] == "20,000 ₪" and line["expected"] == "20,000 ₪"
+    assert line["cohort"].endswith(" · %s 20,000 ₪" % ch.UNLINKED_WORD)
+    figs = {k: re.sub(r"<[^>]+>", "", x) for k, x in re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", shut)}
+    assert figs[ch.PAID_WORD] == "23,000 ₪" and figs[ch.BALANCE_WORD] == "20,000 ₪"
+    # the students' rows as they were: no student paid anything, each owes the whole price
+    students = [x for x in cells_of(opened) if "paid" in x]
+    assert [(x["paid"], x["balance"]) for x in students] == [("-", "10,000 ₪"), ("-", "10,000 ₪")]
+    assert "%s: 2 תקבולים, 20,000.00 ₪" % ch.UNLINKED_WORD in opened and "%s: תקבול אחד, 3,000.00 ₪" % ch.SHARED_WORD in opened
+    # the file: the line's paid, and beside it the two that make it more than its students'
+    wb = openpyxl.load_workbook(io.BytesIO(cohorts_workbook(part["cohorts"], [], {})))
+    heads = [x.value for x in wb["לפי מחזור"][1]]
+    row = dict(zip(heads, [x.value for x in wb["לפי מחזור"][2]]))
+    assert (row[ch.PAID_WORD], row[ch.UNLINKED_WORD], row[ch.SHARED_WORD], row[ch.BALANCE_WORD]) == (23000, 20000, 3000, 20000)
+    st = wb["סטודנטים"]
+    sheads = [x.value for x in st[1]]
+    srows = [dict(zip(sheads, [x.value for x in st[i]])) for i in (2, 3)]
+    assert [r[ch.PAID_WORD] for r in srows] == [None, None]
+    assert any(ch.UNLINKED_WORD in str(st.cell(row=i, column=1).value) for i in range(4, st.max_row + 1))
+
+
 def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():
     s = snap([sc(1, paid="3950.5", enr=["E1"]), sc(2, paid="4000", enr=["E2"])], cohorts=[coh(roster=["E1", "E2"])],
              enrollments=[enr("E1", voucher="1"), enr("E2", voucher="1")])

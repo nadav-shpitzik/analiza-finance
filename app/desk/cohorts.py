@@ -31,14 +31,15 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    counts as "התקבלו" less "הוחזרו" (app/desk/view.py `_b2c_row`, its money reused, never forked: only a status that brought
    money in, a refund netted, never above what came in). The deposit, and the balance row the helper opens when sales mark
    "אושר - יתרה שולמה", "<student> | השלמת תשלום". A row linked to the enrollments of two students, or of two cohorts, is
-   counted for no one and said on each cohort it names (`shared`): it would be counted twice otherwise.
+   counted for no student and said on each cohort it names (`shared`), in its "שולם בפועל" (THE SUMS TIE): a student's
+   balance would count it twice otherwise.
    - A payment the desk files under the cohort by its lead, with no enrollment (born before the lead was converted, and not
      yet linked: backlog 0105 counted 63 of 417 on 03.09): the student's whose enrollment in the cohort links to its lead
      (Enrollments' "קישור לליד", `EN["lead"]`, the conversion's back-link), or who is its lead's person (Leads' "Student
      Directory", `LD["person"]`) or its own enrollment's - when exactly one student of the cohort is (`_lead_payer`),
      whatever their standing, and said on them (`by_lead`). None, or two: it is no student's, so no balance holds it, and
-     it is said on the cohort (`unlinked`), its line too, as money that came in for the cohort and left no balance smaller
-     (the review of D4: a guess would hide money still to collect).
+     it is said on the cohort (`unlinked`), its line too, as money that came in for the cohort - in its "שולם בפועל" - and
+     left no balance smaller (the review of D4: a guess would hide money still to collect).
 4. WHERE THE BALANCE IS: the price less what the student paid, never below 0 (more is `overpaid`, said, and never netted
    against another student's balance). It sits in one part by the voucher status (`color_mm5fr6d6`, by INDEX, never by its
    text; the runbook's live set): PARTS, in Chava's order (her answer of 26.11) - "אושר - ממתין לתשלום" (1) first,
@@ -48,17 +49,21 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    statuses. Never hidden. "נדחה" and "נדחה - קיבל מלגה מאנליזה" (2, 3) are waived: no balance, the waiver recorded on the
    enrollment only. "ביטל השתתפות" (6, 7) and "לא רלוונטי" (10) are out of the count.
 
-THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected, what they paid, each part, the balance
-and what was paid over the price - and expected = paid + balance - overpaid, to the agora (Decimal end to end).
+THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected, each part, the balance and what was paid
+over the price - and for each student expected = paid + balance - overpaid, to the agora (Decimal end to end).
 `checks["ties"]` says so, and the tests hold it. "שולם בפועל" is everything that came in (Chava's word in backlog 0313:
-"כמה כבר התקבל בסך הכול"): what the waived and the out paid too (the review of D4). Their expected is what they paid - the
-balance was waived, or they left - and their balance 0, so the line still ties; what they paid is said apart as well
+"כמה כבר התקבל בסך הכול"): what the waived and the out paid too (the review of D4), and (the QA of 26.11, 3) the money
+filed under the cohort that no student holds, `unlinked` and `shared`: a line's paid is its students' and those two
+(`_line_sums`). That money stays in no student's row and makes no balance smaller, so the line's balance, its students',
+may be more than is really missing, as the legend says. The waived and the out's expected is what they paid - the balance
+was waived, or they left - and their balance 0, so the line still ties; what they paid is said apart as well
 (`waived_paid`, `out_paid`). So a line's expected is its price for each student counted, and what the waived and the out
-paid. And the line ties to the payments, summed apart from its students (the review of D4): everything the list files under
-the cohort (`filed`: the payments whose `cohort_id` is the cohort, and one it files under none because its enrollments name
-more than one, under each of them) is what its students paid - counted, waived and out - and what is said beside them,
-`unlinked` and `shared`, in money and in the number of payments; so a payment lost between the list and the view, or
-counted twice, is said above the table (NOT_TIED), and the file is never complete.
+paid; and it is what its students paid and what is still to come. And the line ties to the payments, summed apart from its
+students (the review of D4): everything the list files under the cohort (`filed`: the payments whose `cohort_id` is the
+cohort, and one it files under none because its enrollments name more than one, under each of them) is its paid, and in
+the number of payments its students' and those said beside them; so a payment lost between the list and the view, or
+counted twice, is said above the table (NOT_TIED), and the file is never complete. A payment whose enrollments name two
+cohorts is in the paid of each, so a total of several cohorts may hold it twice, as the legend says.
 
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
@@ -147,8 +152,10 @@ LEGEND = [
     (EXPECTED_WORD, "המחיר כפול מספר ה%s, ועוד מה ששילמו סטודנטים עם %s או %s (אצלם הצפי הוא מה ששילמו, והיתרה 0): "
                     "מה שהיה צריך להיכנס מכולם." % (STUDENTS_WORD, _q(WAIVED_WORD), _q(OUT_WORD))),
     (PAID_WORD, "כל מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
-                "המקדמה, ושורת %s שנפתחת כשמכירות מסמנים %s. גם מה ששילמו סטודנטים עם %s או %s."
-     % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]), _q(WAIVED_WORD), _q(OUT_WORD))),
+                "המקדמה, ושורת %s שנפתחת כשמכירות מסמנים %s. גם מה ששילמו סטודנטים עם %s או %s, ובשורת המחזור גם %s "
+                "ו%s, שלא נספרים לאף סטודנט/ית."
+     % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]), _q(WAIVED_WORD), _q(OUT_WORD),
+        _q(UNLINKED_WORD), _q(SHARED_WORD))),
     (BALANCE_WORD, "לכל סטודנט/ית: המחיר פחות %s, ולא פחות מ-0. היתרה של המחזור היא סכום היתרות, מחולקת לחלקים לפי סטטוס "
                    "השובר:" % PAID_WORD),
 ] + [(p["label"], p["about"]) for p in PARTS.values()] + [
@@ -159,9 +166,11 @@ LEGEND = [
      % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), _IN_LABELS, STUDENTS_WORD, PAID_WORD)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
     (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה, ואין לדעת של מי מהסטודנטים הם: אף "
-                    "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם לא יורדים מאף יתרה, ולכן היתרה של "
-                    "המחזור עשויה להיות גדולה ממה שבאמת חסר. מוצגים בשורת המחזור."),
-    (SHARED_WORD, "תקבול שמקושר להרשמות של כמה סטודנטים, או של כמה מחזורים: לא נספר לאף אחד, כדי שלא ייספר פעמיים."),
+                    "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם נספרים ב%s של המחזור ולא יורדים "
+                    "מאף יתרה, ולכן היתרה של המחזור עשויה להיות גדולה ממה שבאמת חסר. מוצגים בשורת המחזור." % _q(PAID_WORD)),
+    (SHARED_WORD, "תקבול שמקושר להרשמות של כמה סטודנטים, או של כמה מחזורים: לא נספר לאף סטודנט/ית, כדי שלא ייספר "
+                  "פעמיים, ונספר ב%s של המחזור. תקבול של כמה מחזורים נספר בכל אחד מהם, ולכן בסך הכול של כמה מחזורים "
+                  "הוא עשוי להיספר יותר מפעם אחת." % _q(PAID_WORD)),
     (UNPRICED_TITLE, "מחזורים במסלול %s בלי מחיר, שהמחיר בהם אינו מספר אחד או 0, או שבוטלו: מוצגים עם הסיבה, בלי צפי "
                      "ובלי יתרה." % _q(TRACK_LABEL)),
     (PRICE_WORD, "עמודה בלוח המחזורים: המחיר המלא שהסטודנט/ית משלם/ת. השובר הוא ההחזר של משרד העבודה לסטודנט/ית "
@@ -362,18 +371,27 @@ def _sums(students: list) -> dict:
     return out
 
 
+def _line_sums(students: list, unlinked: dict, shared: dict) -> dict:
+    """A cohort's line: its students' sums (`_sums`), and its "שולם בפועל" everything that came in for the cohort (QA of
+    26.11, 3; Chava's "כמה כבר התקבל בסך הכול") - what its students paid, and the money filed under it that no student
+    holds, `unlinked` and `shared`. No student's row holds that money, and no balance is smaller for it."""
+    out = _sums(students)
+    out["paid"] += unlinked["money"] + shared["money"]
+    return out
+
+
 def _ties(line: dict) -> bool:
-    """The cohort's line is its students' sums, its expected is what was paid and what is still to come, and it is the
-    price for each student counted and what the waived and the out paid; and (the review of D4) everything the list files
-    under the cohort (`filed`, summed from the payments, not from the students) is what its students paid and what is said
-    beside them - `unlinked`, `shared` - in money and in payments."""
-    again = _sums(line["students_list"])
+    """The cohort's line is its students' sums, and its paid theirs and the money beside them (`_line_sums`); its expected
+    is what its students paid and what is still to come, and it is the price for each student counted and what the waived
+    and the out paid; and (the review of D4) everything the list files under the cohort (`filed`, summed from the payments,
+    not from the students) is its paid - in payments, its students' and those said beside them, `unlinked` and `shared`."""
+    again = _line_sums(line["students_list"], line["unlinked"], line["shared"])
     same = all(again[f] == line[f] for f in SUM_FIELDS + COUNT_FIELDS + tuple("part_" + k for k in PARTS))
     filed, beside = line["filed"], (line["unlinked"], line["shared"])
-    return same and line["expected"] == line["paid"] + line["balance"] - line["overpaid"] \
+    theirs = line["paid"] - _dsum(x["money"] for x in beside)       # what the students paid
+    return same and line["expected"] == theirs + line["balance"] - line["overpaid"] \
         and line["expected"] == line["price"] * line["students"] + line["waived_paid"] + line["out_paid"] \
-        and filed["money"] == line["waived_paid"] + line["out_paid"] + _dsum(
-            s["paid"] for s in line["students_list"] if s["standing"] == "counted") + _dsum(x["money"] for x in beside) \
+        and filed["money"] == line["paid"] \
         and filed["count"] == sum(len(s["payments"]) for s in line["students_list"]) + sum(x["count"] for x in beside)
 
 
@@ -491,9 +509,10 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         students = sorted((_student(es, cohorts_of, price, theirs[p], frozenset(by_lead)) for p, es in groups.items()),
                           key=_student_order)
         link = _uniq(c.get(CO["roster"]) or [])
-        line = dict(head, price=price, students_list=students, **_sums(students),
-                    unlinked={"count": len(unlinked), "money": _dsum(b["net"] for b in unlinked)},
-                    shared={"count": len(shared[cid]), "money": _dsum(b["net"] for b in shared[cid])},
+        unlinked_said = {"count": len(unlinked), "money": _dsum(b["net"] for b in unlinked)}
+        shared_said = {"count": len(shared[cid]), "money": _dsum(b["net"] for b in shared[cid])}
+        line = dict(head, price=price, students_list=students, **_line_sums(students, unlinked_said, shared_said),
+                    unlinked=unlinked_said, shared=shared_said,
                     filed={"count": len(filed[cid]), "money": _dsum(b["net"] for b in filed[cid])},
                     # the cohort's link names an enrollment the reading did not get, or one whose own link is elsewhere
                     roster_missing=sum(1 for e in link if e not in held),
@@ -520,8 +539,9 @@ def cohort_totals(lines: list) -> dict:
 
 
 def _totals_by_student(lines: list) -> dict:
-    """The same totals summed from every student of every line, not from the lines: what `checks["ties"]` compares."""
-    return cohort_totals([dict(x, **_sums(x["students_list"])) for x in lines])
+    """The same totals summed from every student of every line and the money said beside them, not from the lines: what
+    `checks["ties"]` compares."""
+    return cohort_totals([dict(x, **_line_sums(x["students_list"], x["unlinked"], x["shared"])) for x in lines])
 
 
 def columns_for(lines: list) -> list:

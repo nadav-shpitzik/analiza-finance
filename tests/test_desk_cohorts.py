@@ -170,12 +170,14 @@ def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_balance(how):
     assert s["standing"] == "out" and s["balance"] == 0 and s["said"].startswith(ch.OUT_WORD + ": ")
     # changed deliberately (the review of D4): what an out student paid is in "שולם בפועל" and is their expected
     paid = D(0) if kind == "two" else D("3000")
-    assert ln["students"] == 1 and ln["expected"] == D("10000") + paid and ln["paid"] == paid
+    # changed deliberately (QA 26.11, 3): a payment that names two cohorts is in each one's "שולם בפועל", no student's
+    assert ln["students"] == 1 and ln["expected"] == D("10000") + paid and ln["paid"] == D("3000")
     assert ln["balance"] == D("10000") and ln["out"] == 1 and ln["out_paid"] == paid and s["expected"] == paid
     if kind == "two":
-        # in both cohorts' lists, in neither's count; its payment names two cohorts, so it is counted for no one
+        # in both cohorts' lists, in neither's count; its payment names two cohorts, so it is counted for no student
         assert s["said"] == "%s: %s" % (ch.OUT_WORD, ch.OUT_WHY["cohorts"])
         assert student(line(part, "A701"), "E1")["standing"] == "out" and ln["shared"] == {"count": 1, "money": D("3000")}
+        assert line(part, "A701")["paid"] == D("3000") and line(part, "A701")["shared"] == ln["shared"]
     elif kind == "status":
         label = {"empty": "ריק", "unknown": '"תווית חדשה"'}.get(value, '"%s"' % STATUS.get(value, ""))
         assert s["said"] == "%s: Status %s" % (ch.OUT_WORD, label)
@@ -275,13 +277,18 @@ def test_more_paid_than_the_price_is_said_and_never_nets_another_students_balanc
 def test_a_payment_of_two_students_is_counted_for_no_one_and_said():
     rows = [enr("E1", voucher="1", person="P1"), enr("E2", voucher="1", person="P2")]
     ln = line(part_of([sc(1, paid="4000", enr=["E1", "E2"])], [coh(roster=["E1", "E2"])], rows))
-    assert ln["paid"] == 0 and ln["shared"] == {"count": 1, "money": D("4000")} and ln["balance"] == D("20000")
+    # changed deliberately (QA 26.11, 3): it came in, so it is in the line's "שולם בפועל" - no student's, no balance smaller
+    assert ln["paid"] == D("4000") and ln["shared"] == {"count": 1, "money": D("4000")} and ln["balance"] == D("20000")
+    assert all(s["paid"] == 0 and s["payments"] == [] for s in ln["students_list"])
 
 
 def test_a_payment_the_desk_files_by_its_lead_is_said_on_its_cohort_and_counted_for_no_student():
     payments = [sc(1, paid="4000", lead=["L1"]), sc(2, paid="4000", enr=["E1"])]
     ln = line(part_of(payments, [coh(roster=["E1"])], [enr("E1", voucher="1")], [lead("L1", "C1")]))
-    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == D("4000") and ln["students"] == 1
+    # changed deliberately (QA 26.11, 3): the line's "שולם בפועל" is everything that came in - the student's 4,000 and the
+    # 4,000 no student holds; the student's own row and balance as they were
+    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == D("8000") and ln["students"] == 1
+    assert student(ln, "E1")["paid"] == D("4000") and ln["balance"] == D("6000")
 
 
 LEAD_ROUTES = {
@@ -321,8 +328,9 @@ def test_a_payment_filed_by_its_lead_that_no_one_or_two_students_share_is_the_co
     rows = [enr("E1", voucher="1", person="P1", **links[0]), enr("E2", **e2)]
     ln = line(part_of([sc(1, paid="4000", lead=["L1"])], [coh(price="12,000", roster=["E1", "E2"])], rows,
                       [lead("L1", "C1")]))
-    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == 0
-    assert all(s["payments"] == [] and ch.NOTES["by_lead"] not in s["notes"] for s in ln["students_list"])
+    # changed deliberately (QA 26.11, 3): in the line's "שולם בפועל", in no student's
+    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == D("4000")
+    assert all(s["payments"] == [] and s["paid"] == 0 and ch.NOTES["by_lead"] not in s["notes"] for s in ln["students_list"])
     assert student(ln, "E1")["balance"] == D("12000")
 
 
@@ -407,9 +415,11 @@ def test_a_price_that_is_not_one_clean_number_is_never_guessed(text, why):
 
 # ---- 5. the sums tie, and the order ------------------------------------------------------------------------------------
 def random_part(rng: random.Random) -> tuple:
-    """Random cohorts, students and payments: every voucher and Status, persons with two enrollments, shared payments."""
+    """Random cohorts, students and payments: every voucher and Status, persons with two enrollments, shared payments, and
+    payments filed by their lead (QA 26.11, 3) - one student's when one enrollment links the lead, else the cohort's."""
     cohorts, enrollments, payments = [], [], []
     vouchers = sorted(PLACE)
+    leads = [lead("L%d" % c, "C%d" % c) for c in range(1, 5)]
     for c in range(1, 5):
         ids = []
         for i in range(rng.randint(0, 7)):
@@ -418,38 +428,43 @@ def random_part(rng: random.Random) -> tuple:
             enrollments.append(enr(e, cohort="C%d" % c, voucher=rng.choice(vouchers),
                                    status_=rng.choice(["1", "1", "2", "3", "4", "6", "", "5"]),
                                    person=rng.choice([None, "P%d" % rng.randint(1, 30)]),
-                                   cohorts=rng.choice([None] * 9 + [["C%d" % c, "C%d" % (c % 4 + 1)]])))
+                                   cohorts=rng.choice([None] * 9 + [["C%d" % c, "C%d" % (c % 4 + 1)]]),
+                                   lead=rng.choice([(), (), (), ("L%d" % c,)])))
         cohorts.append(coh("C%d" % c, "A70%d" % c, price=rng.choice(["10,000", "12000", "15,000", "9,999.5", ""]),
                            roster=ids, start="2026-%02d-01" % rng.randint(1, 12)))
     held = [e["id"] for e in enrollments]
     for p in range(1, 40):
         st = rng.choice(["1", "1", "1", "4", "5", "9", "0", "3", "31"])
+        by_lead = rng.random() < 0.15          # no enrollment: the desk files it by its lead
         payments.append(sc(p, st=st, paid=rng.choice(["4000", "6000", "3950.5", "", "100"]),
                            refund=rng.choice(["", "", "500", "9000"]),
-                           enr=rng.sample(held, min(len(held), rng.choice([0, 1, 1, 1, 2])))))
-    return payments, cohorts, enrollments
+                           lead=["L%d" % rng.randint(1, 4)] if by_lead else None,
+                           enr=[] if by_lead else rng.sample(held, min(len(held), rng.choice([0, 1, 1, 1, 2])))))
+    return payments, cohorts, enrollments, leads
 
 
 def test_the_sums_tie_through_random_cohorts():
     rng = random.Random(20261126)
-    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared", "filed")}
+    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared", "unlinked", "by_lead", "filed")}
     for _ in range(150):
-        payments, cohorts, enrollments = random_part(rng)
-        v = view_of(payments, cohorts, enrollments)
+        payments, cohorts, enrollments, leads = random_part(rng)
+        v = view_of(payments, cohorts, enrollments, leads)
         part, rows = v["b2c"]["cohorts"], {r["id"]: r for r in v["b2c"]["rows"]}
         assert part["checks"]["ties"] is True
         for ln in part["cohorts"]:
             counted = [s for s in ln["students_list"] if s["standing"] == "counted"]
             others = [s for s in ln["students_list"] if s["standing"] != "counted"]
-            # the review of D4: what the waived and the out paid is in "שולם בפועל", and is their expected
+            # the review of D4: what the waived and the out paid is in "שולם בפועל", and is their expected; and (changed
+            # deliberately, QA 26.11, 3) the line's "שולם בפועל" is its students' and the money no student holds
             assert ln["students"] == len(counted)
             assert ln["expected"] == ln["price"] * len(counted) + sum((s["paid"] for s in others), D(0))
-            assert ln["paid"] == sum((s["paid"] for s in ln["students_list"]), D(0))
+            theirs = sum((s["paid"] for s in ln["students_list"]), D(0))
+            assert ln["paid"] == theirs + ln["unlinked"]["money"] + ln["shared"]["money"]
             assert ln["waived_paid"] + ln["out_paid"] == sum((s["paid"] for s in others), D(0))
             for k in ch.PARTS:
                 assert ln["part_" + k] == sum((s["balance"] for s in counted if s["part"] == k), D(0))
             assert ln["balance"] == sum((ln["part_" + k] for k in ch.PARTS), D(0))
-            assert ln["expected"] == ln["paid"] + ln["balance"] - ln["overpaid"]
+            assert ln["expected"] == theirs + ln["balance"] - ln["overpaid"]
             for s in ln["students_list"]:
                 # what a student paid is the desk's net of its payments, and its balance the price less it, never below 0
                 assert s["paid"] == sum((rows[p]["net"] for p in s["payments"]), D(0))
@@ -460,7 +475,9 @@ def test_the_sums_tie_through_random_cohorts():
                     assert s["balance"] == 0 and s["part"] == "" and s["expected"] == s["paid"]
                 seen[s["standing"]] += 1
                 seen["overpaid"] += bool(s["overpaid"])
+                seen["by_lead"] += ch.NOTES["by_lead"] in s["notes"]
             seen["shared"] += ln["shared"]["count"]
+            seen["unlinked"] += ln["unlinked"]["count"]
         # the review of D4: each line ties to what the list files under its cohort, summed here from the list's rows and
         # the enrollments' own links - a payment filed under none because its enrollments name several, under each
         cohorts_of = {e["id"]: e[rd.EN["cohort"]] for e in enrollments}
@@ -469,7 +486,8 @@ def test_the_sums_tie_through_random_cohorts():
                     in {c for e in next(p for p in payments if p["id"] == r["id"])[rd.SC["enrollment"]]
                         for c in cohorts_of.get(e, [])}]
             assert ln["filed"] == {"count": len(mine), "money": sum((r["net"] for r in mine), D(0))}
-            assert ln["filed"]["money"] == ln["paid"] + ln["unlinked"]["money"] + ln["shared"]["money"]
+            # (QA 26.11, 3: everything the list files under the cohort is its "שולם בפועל")
+            assert ln["filed"]["money"] == ln["paid"]
             seen["filed"] += len(mine)
         total = ch.cohort_totals(part["cohorts"])
         assert part["totals"] == total
@@ -513,15 +531,22 @@ def test_a_line_ties_to_what_the_list_files_under_its_cohort_summed_apart_from_i
     ln = line(part)
     # 1-3 the students', 4 two students' (shared), 5 by its lead and no one's (unlinked), 6 two cohorts' (shared on both)
     assert ln["filed"] == {"count": 6, "money": D("10750")} and part["checks"]["ties"] is True
-    assert (ln["paid"], ln["unlinked"]["money"], ln["shared"]["money"]) == (D("9000"), D("500"), D("1250"))
+    # changed deliberately (QA 26.11, 3): the line's "שולם בפועל" is everything that came in - the students' 9,000 and the
+    # 1,750 no student holds - so it is what the list files under the cohort; the students' rows as they were
+    assert (ln["paid"], ln["unlinked"]["money"], ln["shared"]["money"]) == (D("10750"), D("500"), D("1250"))
+    assert sum((s["paid"] for s in ln["students_list"]), D(0)) == D("9000") and ln["filed"]["money"] == ln["paid"]
     assert line(part, "A702")["filed"] == {"count": 1, "money": D("250")} == line(part, "A702")["shared"]
+    assert line(part, "A702")["paid"] == D("250")
+    # a line whose paid leaves out the money no student holds (the rule before) is said
+    assert not ch._ties(dict(ln, paid=D("9000")))
     # a line whose students and figures agree with each other, but that lost a payment on the way: said
     one = student(ln, "E1")
     lost = dict(one, payments=[], paid=D(0), balance=D("10000"))
     students = [lost if s is one else s for s in ln["students_list"]]
-    broken = dict(ln, students_list=students, **ch._sums(students))
-    assert ch._sums(broken["students_list"])["paid"] == broken["paid"] and ch._ties(dict(ln))
-    assert broken["expected"] == broken["paid"] + broken["balance"] - broken["overpaid"] and not ch._ties(broken)
+    broken = dict(ln, students_list=students, **ch._line_sums(students, ln["unlinked"], ln["shared"]))
+    assert ch._line_sums(students, ln["unlinked"], ln["shared"])["paid"] == broken["paid"] and ch._ties(dict(ln))
+    theirs = broken["paid"] - ln["unlinked"]["money"] - ln["shared"]["money"]
+    assert broken["expected"] == theirs + broken["balance"] - broken["overpaid"] and not ch._ties(broken)
     # counted twice - in a student's and in "unlinked" - or a payment more than the list files: said
     assert not ch._ties(dict(ln, unlinked={"count": 2, "money": D("4500")}))
     assert not ch._ties(dict(ln, filed={"count": 6, "money": D("10751")}))

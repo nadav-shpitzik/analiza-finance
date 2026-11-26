@@ -6,10 +6,11 @@ as text, a total under the rows that follows the filter, and "פרטים" saying
 THE SHEETS:
 1. "לפי מחזור": a line per cohort, the page's columns in the page's order (`columns_for`: an optional part only when a
    cohort in the file has money in it), then what the page says beside a line: the waived and the out, what was paid over
-   the price, the payments with no enrollment.
+   the price, the payments with no enrollment and those of several students (both in the line's "שולם בפועל", QA 26.11).
 2. "סטודנטים": every student of those cohorts under the same money columns, each balance in its part's column, so each
-   column of a cohort's students sums to that cohort's line (backlog 0313: "סכומי הסטודנטים שווים לשורת המחזור"). What a
-   waived or an out student paid is in "שולם בפועל" and their expected, as on the line (the review of D4).
+   column of a cohort's students sums to that cohort's line (backlog 0313: "סכומי הסטודנטים שווים לשורת המחזור") - but
+   "שולם בפועל", whose line holds the money no student holds too, the two columns beside it. What a waived or an out
+   student paid is in "שולם בפועל" and their expected, as on the line (the review of D4).
 3. "בלי מחיר": the cohorts the view lists without money, and why.
 No ID number: the reading never holds one (NEVER_READ).
 """
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .cohorts import (BALANCE_WORD, EXPECTED_WORD, OUT_WORD, OVERPAID_WORD, PAID_WORD, PARTS, STUDENTS_WORD,
+from .cohorts import (BALANCE_WORD, EXPECTED_WORD, OUT_WORD, OVERPAID_WORD, PAID_WORD, PARTS, SHARED_WORD, STUDENTS_WORD,
                       UNLINKED_WORD, UNPRICED_TITLE, VIEW_WORD, WAIVED_WORD, columns_for)
 from .export import _workbook, file_part
 from .view import FLOW_LABEL
@@ -58,7 +59,8 @@ def cohort_columns(lines: list) -> list:
             out.append((col["header"], _MONEY[key][0], "money", 15))
     return out + [(WAIVED_WORD, lambda x: x["waived"], "int", 8), (OUT_WORD, lambda x: x["out"], "int", 10),
                   (OVERPAID_WORD, lambda x: x["overpaid"] or None, "money", 14),
-                  (UNLINKED_WORD, lambda x: x["unlinked"]["money"] or None, "money", 15)]
+                  (UNLINKED_WORD, lambda x: x["unlinked"]["money"] or None, "money", 15),
+                  (SHARED_WORD, lambda x: x["shared"]["money"] or None, "money", 15)]
 
 
 def student_columns(lines: list) -> list:
@@ -86,7 +88,9 @@ def cohorts_workbook(lines: list, unpriced: list, about: dict) -> bytes:
     """lines: the cohorts with a price the page shows (cohorts.filter_cohorts); unpriced: those without one it lists. about:
     the reading and the filter, for "פרטים"."""
     students = students_of(lines)
-    said = ["סכומי הסטודנטים של כל מחזור, בכל עמודת כסף, שווים לשורת המחזור בגיליון \"%s\"." % VIEW_WORD,
+    said = ["סכומי הסטודנטים של כל מחזור, בכל עמודת כסף, שווים לשורת המחזור בגיליון \"%s\", חוץ מ\"%s\": בשורת "
+            "המחזור הוא כולל גם \"%s\" ו\"%s\", שלא נספרים לאף סטודנט/ית." % (VIEW_WORD, PAID_WORD, UNLINKED_WORD,
+                                                                            SHARED_WORD),
             "%s כולל מה ששילמו סטודנטים עם %s או %s, ואצלם %s הוא אותו סכום." % (PAID_WORD, WAIVED_WORD, OUT_WORD,
                                                                               EXPECTED_WORD)]
     sheets = [("סטודנטים", student_columns(lines), students, said),
@@ -94,9 +98,10 @@ def cohorts_workbook(lines: list, unpriced: list, about: dict) -> bytes:
                                                                                             BALANCE_WORD)])]
     return _workbook(VIEW_WORD, cohort_columns(lines), lines, about, "התלמידים לפי מחזור מתוך שולחן הכספים",
                      [("הסכומים", "כולל מע\"מ, כמו בלוח Student Charge. %s: המחיר כפול %s, ועוד מה ששילמו סטודנטים "
-                                   "עם %s או %s. %s: כל מה שנכנס. %s: %s פחות %s לכל סטודנט/ית, ולא פחות מ-0, מחולקת "
-                                   "לפי סטטוס השובר" % (EXPECTED_WORD, STUDENTS_WORD, WAIVED_WORD, OUT_WORD, PAID_WORD,
-                                                       BALANCE_WORD, _PRICE_H, PAID_WORD)),
+                                   "עם %s או %s. %s: כל מה שנכנס, גם %s ו%s. %s: %s פחות %s לכל סטודנט/ית, ולא פחות "
+                                   "מ-0, מחולקת לפי סטטוס השובר" % (EXPECTED_WORD, STUDENTS_WORD, WAIVED_WORD, OUT_WORD,
+                                                                   PAID_WORD, UNLINKED_WORD, SHARED_WORD, BALANCE_WORD,
+                                                                   _PRICE_H, PAID_WORD)),
                       ("החלקים", " · ".join(p["label"] for p in PARTS.values())),
                       ("סטודנטים", "%d בגיליון \"סטודנטים\"" % len(students)),
                       (UNPRICED_TITLE, "%d בגיליון \"בלי מחיר\"" % len(unpriced))], sheets=sheets)

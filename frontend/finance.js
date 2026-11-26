@@ -187,6 +187,9 @@
  * 2  "לפי מחזור" put "יתרה לגבייה" last, after its parts, and the figures above the table in another order. Both, and the
  *      Excel file, are in one order now (app/desk/cohorts.py COLUMNS): "צפי תשלום", "שולם בפועל", "יתרה לגבייה", then the
  *      parts, "אושר - ממתין לתשלום" the first of them and the one tinted.
+ * 3  A cohort's "שולם בפועל" (everything that came in) left out the money filed under it that no student holds: A667 said
+ *      "תקבולים בלי הרשמה 20,000 ₪" under its name and nothing in that column. The server counts it in the line's paid now
+ *      (app/desk/cohorts.py `_line_sums`); the page draws the server's numbers, the students' rows as they were.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -976,7 +979,8 @@
      students should pay ("צפי תשלום"), what came in ("שולם בפועל") and the balance ("יתרה לגבייה") in Chava's parts by the
      voucher status, in that order in the figures and the table alike (QA 26.11, 2), "אושר - ממתין לתשלום" - money that
      should already have come in - the first part and the one tinted; a cohort opens to its students, each balance in its
-     part's column, so a column of students sums to its cohort's cell.
+     part's column, so a column of students sums to its cohort's cell - but "שולם בפועל", everything that came in, which
+     holds the money no student holds too, said under them (QA 26.11, 3).
      Every word, number and column is the server's (app/desk/cohorts.py, view.b2c.cohorts); the totals of the cohorts a
      search leaves are GET /api/desk/totals's (the list b2c_cohorts) - nothing is added up here. */
   var COHORTS_WORD = "לפי מחזור";
