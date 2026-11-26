@@ -748,6 +748,43 @@ def test_a_press_writes_nothing_to_monday_and_its_log_says_ids_and_words_only(na
         assert word not in text, word
 
 
+def _tasks_files(nag, answer: dict) -> dict:
+    """Both files of the students' "לטיפול" for the answer on the screen: the server's Excel (the export link) and the
+    description the browser writes the file with the ID number from (D4, POST /api/desk/export.json)."""
+    import io
+
+    import openpyxl
+
+    asked = {"tab": "b2c", "state": "tasks", "taken": answer["taken_at"], "books": answer["view"]["books"]["key"]}
+    url = nag.client.post("/api/desk/export-link", headers=nag.auth(1), json=asked).json()["url"]
+    wb = openpyxl.load_workbook(io.BytesIO(nag.client.get(url).content))
+    table = nag.client.post("/api/desk/export.json", headers=nag.auth(1), json=asked)
+    assert table.status_code == 200, table.text
+    sheets = {s["title"]: s for s in table.json()["sheets"]}
+    ws, main = wb["תקבולים"], table.json()["sheets"][0]
+    heads, jheads = [c.value for c in ws[1]], [c["head"] for c in main["columns"]]
+    return {"docs": [r[0].value for r in wb["מסמכים בלי חיוב"].iter_rows(min_row=2) if str(r[0].value or "").isdigit()]
+            if "מסמכים בלי חיוב" in wb.sheetnames else [],
+            "docs_table": [r[0] for r in sheets["מסמכים בלי חיוב"]["rows"]] if "מסמכים בלי חיוב" in sheets else [],
+            "check": {r[heads.index("מזהה במאנדיי")].value: r[heads.index("מה לבדוק")].value for r in ws.iter_rows(min_row=2)
+                      if r[heads.index("מזהה במאנדיי")].value},
+            "check_table": {r[jheads.index("מזהה במאנדיי")]: r[jheads.index("מה לבדוק")] for r in main["rows"]}}
+
+
+def test_what_is_hidden_is_out_of_both_files_of_its_list(nag):
+    """Merged with D4: what "לא פער" hides is out of the students' "לטיפול" files, the server's Excel and the browser's
+    description alike - a document off "מסמכים בלי חיוב", a mark's words off its row's "מה לבדוק" - as it is off the
+    screen: both are built from the books' part shown (DeskBooks.current, by the live dismissals). Before it, both carry it."""
+    before = _tasks_files(nag, nag.get(1))
+    assert before["docs"] == before["docs_table"] == ["62503"]
+    assert "62502" in before["check"]["101"] and before["check_table"]["101"] == before["check"]["101"]
+    for kind, subject in (("books_doc_students", "62503"), ("books_receipt_unpaid", "101")):
+        assert nag.post(NAG, body_of(nag.get(1), kind, subject)).status_code == 200
+    after = _tasks_files(nag, nag.get(1))
+    assert after["docs"] == after["docs_table"] == []
+    assert not after["check"].get("101") and not after["check_table"].get("101")
+
+
 @needs_pg
 def test_the_whole_path_on_postgres(pg, nag):
     """The routes on the real table: the press kept with the server's evidence, the desk after it hides the alert, and the
