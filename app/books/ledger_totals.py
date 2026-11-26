@@ -30,13 +30,17 @@ line goes into the merged line when
        own. This is the (2, 90%) dominance rule of statistical disclosure control, searched over every one and every two
        accounts (`_dominated`), not only the largest, because a sum here can be negative.
    An empty side, or one whose total is zero, exposes no one.
-The merged line is kept only when it has MIN_ACCOUNTS accounts or more and neither of its sides is thin (the same rule a
-line stands by); otherwise it is withheld whole and counted (`merged: "withheld"`).
+The merged line stands on the same terms as a line: MIN_ACCOUNTS accounts or more, and neither of its sides thin. While it
+does not, the lines that stand are folded into it one at a time, the fewest accounts first and then the lowest sort code,
+each counted as `balance`, until it stands. When no standing line is left and it still does not stand, the month keeps no
+line at all (`merged: "withheld"`, `kept_lines` 0).
 
-**What the balance still reveals.** A month's lines net to zero: every transaction balances, the date cut takes whole
-transactions, and batch 9998 balances on its own and is kept apart. So the one cell a month can withhold - the merged
-line - has as its net minus the kept lines' nets, and the balance reveals that withheld aggregate and nothing finer: a
-multi-person sum, except in a month with fewer than 3 such accounts, when it is those one or two accounts' own.
+**What the balance still reveals: nothing.** A month's lines net to zero: every transaction balances, the date cut takes
+whole transactions, and batch 9998 balances on its own and is kept apart. So a month that withheld one cell and kept the
+rest would give the withheld cell away, as minus the kept lines' nets: a merged line of one person's account, withheld,
+would be that person's monthly money again (ADR-0187's addendum: a hidden line is derived from the rest). That is why the
+merged line is never withheld while another line stands: a month keeps every line, and their nets sum to zero and reveal
+nothing that is not kept, or it keeps none, and there is nothing to derive from.
 
 **Batch 9998** (the income and expense transfer at the end of a year or a quarter, which zeroes the expense cards) never
 enters a line: its rows and totals are counted apart, per month (ADR-0187 §5), even though the report is defined without
@@ -92,8 +96,8 @@ MIN_ACCOUNTS = 3  # a line, or a side of one, filled by fewer accounts never sta
 REST_SHARE = Decimal("0.1")  # a side's total one or two accounts hold to within this share of it is theirs: thin (b)
 MERGED_CODE = -1  # the merged line's sort code: never a real one (a row that carries it is unreadable)
 MERGED_NAME = "שכר ונלווים וקודים קטנים"
-MERGE_WHY = ("salary", "small", "side")  # why a line went into the merged line, in the order they are asked
-MERGED_STATES = ("none", "kept", "withheld")
+MERGE_WHY = ("salary", "small", "side", "balance")  # why a line went into the merged line, in the order they are asked
+MERGED_STATES = ("none", "kept", "withheld")  # "withheld": no line of the month is kept
 KEY_DIGITS_MAX = 5  # a key with more digits is never stored, whatever shape the cleaning gave it
 MAX_KEY = 64
 MAX_NAME = 200
@@ -370,6 +374,19 @@ def _thin(accounts: dict) -> bool:
     return False
 
 
+def _stands(accounts: dict) -> bool:
+    """Whether a line of these accounts may be kept: MIN_ACCOUNTS accounts or more, and neither side thin."""
+    return len(accounts) >= MIN_ACCOUNTS and not _thin(accounts)
+
+
+def _fold(into: dict, accounts: dict) -> None:
+    """Add a line's accounts' own sums into the merged line's, account by account."""
+    for who, sums in accounts.items():
+        held = into.setdefault(who, [Decimal(0), Decimal(0)])
+        held[0] += sums[0]
+        held[1] += sums[1]
+
+
 def _total(accounts: dict, index: int) -> Decimal:
     return sum((sums[index] for sums in accounts.values()), Decimal(0))
 
@@ -472,30 +489,44 @@ class _Month:
         return result
 
     def finish(self, result: MonthResult, salary: frozenset) -> MonthResult:
-        """The lines to keep: each line that stands on its own, and the merged line (the module's docstring)."""
+        """The lines to keep: each line that stands on its own and the merged line, or no line at all (the module's
+        docstring)."""
         self.counts(result)
-        lines, merged, merged_rows, why_counts = [], {}, 0, Counter()
+        standing, merged, merged_rows, why_counts = [], {}, 0, Counter()
         for code in sorted(self.lines):
             rows, accounts = self.lines[code]
             why = ("salary" if code in salary else "small" if len(accounts) < MIN_ACCOUNTS
                    else "side" if _thin(accounts) else None)
             if why is None:
-                lines.append(Line(code, _total(accounts, 0), _total(accounts, 1), rows, len(accounts),
-                                  sum(1 for who in accounts if who in self.masked)))
+                standing.append(code)
                 continue
             why_counts[why] += 1
             merged_rows += rows
-            for who, sums in accounts.items():
-                into = merged.setdefault(who, [Decimal(0), Decimal(0)])
-                into[0] += sums[0]
-                into[1] += sums[1]
+            _fold(merged, accounts)
+        stands = True
+        if why_counts:
+            # the merged line withheld beside lines kept would be minus their nets: while it does not stand, the standing
+            # lines go into it, the fewest accounts first, then the lowest code; none left, the month keeps nothing
+            standing.sort(key=lambda code: (len(self.lines[code][1]), code))
+            stands = _stands(merged)
+            while not stands and standing:
+                rows, accounts = self.lines[standing.pop(0)]
+                why_counts["balance"] += 1
+                merged_rows += rows
+                _fold(merged, accounts)
+                stands = _stands(merged)
+        lines = []
+        for code in sorted(standing):
+            rows, accounts = self.lines[code]
+            lines.append(Line(code, _total(accounts, 0), _total(accounts, 1), rows, len(accounts),
+                              sum(1 for who in accounts if who in self.masked)))
         if not why_counts:
             result.merged = "none"
-        elif len(merged) >= MIN_ACCOUNTS and not _thin(merged):
+        elif stands:
             result.merged = "kept"
             lines.append(Line(MERGED_CODE, _total(merged, 0), _total(merged, 1), merged_rows, len(merged),
                               sum(1 for who in merged if who in self.masked)))
-        else:
+        else:  # every standing line went in, and it still does not stand
             result.merged = "withheld"
         result.lines = lines
         result.kept_lines = len(lines)

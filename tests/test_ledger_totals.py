@@ -150,25 +150,46 @@ OCTOBER_LINES = {
     MERGED_CODE: (D("92695.01"), D("89150.10"), 26, 16, 2),
 }
 OCTOBER_COUNTS = {"rows": 42, "sort_codes": 10, "kept_lines": 4, "merged_codes": 7, "merged": "kept",
-                  "merged_by": {"salary": 3, "small": 2, "side": 2}, "masked_keys": 2, "batch_9998_rows": 4}
+                  "merged_by": {"salary": 3, "small": 2, "side": 2, "balance": 0}, "masked_keys": 2, "batch_9998_rows": 4}
 OCTOBER_BATCH = (4, D("5463.18"), D("5463.18"))
-# September: the bank alone goes in - a merged line of one account, withheld.
-SEPTEMBER_LINES = {942: (D("797.01"), D("1690.87"), 6, 3, 0), 951: (D("1690.87"), D("0"), 3, 3, 0)}
-SEPTEMBER_COUNTS = {"rows": 12, "sort_codes": 3, "kept_lines": 2, "merged_codes": 1, "merged": "withheld",
-                    "merged_by": {"salary": 0, "small": 1, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
-# July: the bank and VAT go in - three accounts, but the bank alone fills the debit: withheld too.
-JULY_LINES = {942: (D("480.38"), D("960.66"), 6, 3, 0), 951: (D("960.66"), D("0"), 3, 3, 0)}
-JULY_COUNTS = {"rows": 15, "sort_codes": 4, "kept_lines": 2, "merged_codes": 2, "merged": "withheld",
-               "merged_by": {"salary": 0, "small": 2, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
-# June: the bank and VAT go in, and a deposit undone the next day leaves both sides empty - a merged line of two accounts
-# that exposes no one's money, withheld all the same: the rule is three accounts, not only three on each side.
-JUNE_LINES = {942: (D("0"), D("780.78"), 3, 3, 0), 951: (D("780.78"), D("0"), 3, 3, 0)}
-JUNE_COUNTS = {"rows": 10, "sort_codes": 4, "kept_lines": 2, "merged_codes": 2, "merged": "withheld",
-               "merged_by": {"salary": 0, "small": 2, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
+# The months below have a merged line that cannot stand. A month's lines net to zero, so it is never withheld while a line
+# stands: the standing lines go into it, the fewest accounts first and then the lowest code, until it stands (`balance`).
+# 942 and 951 have three accounts each in every one of them, so 942 goes in first; one is enough each time.
+# September: the bank alone goes in (one account): it cannot stand. With 942 in it, by hand:
+#   debit:  the three suppliers paid, 412.36 + 233.58 + 151.07 = 797.01 (the bank has no debit): the two largest 645.94,
+#           the rest 151.07 against a tenth of 79.70;
+#   credit: the bank 412.36 + 233.58 + 151.07 = 797.01, the three invoices 611.23 + 702.45 + 377.19 = 1690.87, so 2487.88
+#           over four accounts: the two largest 797.01 + 702.45 = 1499.46, the rest 988.42 against 248.79;
+#   rows 3 + 6 = 9, accounts 1 + 3 = 4: it stands. 951 stands beside it (611.23 + 702.45 + 377.19 = 1690.87, the two
+#   largest 1313.68, the rest 377.19 against 169.09), and the nets sum to zero: 1690.87 + (797.01 - 2487.88).
+SEPTEMBER_LINES = {951: (D("1690.87"), D("0"), 3, 3, 0), MERGED_CODE: (D("797.01"), D("2487.88"), 9, 4, 0)}
+SEPTEMBER_COUNTS = {"rows": 12, "sort_codes": 3, "kept_lines": 2, "merged_codes": 2, "merged": "kept",
+                    "merged_by": {"salary": 0, "small": 1, "side": 0, "balance": 1}, "masked_keys": 0, "batch_9998_rows": 0}
+# July: the bank (one account) and VAT (two) go in: three accounts, but the bank alone fills the debit. With 942 in it:
+#   debit:  the bank's deposit 590.59, the suppliers paid 105.05 + 160.16 + 215.17 = 480.38, so 1070.97 over four
+#           accounts: the two largest 590.59 + 215.17 = 805.76, the rest 265.21 against a tenth of 107.10;
+#   credit: the bank 105.05 + 160.16 + 215.17 = 480.38, VAT 90.09 + 500.50 = 590.59, the invoices 210.11 + 320.22 + 430.33
+#           = 960.66, so 2031.63 over six accounts: the two largest 500.50 + 480.38 = 980.88, the rest 1050.75 against
+#           203.16;
+#   rows 4 (the bank) + 2 (VAT) + 6 = 12, accounts 1 + 2 + 3 = 6: it stands. 951 stands beside it (960.66, the two
+#   largest 750.55, the rest 210.11 against 96.07), and the nets sum to zero: 960.66 + (1070.97 - 2031.63).
+JULY_LINES = {951: (D("960.66"), D("0"), 3, 3, 0), MERGED_CODE: (D("1070.97"), D("2031.63"), 12, 6, 0)}
+JULY_COUNTS = {"rows": 15, "sort_codes": 4, "kept_lines": 2, "merged_codes": 3, "merged": "kept",
+               "merged_by": {"salary": 0, "small": 2, "side": 0, "balance": 1}, "masked_keys": 0, "batch_9998_rows": 0}
+# June: VAT and the bank go in (one account each), and a deposit undone the next day leaves both with nothing on either
+# side: two accounts, under three. With 942 in it:
+#   debit:  VAT's 250.25 - 250.25 = 0, and the suppliers have none: an empty side;
+#   credit: the bank's 250.25 - 250.25 = 0, the invoices 150.15 + 260.26 + 370.37 = 780.78 over three accounts: the two
+#           largest 630.63, the rest 150.15 against a tenth of 78.08;
+#   rows 2 (VAT) + 2 (the bank) + 3 = 7, accounts 1 + 1 + 3 = 5: it stands. 951 stands beside it (780.78, the rest
+#   150.15 the same), and the nets sum to zero: 780.78 + (0 - 780.78).
+JUNE_LINES = {951: (D("780.78"), D("0"), 3, 3, 0), MERGED_CODE: (D("0"), D("780.78"), 7, 5, 0)}
+JUNE_COUNTS = {"rows": 10, "sort_codes": 4, "kept_lines": 2, "merged_codes": 3, "merged": "kept",
+               "merged_by": {"salary": 0, "small": 2, "side": 0, "balance": 1}, "masked_keys": 0, "batch_9998_rows": 0}
 # August: nothing to merge.
 AUGUST_LINES = {942: (D("0"), D("691.56"), 3, 3, 0), 951: (D("691.56"), D("0"), 3, 3, 0)}
 AUGUST_COUNTS = {"rows": 6, "sort_codes": 2, "kept_lines": 2, "merged_codes": 0, "merged": "none",
-                 "merged_by": {"salary": 0, "small": 0, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
+                 "merged_by": {"salary": 0, "small": 0, "side": 0, "balance": 0}, "masked_keys": 0, "batch_9998_rows": 0}
 MONTHS = {"2026-06": (JUNE, JUNE_LINES), "2026-07": (JULY, JULY_LINES), "2026-08": (AUGUST, AUGUST_LINES), "2026-09": (SEPTEMBER, SEPTEMBER_LINES),
           "2026-10": (OCTOBER, OCTOBER_LINES)}
 NAMES = {code: name for code, name, _ in ACCOUNTS.values()}
@@ -200,12 +221,11 @@ def test_the_fixture_is_what_the_tests_say():
     for key in ID_KEYS:  # an Israeli ID's check digit (a valid number makes the test a fair one)
         digits = [int(c) * (1 + i % 2) for i, c in enumerate(key)]
         assert sum(d // 10 + d % 10 for d in digits) % 10 == 0
-    for month, (rows, expected) in MONTHS.items():  # every month's lines, the merged line among them, net to zero
+    for month, (rows, expected) in MONTHS.items():  # every month keeps every line, and they net to zero
         outside = [r for r in rows if r["מספר מנה"] != 9998]
-        held = sum(d - c for d, c, *_ in expected.values())
         assert sum((r["חובה שקל"] or D(0)) - (r["זכות שקל"] or D(0)) for r in outside) == 0
-        if MERGED_CODE in expected:
-            assert held == 0, month
+        assert sum(d - c for d, c, *_ in expected.values()) == 0, month
+        assert sum(line[2] for line in expected.values()) == len(outside), month
 
 
 # ---- one cell, and the salary list ---------------------------------------------------------------------------------------
@@ -421,14 +441,15 @@ def test_the_salary_codes_are_merged_even_when_they_could_stand(pg):
     out = run(Books(), pg, ["2026-10"], salary="731,610,733,410")
     assert lines(pg) == {942: OCTOBER_LINES[942], 951: OCTOBER_LINES[951],
                          MERGED_CODE: (D("92695.01"), D("95657.09"), 29, 19, 2)}
-    assert out["months"]["2026-10"]["merged_by"] == {"salary": 4, "small": 2, "side": 2}
+    assert out["months"]["2026-10"]["merged_by"] == {"salary": 4, "small": 2, "side": 2, "balance": 0}
     # only the manager's code listed: the salary expense and its liabilities have three accounts each and one side each,
     # but two of them hold more than nine tenths of it (731's debit: 38213.77 + 6003.41 = 44217.18 of 48213.77, the rest
     # 3996.59 under a tenth, 4821.38; 610's credit: 37151.21 + 7062.57 = 44213.78, the rest 3999.99), so both go in as
     # `side` and the month is the same. Standing, each would show the month's salaries whole (the liabilities code mirrors
     # the expense), so both are listed all the same
     out = run(Books(), pg, ["2026-10"], salary="733")
-    assert lines(pg) == OCTOBER_LINES and out["months"]["2026-10"]["merged_by"] == {"salary": 1, "small": 2, "side": 4}
+    assert lines(pg) == OCTOBER_LINES
+    assert out["months"]["2026-10"]["merged_by"] == {"salary": 1, "small": 2, "side": 4, "balance": 0}
     run(Books(), pg, ["2026-10"])  # all three listed: both go into the merged line
     assert 731 not in lines(pg) and 610 not in lines(pg) and lines(pg) == OCTOBER_LINES
 
@@ -455,7 +476,7 @@ def test_a_line_whose_side_few_accounts_fill_is_merged_whole(pg):
 
 
 @needs_pg
-def test_the_merged_line_is_withheld_under_three_accounts_or_with_a_thin_side(pg):
+def test_a_merged_line_that_cannot_stand_takes_the_standing_lines_until_it_does(pg):
     out = run(Books(), pg, ["2026-06", "2026-07", "2026-08", "2026-09"])
     assert out["ok"] is True
     assert out["months"]["2026-06"] == stored({"parts": 1, **JUNE_COUNTS})  # two accounts whose sides cancel to zero
@@ -464,46 +485,51 @@ def test_the_merged_line_is_withheld_under_three_accounts_or_with_a_thin_side(pg
     assert out["months"]["2026-08"] == stored({"parts": 1, **AUGUST_COUNTS})  # nothing to merge
     assert lines(pg, "2026-09") == SEPTEMBER_LINES and lines(pg, "2026-07") == JULY_LINES
     assert lines(pg, "2026-08") == AUGUST_LINES and lines(pg, "2026-06") == JUNE_LINES
-    assert month_row(pg, "2026-09")[2:5] == (2, 1, "withheld") and month_row(pg, "2026-07")[2:5] == (2, 2, "withheld")
-    assert month_row(pg, "2026-06")[2:5] == (2, 2, "withheld")
+    assert month_row(pg, "2026-09")[2:5] == (2, 2, "kept") and month_row(pg, "2026-07")[2:5] == (2, 3, "kept")
+    assert month_row(pg, "2026-06")[2:5] == (2, 3, "kept")
     assert month_row(pg, "2026-08")[2:5] == (2, 0, "none")
     text = every_table(pg)
-    for amount in ("590.59", "1070.97", "110.21"):  # July's withheld line: its debit (the bank's alone), its credit, its net
+    # July's bank, the one account of its old merged line's debit: its own debit, its own net, and its own credit (the
+    # three payments, which 942's debit was while it stood). The merged line's debit, 1070.97, is four accounts' now
+    for amount in ("590.59", "110.21", "480.38"):
         assert amount not in text
 
 
-@needs_pg
-def test_the_balance_reveals_only_the_merged_aggregate(pg):
-    """The leak of 26.11: a month's lines net to zero, so a withheld cell's net is minus the kept lines'. Under the merge the
-    only cell a month withholds is the merged line: the balance reveals that aggregate and nothing finer - a multi-person
-    sum, except in a month with fewer than three such accounts (September: the bank's own net), as the module says."""
-    run(Books(), pg, list(MONTHS))
-    exceptions = set()
-    for month, (rows, _) in MONTHS.items():
-        held = lines(pg, month)
-        revealed = -sum(d - c for d, c, *_ in held.values())
-        outside = [r for r in rows if r["מספר מנה"] != 9998]
-        nets = {}  # each account's own net in the month, from the fixture - what no cell may give away
-        for r in outside:
-            key = ledger_totals.identity(r["מפתח חשבון"])
-            nets[key] = nets.get(key, D(0)) + (r["חובה שקל"] or D(0)) - (r["זכות שקל"] or D(0))
-        standing = {code for code in held if code != MERGED_CODE}
-        merged = {ledger_totals.identity(r["מפתח חשבון"]) for r in outside if r["קוד מיון"] not in standing}
-        state = month_row(pg, month)[4]
-        if state in ("kept", "none"):
-            assert revealed == 0, month  # every line is held: nothing is withheld, nothing follows
-            continue
-        assert revealed == sum(nets[k] for k in merged), month  # exactly the withheld aggregate
-        if len(merged) >= 3:
-            assert revealed not in {nets[k] for k in nets}, month  # and no one account's net
-            exceptions.discard(month)
-        else:
-            exceptions.add(month)  # the documented exception: fewer than three such accounts
-    assert exceptions == {"2026-06", "2026-09"}
-    assert -sum(d - c for d, c, *_ in lines(pg, "2026-09").values()) == D("-797.01")  # September's: the bank's own net
-    assert -sum(d - c for d, c, *_ in lines(pg, "2026-06").values()) == 0  # June's: nobody's money, both sides cancel
-    assert {m: month_row(pg, m)[4] for m in MONTHS} == {"2026-06": "withheld", "2026-07": "withheld", "2026-08": "none",
-                                                       "2026-09": "withheld", "2026-10": "kept"}
+def row(day, key, code, debit=None, credit=None, number=89900):
+    """One row of the report keyed by caption, for a month built by hand with accounts the fixture does not have."""
+    return dict(zip(CAPTIONS, [f"{day}T00:00:00", f"{day}T00:00:00", key, code, "קוד", "חשבון", "", "שורה", "61290", "",
+                               debit, credit, "", 7001, "יומן", number]))
+
+
+def finished(rows: list, month: str, salary=frozenset()) -> ledger_totals.MonthResult:
+    """A month read whole from these rows by sort-code range, summed and merged, in memory."""
+    def call(parameters, deadline):
+        low, high = int(parameters[0]["defVal"]), int(parameters[1]["defVal"])
+        return {"repdata": [r for r in rows if low <= r["קוד מיון"] <= high]}
+
+    result, acc = ledger_totals.read_month(call, ledger.load_definition(SECRET), month, time.monotonic() + 60)
+    assert acc is not None, result.reason
+    return acc.finish(result, salary)
+
+
+def test_the_standing_lines_go_into_the_merged_line_the_fewest_accounts_first():
+    """The bank pays four expense accounts (520, four accounts) and three suppliers invoice three more (942 and 951, three
+    each). The bank alone (300) cannot stand. 942 goes in first - three accounts, before 520's four though its code is
+    higher, and before 951's three by its code - and one is enough: the merged line's credit, the bank's 1000.00 and the
+    invoices 100.00 + 200.00 + 300.00, is 1600.00 over four accounts, its two largest 1300.00, the rest 300.00 against a
+    tenth of 160.00. In code order (520 first) or 951 first, the bank's credit would still stand alone, and a second line
+    would go in."""
+    rows = ([row("2026-02-03", "60231", 300, credit=D("1000.00"))]
+            + [row("2026-02-03", key, 520, debit=D("250.00")) for key in ("52101", "52102", "52103", "52104")]
+            + [row("2026-02-05", key, 942, credit=D(a), number=89901) for key, a in
+               (("71884", "100.00"), ("72005", "200.00"), ("73010", "300.00"))]
+            + [row("2026-02-05", key, 951, debit=D(a), number=89901) for key, a in
+               (("50120", "100.00"), ("50121", "200.00"), ("50122", "300.00"))])
+    result = finished(rows, "2026-02")
+    assert [(x.sort_code, x.debit, x.credit, x.rows, x.accounts) for x in result.lines] == [
+        (520, D("1000.00"), D("0"), 4, 4), (951, D("600.00"), D("0"), 3, 3), (MERGED_CODE, D("0"), D("1600.00"), 4, 4)]
+    assert (result.merged, result.kept_lines, result.merged_codes) == ("kept", 3, 2)
+    assert result.merged_by == {"salary": 0, "small": 1, "side": 0, "balance": 1}
 
 
 # ---- one person's money, never a stored side: the hostile review of 26.11 -----------------------------------------------
@@ -556,19 +582,29 @@ CANCELLED_VAT = (
     tx("2026-03-28", 89301, 7701, [("40099", D("31000.29"), None), ("60231", None, D("31000.29"))], "תלוש הנהלה")
     + tx("2026-03-05", 89302, 7701, [("70010", D("500.00"), None), ("70011", D("-500.00"), None)], "סיווג מחדש")
     + tx("2026-03-06", 89303, 7701, [("70010", None, D("200.00")), ("70011", None, D("-200.00"))], "סיווג מחדש"))
+# the manager's pay accrued against the three liabilities accounts, and a purchase from the three suppliers
+MANAGER_ALONE = (
+    tx("2026-04-28", 89401, 7901, [("40099", D("31000.29"), None), ("61001", None, D("25000.00")),
+                                   ("61002", None, D("3000.29")), ("61003", None, D("3000.00"))], "תלוש הנהלה")
+    + tx("2026-04-10", 89402, 7901, [("50120", D("100.00"), None), ("50121", D("200.00"), None),
+                                     ("50122", D("300.00"), None), ("71884", None, D("100.00")),
+                                     ("72005", None, D("200.00")), ("73010", None, D("300.00"))], "רכש"))
 
 
 @needs_pg
 def test_a_side_whose_other_accounts_cancel_is_never_one_accounts_own_amount(pg):
     """The review's finding 1, in a line that stood: supplier 71884 credited 5,000.00, and 72005 and 73010 credited 300.00
     and -300.00. 942's credit is filled by three accounts and its total is 71884's own 5,000.00 - by count it stood. By
-    rule (b) one account is within a tenth of it (it is all of it): 942 goes in as `side`."""
+    rule (b) one account is within a tenth of it (it is all of it): 942 goes in as `side`. Its merged line cannot stand,
+    and with 951 in it its credit is still 71884's, so no line is left and the month keeps none: 951 kept beside a
+    withheld merged line would give it away, minus 951's net being 71884's invoice."""
     month = "2026-05"
     out = run(Books(CANCELLED_SUPPLIER), pg, [month])
     assert out["ok"] is True and out["months"][month]["stored"] is True
-    assert out["months"][month]["merged_by"] == {"salary": 0, "small": 0, "side": 1}
+    assert out["months"][month]["merged_by"] == {"salary": 0, "small": 0, "side": 1, "balance": 1}
     held = lines(pg, month)
-    assert 942 not in held and exposed(CANCELLED_SUPPLIER, held) == []
+    assert held == {} and month_row(pg, month)[2:5] == (0, 2, "withheld")
+    assert exposed(CANCELLED_SUPPLIER, held) == [] and "5000.00" not in every_table(pg)
     own = {(code, who): sums for code, accounts in own_sums(CANCELLED_SUPPLIER).items() for who, sums in accounts.items()}
     for code, (debit, credit, *_rest) in held.items():  # the review's own check: no stored side is one account's sum
         for index, total in ((0, debit), (1, credit)):
@@ -588,6 +624,67 @@ def test_the_merged_line_kept_by_cancelling_accounts_is_never_the_managers_own_p
     assert month_row(pg, month)[2:5] == (0, 3, "withheld") and lines(pg, month) == {}
     manager = own_sums(CANCELLED_VAT)[733]["40099"][0]
     assert manager == D("31000.29") and "31000.29" not in every_table(pg)
+    # The review's month with three supplier invoices in it, so that 942 and 951 stand and the merged line can be kept,
+    # as the review ran it. With 942 in it, its debit is still the manager's to within a tenth; with 951 too, by hand:
+    #   debit:  31000.29 + 500.00 - 500.00, and the invoices 3100.17 + 2950.40 + 3410.05 = 9460.62, so 40460.91 over
+    #           six accounts: the nearest pair 31000.29 + 3410.05 = 34410.34, 6050.57 away against a tenth of 4046.09;
+    #   credit: the bank 31000.29, VAT 200.00 - 200.00, the invoices 9460.62, so 40460.91, the nearest pair the same;
+    #   rows 6 + 6 = 12, accounts 4 + 3 + 3 = 10: kept, the month's one line, and no side of it one account's
+    rows = CANCELLED_VAT + invoices("2026-03", (89304, 89305, 89306), 7702, ("3100.17", "2950.40", "3410.05"))
+    out = run(Books(rows), pg, [month])
+    assert out["ok"] is True and month_row(pg, month)[4] == "kept"
+    merged = lines(pg, month)[MERGED_CODE]
+    assert merged[0] != manager, "the stored merged line's debit is the manager's own pay, %s" % merged[0]
+    assert lines(pg, month) == {MERGED_CODE: (D("40460.91"), D("40460.91"), 12, 10, 0)}
+    assert out["months"][month]["merged_by"] == {"salary": 1, "small": 2, "side": 0, "balance": 2}
+    assert exposed(rows, lines(pg, month)) == []
+    run(Books(CANCELLED_VAT), pg, [month])  # the invoices gone again: the month keeps no line, and the kept one leaves
+    assert lines(pg, month) == {} and month_row(pg, month)[2:5] == (0, 3, "withheld")
+
+
+@needs_pg
+def test_a_withheld_merged_line_of_one_account_is_not_derived_from_the_kept_lines(pg):
+    """The review's finding 2: only the manager's code a salary code (as the salary test runs it), her pay accrued against
+    the liabilities code 610, three accounts credited. 610's credit is hers to within a tenth (25000.00 + 3000.29 of
+    31000.29: `side`), and the merged line, her account and 610's, cannot stand: its debit is hers alone. It took 942 and
+    then 951 and still does not stand (her 31000.29 is within a tenth of its debit, 31600.29), so the month keeps no line.
+    Under the old rule 951 and 942 stood beside a withheld merged line, and minus their nets was her pay to the agora."""
+    month = "2026-04"
+    out = run(Books(MANAGER_ALONE), pg, [month], salary="733")
+    assert out["ok"] is True and month_row(pg, month)[4] == "withheld"
+    held = lines(pg, month)
+    assert MERGED_CODE not in held
+    revealed = -sum(d - c for d, c, *_ in held.values())  # the month balances: minus the kept nets is the withheld net
+    manager = own_sums(MANAGER_ALONE)[733]["40099"]
+    assert revealed != manager[0] - manager[1], "the manager's own pay, %s, follows from the stored lines" % revealed
+    assert held == {} and month_row(pg, month)[2:5] == (0, 4, "withheld")  # no line of the month: nothing to derive from
+    assert out["months"][month]["merged_by"] == {"salary": 1, "small": 0, "side": 1, "balance": 2}
+    assert "31000.29" not in every_table(pg)
+
+
+@needs_pg
+def test_the_balance_reveals_nothing_a_month_does_not_keep(pg):
+    """The leak of 26.11, closed: a month's lines net to zero, so a withheld cell's net would be minus the kept lines'. The
+    merged line is never withheld while another line stands, so a month keeps every line or none: in every month the kept
+    nets sum to zero and nothing is derived - not September's bank (its own net, under the old rule), not April's
+    manager. Each kept line is recomputed from the rows, and no side of it is one or two accounts' to within a tenth."""
+    months = {**{m: rows for m, (rows, _) in MONTHS.items()}, "2026-04": MANAGER_ALONE}
+    run(Books(ROWS + MANAGER_ALONE), pg, sorted(months))
+    for month, rows in months.items():
+        held = lines(pg, month)
+        kept, state = month_row(pg, month)[2], month_row(pg, month)[4]
+        assert -sum(d - c for d, c, *_ in held.values()) == 0, month  # the balance gives nothing that is not kept
+        assert kept == len(held), month
+        if state == "withheld":
+            assert held == {}, month  # every line of the month withheld
+        else:  # every row outside batch 9998 is in a kept line: no line of the month is withheld
+            assert sum(line[2] for line in held.values()) == sum(1 for r in rows if r["מספר מנה"] != 9998), month
+        assert exposed(rows, held) == [], month
+    assert {m: month_row(pg, m)[4] for m in sorted(months)} == {
+        "2026-04": "withheld", "2026-06": "kept", "2026-07": "kept", "2026-08": "none", "2026-09": "kept", "2026-10": "kept"}
+    text = every_table(pg)
+    for amount in ("31000.29", "590.59", "110.21"):  # the manager's pay; July's bank's own debit and net
+        assert amount not in text
 
 
 @needs_pg
@@ -717,7 +814,7 @@ def test_a_rerun_replaces_the_month_whole_with_no_duplicates(pg):
     changed = [dict(r, **{"חובה שקל": D("1517.00")}) if r["מספר תנועה"] == 88403 and r["חובה שקל"] else
                dict(r, **{"זכות שקל": D("1517.00")}) if r["מספר תנועה"] == 88403 and r["זכות שקל"] else r for r in changed]
     out = run(Books(changed), pg, ["2026-10"])
-    assert out["months"]["2026-10"]["merged_by"] == {"salary": 3, "small": 4, "side": 1}
+    assert out["months"]["2026-10"]["merged_by"] == {"salary": 3, "small": 4, "side": 1, "balance": 0}
     # 410 lost an account: it left the store as a line and went into the merged line, as did 105
     assert lines(pg) == {942: (D("2961.70"), D("5463.18"), 6, 3, 0), 951: (D("5463.18"), D("0"), 3, 3, 0),
                          MERGED_CODE: (D("91511.74"), D("94473.44"), 26, 16, 2)}
@@ -1047,7 +1144,7 @@ def test_the_totals_route_says_the_kept_lines_and_the_merged_one_and_never_a_row
     october, september = body["months"]["2026-10"], body["months"]["2026-09"]
     assert (october["batch_9998_rows"], october["batch_9998_debit"], october["batch_9998_credit"]) == (4, "5463.18", "5463.18")
     assert (october["merged"], october["merged_codes"], october["kept_lines"]) == ("kept", 7, 4)
-    assert (september["merged"], september["merged_codes"], september["kept_lines"]) == ("withheld", 1, 2)
+    assert (september["merged"], september["merged_codes"], september["kept_lines"]) == ("kept", 2, 2)
     assert scan(r.text, PRIVATE - SAID) == [] and scan(caplog.text, EVERYTHING) == []
     assert client.get(TOTALS_URL + "?from=2026-10", headers=AUTH).json()["months"].keys() == {"2026-10"}
     assert client.get(TOTALS_URL + "?from=2025-01&to=2025-03", headers=AUTH).json()["lines"] == []
