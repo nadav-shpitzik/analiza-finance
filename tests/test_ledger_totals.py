@@ -124,6 +124,9 @@ OCTOBER = (
 SEPTEMBER = (invoices("2026-09", (88301, 88302, 88303), 7701, ("611.23", "702.45", "377.19"))
              + payments("2026-09", (88304, 88305, 88306), 7702, ("412.36", "233.58", "151.07")))
 AUGUST = invoices("2026-08", (88201, 88202, 88203), 7651, ("120.41", "230.52", "340.63"))
+JUNE = (invoices("2026-06", (88701, 88702, 88703), 7501, ("150.15", "260.26", "370.37"))
+        + tx("2026-06-15", 88704, 7502, [("70010", D("250.25"), None), ("60231", None, D("250.25"))], "הפקדה שגויה")
+        + tx("2026-06-16", 88705, 7502, [("70010", D("-250.25"), None), ("60231", None, D("-250.25"))], "ביטול הפקדה"))
 JULY = (invoices("2026-07", (88601, 88602, 88603), 7601, ("210.11", "320.22", "430.33"), days=(3, 4, 5))
         + payments("2026-07", (88604, 88605, 88606), 7602, ("105.05", "160.16", "215.17"), days=(10, 11, 12))
         + tx("2026-07-15", 88607, 7603, [("60231", D("590.59"), None), ("70010", None, D("90.09")),
@@ -150,16 +153,21 @@ SEPTEMBER_COUNTS = {"rows": 12, "sort_codes": 3, "kept_lines": 2, "merged_codes"
 JULY_LINES = {942: (D("480.38"), D("960.66"), 6, 3, 0), 951: (D("960.66"), D("0"), 3, 3, 0)}
 JULY_COUNTS = {"rows": 15, "sort_codes": 4, "kept_lines": 2, "merged_codes": 2, "merged": "withheld",
                "merged_by": {"salary": 0, "small": 2, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
+# June: the bank and VAT go in, and a deposit undone the next day leaves both sides empty - a merged line of two accounts
+# that exposes no one's money, withheld all the same: the rule is three accounts, not only three on each side.
+JUNE_LINES = {942: (D("0"), D("780.78"), 3, 3, 0), 951: (D("780.78"), D("0"), 3, 3, 0)}
+JUNE_COUNTS = {"rows": 10, "sort_codes": 4, "kept_lines": 2, "merged_codes": 2, "merged": "withheld",
+               "merged_by": {"salary": 0, "small": 2, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
 # August: nothing to merge.
 AUGUST_LINES = {942: (D("0"), D("691.56"), 3, 3, 0), 951: (D("691.56"), D("0"), 3, 3, 0)}
 AUGUST_COUNTS = {"rows": 6, "sort_codes": 2, "kept_lines": 2, "merged_codes": 0, "merged": "none",
                  "merged_by": {"salary": 0, "small": 0, "side": 0}, "masked_keys": 0, "batch_9998_rows": 0}
-MONTHS = {"2026-07": (JULY, JULY_LINES), "2026-08": (AUGUST, AUGUST_LINES), "2026-09": (SEPTEMBER, SEPTEMBER_LINES),
+MONTHS = {"2026-06": (JUNE, JUNE_LINES), "2026-07": (JULY, JULY_LINES), "2026-08": (AUGUST, AUGUST_LINES), "2026-09": (SEPTEMBER, SEPTEMBER_LINES),
           "2026-10": (OCTOBER, OCTOBER_LINES)}
 NAMES = {code: name for code, name, _ in ACCOUNTS.values()}
 MAP = {key: code for key, (code, _, _) in ACCOUNTS.items() if key not in ID_KEYS}  # (c): the keys that are no ID number
 
-ROWS = JULY + AUGUST + SEPTEMBER + OCTOBER
+ROWS = JUNE + JULY + AUGUST + SEPTEMBER + OCTOBER
 # What a row holds that no answer may say: everything but the sort code and its name, which the totals and the dry listing
 # say by design.
 PRIVATE = targets([{k: v for k, v in r.items() if k not in ("קוד מיון", "שם קוד מיון")} for r in ROWS]) - {"9998"}
@@ -402,14 +410,16 @@ def test_a_line_whose_side_few_accounts_fill_is_merged_whole(pg):
 
 @needs_pg
 def test_the_merged_line_is_withheld_under_three_accounts_or_with_a_thin_side(pg):
-    out = run(Books(), pg, ["2026-07", "2026-08", "2026-09"])
+    out = run(Books(), pg, ["2026-06", "2026-07", "2026-08", "2026-09"])
     assert out["ok"] is True
+    assert out["months"]["2026-06"] == stored({"parts": 1, **JUNE_COUNTS})  # two accounts whose sides cancel to zero
     assert out["months"]["2026-09"] == stored({"parts": 1, **SEPTEMBER_COUNTS})  # the bank alone
     assert out["months"]["2026-07"] == stored({"parts": 1, **JULY_COUNTS})  # three accounts, the bank alone in the debit
     assert out["months"]["2026-08"] == stored({"parts": 1, **AUGUST_COUNTS})  # nothing to merge
     assert lines(pg, "2026-09") == SEPTEMBER_LINES and lines(pg, "2026-07") == JULY_LINES
-    assert lines(pg, "2026-08") == AUGUST_LINES
+    assert lines(pg, "2026-08") == AUGUST_LINES and lines(pg, "2026-06") == JUNE_LINES
     assert month_row(pg, "2026-09")[2:5] == (2, 1, "withheld") and month_row(pg, "2026-07")[2:5] == (2, 2, "withheld")
+    assert month_row(pg, "2026-06")[2:5] == (2, 2, "withheld")
     assert month_row(pg, "2026-08")[2:5] == (2, 0, "none")
     text = every_table(pg)
     for amount in ("590.59", "1070.97", "110.21"):  # July's withheld line: its debit (the bank's alone), its credit, its net
@@ -422,6 +432,7 @@ def test_the_balance_reveals_only_the_merged_aggregate(pg):
     only cell a month withholds is the merged line: the balance reveals that aggregate and nothing finer - a multi-person
     sum, except in a month with fewer than three such accounts (September: the bank's own net), as the module says."""
     run(Books(), pg, list(MONTHS))
+    exceptions = set()
     for month, (rows, _) in MONTHS.items():
         held = lines(pg, month)
         revealed = -sum(d - c for d, c, *_ in held.values())
@@ -439,10 +450,14 @@ def test_the_balance_reveals_only_the_merged_aggregate(pg):
         assert revealed == sum(nets[k] for k in merged), month  # exactly the withheld aggregate
         if len(merged) >= 3:
             assert revealed not in {nets[k] for k in nets}, month  # and no one account's net
+            exceptions.discard(month)
         else:
-            assert month == "2026-09" and revealed == nets["60231"] == D("-797.01")  # the documented exception
-    assert {m: month_row(pg, m)[4] for m in MONTHS} == {"2026-07": "withheld", "2026-08": "none", "2026-09": "withheld",
-                                                       "2026-10": "kept"}
+            exceptions.add(month)  # the documented exception: fewer than three such accounts
+    assert exceptions == {"2026-06", "2026-09"}
+    assert -sum(d - c for d, c, *_ in lines(pg, "2026-09").values()) == D("-797.01")  # September's: the bank's own net
+    assert -sum(d - c for d, c, *_ in lines(pg, "2026-06").values()) == 0  # June's: nobody's money, both sides cancel
+    assert {m: month_row(pg, m)[4] for m in MONTHS} == {"2026-06": "withheld", "2026-07": "withheld", "2026-08": "none",
+                                                       "2026-09": "withheld", "2026-10": "kept"}
 
 
 @needs_pg
@@ -510,7 +525,7 @@ def test_an_id_like_key_is_never_stored_hashed_or_kept_in_any_form(pg):
                 forms.add(hashlib.new(algo, form.encode()).hexdigest()[:16])
         assert [f for f in forms if f in text] == []
     assert sql(pg, "SELECT count(*) FROM ledger_accounts WHERE account_key !~ '^[0-9]{5}$'")[0][0] == 0
-    assert scan(dump_answer(out), EVERYTHING) == []
+    assert scan(dump_answer(out), EVERYTHING) == [] and not re.search(r"\d\.\d", dump_answer(out))  # no amount at all
 
 
 def dump_answer(obj) -> str:
@@ -535,7 +550,9 @@ def test_the_dry_listing_names_each_code_counts_its_accounts_and_stores_nothing(
     assert out["months"]["2026-10"] == {"read": True, "reason": None, "cut": False, "parts": 1, "rows": 42, "sort_codes": 10}
     assert counts(pg, *LEDGER_TABLES) == dict.fromkeys(LEDGER_TABLES, 0)
     text = dump_answer(out)
-    assert scan(text, PRIVATE - SAID) == [] and [t for t in TOTALS if t in text] == []  # no amount, no row's value
+    assert scan(text, PRIVATE - SAID) == [] and [t for t in TOTALS if t in text] == []  # no row's value
+    assert not re.search(r"\d\.\d", text)  # and no amount at all: every number it says is a count
+    assert set(out) == {"ok", "dry", "reasons", "salary_codes", "months", "codes", "salary_codes_unseen"}
     # without the list: the same categories, and nothing said of a list
     out = dry(books, ["2026-09", "2026-10"], salary=None)
     assert out["ok"] and out["salary_codes"] == "missing" and "salary_codes_unseen" not in out
@@ -825,6 +842,7 @@ def test_the_dry_listing_through_the_route_stores_nothing_and_says_no_amount(app
         (c, NAMES[c], n, s) for c, n, _, s in LISTED]
     assert counts(pg, *LEDGER_TABLES) == dict.fromkeys(LEDGER_TABLES, 0)
     assert scan(r.text, PRIVATE - SAID) == [] and [t for t in TOTALS if t in r.text] == []
+    assert not re.search(r"\d\.\d", json.dumps({k: v for k, v in body.items() if k != "request_s"}))
     assert scan(caplog.text, EVERYTHING) == []
     assert client.post(RUN, json={"dry": False, "months": ["2026-10"]}, headers=AUTH).json()["months"]["2026-10"]["stored"]
 
