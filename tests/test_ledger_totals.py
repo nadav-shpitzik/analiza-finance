@@ -7,6 +7,7 @@ code under test."""
 
 import copy
 import hashlib
+import itertools
 import json
 import logging
 import re
@@ -136,6 +137,12 @@ JULY = (invoices("2026-07", (88601, 88602, 88603), 7601, ("210.11", "320.22", "4
 # October: 942, 951 and 410 stand (three accounts each, each side filled by three or by none). Into the merged line go
 # 731, 610 and 733 (salary codes), 300 (the bank, one account) and 720 (VAT, two), and 105 (one student's receipt fills
 # its credit) and 960 (two refunds fill its credit): 16 accounts, both sides filled by many, so it is kept.
+# No two accounts hold nine tenths of a side that stands (rule (b), checked by hand; every sum on these sides is positive,
+# so the two largest are the nearest pair): 410's credit 6506.99, 3003.23 + 2500.99 = 5504.22, the rest 1002.77 against a
+# tenth of 650.70; 942's debit 2962.08, 1517.38 + 803.61 = 2320.99, the rest 641.09 against 296.21; 942's credit and 951's
+# debit 5463.18, 2210.19 + 1935.47 = 4145.66, the rest 1317.52 against 546.32; the merged debit 92695.01, 38213.77 +
+# 31000.29 = 69214.06, the rest 23480.95 against 9269.50; the merged credit 89150.10, 37151.21 + 36124.04 = 73275.25, the
+# rest 15874.85 against 8915.01. So they all still stand.
 OCTOBER_LINES = {
     410: (D("0"), D("6506.99"), 3, 3, 0),
     942: (D("2962.08"), D("5463.18"), 6, 3, 0),
@@ -235,6 +242,36 @@ def test_the_cells_are_read_as_the_live_answer_carries_them():
 ])
 def test_the_salary_codes_are_an_explicit_list_or_nothing(text, state, codes):
     assert salary_codes(text) == (state, frozenset(codes))
+
+
+def one_side(amounts, index) -> dict:
+    """A line's accounts, each with its own sum on one side (0 the debit, 1 the credit) and nothing on the other."""
+    return {f"acct{i}": [D(a), D(0)] if index == 0 else [D(0), D(a)] for i, a in enumerate(amounts)}
+
+
+@pytest.mark.parametrize("amounts,thin", [
+    ((), False),  # a side no account fills is empty and exposes no one
+    (("70.01",), True), (("70.01", "-70.01"), True),  # (a): one or two accounts fill it, whatever their total
+    (("500.00", "-300.00", "-200.00"), False),  # (b) never: a total of zero has no one near it
+    (("5000.00", "300.00", "-300.00"), True),  # the review's: three fill it, two cancel, the total is one account's own
+    (("900.00", "250.00", "-150.00"), False),  # T 1000.00: one account exactly a tenth away, |T - s| = T / 10, is not near
+    (("900.01", "250.00", "-150.01"), True),  # T 1000.00: one account 99.99 away, just under a tenth
+    (("800.00", "100.00", "100.00"), False),  # T 1000.00: two accounts (800 + 100) exactly a tenth away
+    (("800.00", "100.01", "99.99"), True),  # T 1000.00: two accounts (800 + 100.01) 99.99 away
+    (("-900.00", "-250.00", "150.00"), False), (("-900.01", "-250.00", "150.01"), True),  # T -1000.00: a tenth of |T|
+    (("500.00", "300.00", "200.00"), False),  # T 1000.00 is 500 + 500, but an account is never its own partner
+    (("500.00", "500.00", "60.00"), True),  # T 1060.00: two accounts of one sum are two (1000.00, 60.00 away)
+    # T 950.00, a tenth 95.00: 400.00 + 500.00 is 50.00 away. The two largest by value (10000.00 + 500.00) are 9550.00
+    # away and the two largest by size (10000.00 - 10000.00) 950.00, so only a search over every two accounts finds it
+    (("10000.00", "-10000.00", "400.00", "500.00", "50.00"), True),
+])
+def test_a_side_is_thin_when_one_or_two_accounts_fill_it_or_hold_its_total_to_within_a_tenth(amounts, thin):
+    for index in (0, 1):  # the debit and the credit are read alike
+        assert ledger_totals._thin(one_side(amounts, index)) is thin, index
+    # in any order of the accounts, and with accounts of no sum on that side beside them (they fill nothing)
+    reordered = one_side(amounts[::-1], 0)
+    reordered.update({f"none{i}": [D(0), D(0)] for i in range(3)})
+    assert ledger_totals._thin(reordered) is thin
 
 
 # ---- the vendor --------------------------------------------------------------------------------------------------------
@@ -376,13 +413,22 @@ def test_a_month_is_summed_by_sort_code_with_one_merged_line_and_only_the_three_
 
 @needs_pg
 def test_the_salary_codes_are_merged_even_when_they_could_stand(pg):
-    out = run(Books(), pg, ["2026-10"], salary="733")  # only the manager's code listed
-    held = lines(pg)
-    # the salary expense and its liabilities stand on their own then: three accounts each, one side each. Each shows the
-    # month's salaries whole - the liabilities code mirrors the expense, so both must be listed
-    assert held[731] == (D("48213.77"), D("0"), 3, 3, 0) and held[610] == (D("0"), D("48213.77"), 3, 3, 0)
-    assert held[MERGED_CODE] == (D("44481.24"), D("40936.33"), 20, 10, 2)
-    assert out["months"]["2026-10"]["merged_by"] == {"salary": 1, "small": 2, "side": 2}
+    # a listed code goes into the merged line even when it could stand: 410 listed beside the salary codes (three accounts,
+    # no two of them nine tenths of its credit). By hand, the merged line is October's with 410's line in it: debit
+    # 92695.01 + 0, credit 89150.10 + 6506.99 = 95657.09, rows 26 + 3, accounts 16 + 3 (40001-40003 are in no other merged
+    # code), masked 2 + 0. Its credit's two largest are still 37151.21 + 36124.04 = 73275.25, the rest 22381.84 against a
+    # tenth of 9565.71: kept
+    out = run(Books(), pg, ["2026-10"], salary="731,610,733,410")
+    assert lines(pg) == {942: OCTOBER_LINES[942], 951: OCTOBER_LINES[951],
+                         MERGED_CODE: (D("92695.01"), D("95657.09"), 29, 19, 2)}
+    assert out["months"]["2026-10"]["merged_by"] == {"salary": 4, "small": 2, "side": 2}
+    # only the manager's code listed: the salary expense and its liabilities have three accounts each and one side each,
+    # but two of them hold more than nine tenths of it (731's debit: 38213.77 + 6003.41 = 44217.18 of 48213.77, the rest
+    # 3996.59 under a tenth, 4821.38; 610's credit: 37151.21 + 7062.57 = 44213.78, the rest 3999.99), so both go in as
+    # `side` and the month is the same. Standing, each would show the month's salaries whole (the liabilities code mirrors
+    # the expense), so both are listed all the same
+    out = run(Books(), pg, ["2026-10"], salary="733")
+    assert lines(pg) == OCTOBER_LINES and out["months"]["2026-10"]["merged_by"] == {"salary": 1, "small": 2, "side": 4}
     run(Books(), pg, ["2026-10"])  # all three listed: both go into the merged line
     assert 731 not in lines(pg) and 610 not in lines(pg) and lines(pg) == OCTOBER_LINES
 
@@ -458,6 +504,90 @@ def test_the_balance_reveals_only_the_merged_aggregate(pg):
     assert -sum(d - c for d, c, *_ in lines(pg, "2026-06").values()) == 0  # June's: nobody's money, both sides cancel
     assert {m: month_row(pg, m)[4] for m in MONTHS} == {"2026-06": "withheld", "2026-07": "withheld", "2026-08": "none",
                                                        "2026-09": "withheld", "2026-10": "kept"}
+
+
+# ---- one person's money, never a stored side: the hostile review of 26.11 -----------------------------------------------
+
+
+def own_sums(rows: list) -> dict:
+    """{sort code: {account: [debit, credit]}} of every account in these rows outside batch 9998, from the fixture alone."""
+    out: dict = {}
+    for r in rows:
+        if r["מספר מנה"] == 9998:
+            continue
+        held = out.setdefault(r["קוד מיון"], {}).setdefault(ledger_totals.identity(r["מפתח חשבון"]), [D(0), D(0)])
+        held[0] += r["חובה שקל"] or D(0)
+        held[1] += r["זכות שקל"] or D(0)
+    return out
+
+
+def exposed(rows: list, held: dict) -> list:
+    """Every stored side one or two accounts hold, by brute force over the rows and apart from the module's search: a side
+    some accounts fill but fewer than three, or whose total one account's sum, or two accounts' sum, comes within a tenth
+    of. A kept line's accounts are its code's; the merged line's, those of every code that is not a line of its own. Each
+    stored line is first checked to be exactly its accounts' sums, and their number."""
+    own = own_sums(rows)
+    out = []
+    for code, (debit, credit, _rows, accounts, _masked) in held.items():
+        mine: dict = {}
+        for c, of_code in own.items():
+            if (c not in held) if code == MERGED_CODE else (c == code):
+                for who, sums in of_code.items():
+                    into = mine.setdefault(who, [D(0), D(0)])
+                    into[0] += sums[0]
+                    into[1] += sums[1]
+        assert len(mine) == accounts, code
+        for index, total in ((0, debit), (1, credit)):
+            sums = [s[index] for s in mine.values() if s[index] != 0]
+            assert sum(sums, D(0)) == total, (code, index)
+            near = sums + [a + b for a, b in itertools.combinations(sums, 2)]
+            if 0 < len(sums) < 3 or (total != 0 and any(abs(total - s) * 10 < abs(total) for s in near)):
+                out.append((code, ("debit", "credit")[index]))
+    return out
+
+
+# The review's months: a lecturer's invoice, and last month's misposting moved between two other suppliers as +300/-300
+CANCELLED_SUPPLIER = (
+    tx("2026-05-10", 89501, 7801, [("50120", D("3000.00"), None), ("50121", D("1000.00"), None),
+                                   ("50122", D("1000.00"), None), ("71884", None, D("5000.00"))], "חשבונית מרצה")
+    + tx("2026-05-12", 89502, 7801, [("72005", None, D("300.00")), ("73010", None, D("-300.00"))], "סיווג מחדש"))
+# the manager's pay from the bank, and two reclassifications between the VAT accounts, +500/-500 and +200/-200
+CANCELLED_VAT = (
+    tx("2026-03-28", 89301, 7701, [("40099", D("31000.29"), None), ("60231", None, D("31000.29"))], "תלוש הנהלה")
+    + tx("2026-03-05", 89302, 7701, [("70010", D("500.00"), None), ("70011", D("-500.00"), None)], "סיווג מחדש")
+    + tx("2026-03-06", 89303, 7701, [("70010", None, D("200.00")), ("70011", None, D("-200.00"))], "סיווג מחדש"))
+
+
+@needs_pg
+def test_a_side_whose_other_accounts_cancel_is_never_one_accounts_own_amount(pg):
+    """The review's finding 1, in a line that stood: supplier 71884 credited 5,000.00, and 72005 and 73010 credited 300.00
+    and -300.00. 942's credit is filled by three accounts and its total is 71884's own 5,000.00 - by count it stood. By
+    rule (b) one account is within a tenth of it (it is all of it): 942 goes in as `side`."""
+    month = "2026-05"
+    out = run(Books(CANCELLED_SUPPLIER), pg, [month])
+    assert out["ok"] is True and out["months"][month]["stored"] is True
+    assert out["months"][month]["merged_by"] == {"salary": 0, "small": 0, "side": 1}
+    held = lines(pg, month)
+    assert 942 not in held and exposed(CANCELLED_SUPPLIER, held) == []
+    own = {(code, who): sums for code, accounts in own_sums(CANCELLED_SUPPLIER).items() for who, sums in accounts.items()}
+    for code, (debit, credit, *_rest) in held.items():  # the review's own check: no stored side is one account's sum
+        for index, total in ((0, debit), (1, credit)):
+            filling = [k for (c, k), s in own.items() if c == code and s[index] != 0]
+            assert not (total != 0 and len(filling) > 1 and any(own[(code, k)][index] == total for k in filling))
+
+
+@needs_pg
+def test_the_merged_line_kept_by_cancelling_accounts_is_never_the_managers_own_pay(pg):
+    """The review's finding 1, in the merged line, where the salaries are. The merged line (733 the salary code, 300 the
+    bank's one account, 720 VAT's two) has four accounts and each side filled by three: by count it was kept, its debit
+    the manager's own pay and its credit the bank's own. By rule (b) each side is one account's to within a tenth (the VAT
+    accounts cancel), so it does not stand, and with no other line in the month it is withheld."""
+    month = "2026-03"
+    out = run(Books(CANCELLED_VAT), pg, [month])
+    assert out["ok"] is True and out["months"][month]["stored"] is True
+    assert month_row(pg, month)[2:5] == (0, 3, "withheld") and lines(pg, month) == {}
+    manager = own_sums(CANCELLED_VAT)[733]["40099"][0]
+    assert manager == D("31000.29") and "31000.29" not in every_table(pg)
 
 
 @needs_pg

@@ -20,17 +20,23 @@ line goes into the merged line when
    listing), never guessed by a name. Until the list is set, a run stores nothing (`salary_codes_not_set`);
 2. it has fewer than MIN_ACCOUNTS (3) distinct accounts (`small`): a code that holds one person's account exposes their
    monthly amount (ADR-0187 "שארית ידועה");
-3. its debit or its credit is filled by fewer than MIN_ACCOUNTS accounts (`side`): with one account debited and others
-   credited, the debit total is that one account's own. A side is filled by the accounts whose sum on it is not zero; an
-   empty side exposes no one. The whole line moves.
-The merged line is kept only when it has MIN_ACCOUNTS accounts or more and neither of its sides is filled by fewer (the
-same rule a line stands by); otherwise it is withheld whole and counted (`merged: "withheld"`).
+3. its debit or its credit is thin (`side`, `_thin`), and the whole line moves. A side is filled by the accounts whose sum
+   on it is not zero, and it is thin when
+   (a) one or two accounts fill it: with one account debited and others credited, the debit total is that one account's
+       own; or
+   (b) its total T is not zero and one account's sum, or two accounts' sum, lies strictly within REST_SHARE (a tenth) of
+       it, |T - s| < REST_SHARE * |T|: the other accounts move the total by less than a tenth of it. Counting accounts is
+       not enough: two accounts that cancel (+X and -X, a reclassification) fill a side and leave its total one account's
+       own. This is the (2, 90%) dominance rule of statistical disclosure control, searched over every one and every two
+       accounts (`_dominated`), not only the largest, because a sum here can be negative.
+   An empty side, or one whose total is zero, exposes no one.
+The merged line is kept only when it has MIN_ACCOUNTS accounts or more and neither of its sides is thin (the same rule a
+line stands by); otherwise it is withheld whole and counted (`merged: "withheld"`).
 
 **What the balance still reveals.** A month's lines net to zero: every transaction balances, the date cut takes whole
 transactions, and batch 9998 balances on its own and is kept apart. So the one cell a month can withhold - the merged
 line - has as its net minus the kept lines' nets, and the balance reveals that withheld aggregate and nothing finer: a
-multi-person sum, except in a month with fewer than 3 such accounts, when it is those one or two accounts' own. And a
-multi-person sum can still be almost one account's (there is no dominance rule).
+multi-person sum, except in a month with fewer than 3 such accounts, when it is those one or two accounts' own.
 
 **Batch 9998** (the income and expense transfer at the end of a year or a quarter, which zeroes the expense cards) never
 enters a line: its rows and totals are counted apart, per month (ADR-0187 §5), even though the report is defined without
@@ -64,6 +70,7 @@ import math
 import re
 import time
 import unicodedata
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -82,6 +89,7 @@ BATCH_CAPTION = "מספר מנה"
 NEEDED = (DATE_CAPTION, KEY_CAPTION, SORT_CAPTION, DEBIT_CAPTION, CREDIT_CAPTION, BATCH_CAPTION)
 TRANSFER_BATCH = 9998
 MIN_ACCOUNTS = 3  # a line, or a side of one, filled by fewer accounts never stands alone (the owner, 26.11)
+REST_SHARE = Decimal("0.1")  # a side's total one or two accounts hold to within this share of it is theirs: thin (b)
 MERGED_CODE = -1  # the merged line's sort code: never a real one (a row that carries it is unreadable)
 MERGED_NAME = "שכר ונלווים וקודים קטנים"
 MERGE_WHY = ("salary", "small", "side")  # why a line went into the merged line, in the order they are asked
@@ -329,12 +337,35 @@ class _Reader:
         return None if read is None else read(row)
 
 
+def _dominated(sums: list) -> bool:
+    """Rule (b) of a thin side: its total T is not zero, and one account's sum, or the sum of two accounts, lies strictly
+    within REST_SHARE of it, |T - s| < REST_SHARE * |T|. `sums` are the side's non-zero sums, one per account. Every one
+    and every two accounts are searched, not only the largest: a sum can be negative, so two accounts that cancel can
+    stand between the largest and the total. Sorted once: the singles in one pass, and for each account the partners that
+    bring it into the window by bisection, O(n log n)."""
+    total = sum(sums, Decimal(0))
+    if total == 0:
+        return False
+    room = REST_SHARE * abs(total)
+    low, high = total - room, total + room  # s is near when low < s < high
+    values = sorted(sums)
+    if any(low < value < high for value in values):
+        return True
+    for index, value in enumerate(values):
+        first = bisect_right(values, low - value)  # the partners w with low - value < w < high - value
+        end = bisect_left(values, high - value)
+        if end - first > 1 or (end - first == 1 and first != index):  # a partner that is another account
+            return True
+    return False
+
+
 def _thin(accounts: dict) -> bool:
-    """Whether a side - the debit or the credit - is filled by some accounts but fewer than MIN_ACCOUNTS. An account fills
-    a side when its sum on that side is not zero; a side no account fills is empty and exposes no one."""
+    """Whether a side - the debit or the credit - is thin: (a) filled by some accounts but fewer than MIN_ACCOUNTS, or (b)
+    held by one or two of them to within REST_SHARE of its total (`_dominated`). An account fills a side when its sum on
+    that side is not zero; a side no account fills is empty and exposes no one."""
     for index in (0, 1):
-        filled = sum(1 for sums in accounts.values() if sums[index] != 0)
-        if 0 < filled < MIN_ACCOUNTS:
+        sums = [held[index] for held in accounts.values() if held[index] != 0]
+        if 0 < len(sums) < MIN_ACCOUNTS or _dominated(sums):
             return True
     return False
 
