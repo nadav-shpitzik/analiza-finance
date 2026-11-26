@@ -42,6 +42,12 @@ DOCS = [doc(62502), doc(62503, card="20002", name="גימל תלמיד"),
 KEYS = {"77001": ["חברה בדויה"]}
 
 
+
+def titled(before: str, after: str, html: str) -> bool:
+    """`before`, a press's title (what it does: the UX review of 26.11, tested in tests/test_desk_dismissals_page.py), then
+    `after`, in `html`."""
+    return re.search(re.escape(before) + r' title="[^"]+"' + re.escape(after), html) is not None
+
 def books_view(state: str = "ok", reasons=(), b2c: bool = True, b2b: bool = True, rows=ROWS, docs=DOCS,
                keys=None) -> tuple:
     """(the view the server sends this reader, the whole merged view): computed from the rows and the copy, then laid over
@@ -105,13 +111,14 @@ def test_a_rows_details_say_the_marks_sentence():
     html = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"1": True, "2": True}}}])[0]
     detail = html[html.index('<tr class="fin-detail">', html.index('data-row="1"')):]
     # R5: and beside it "לא פער", which names the mark and its row
-    assert ('<li>בחשבשבת חשבונית מס/קבלה 62502 מ-03.11.2026 על 4,000.00 ₪ כולל מע&quot;מ, כלומר הכסף התקבל, וסטטוס התשלום '
-            'בשורה &quot;לא שולם&quot;. <button type="button" class="fin-linkbtn fin-nag" data-nag="books_receipt_unpaid:1" '
-            'data-nag-from="detail">לא פער</button></li>') in detail[:detail.index("</td></tr>")]
+    assert titled('<li>בחשבשבת חשבונית מס/קבלה 62502 מ-03.11.2026 על 4,000.00 ₪ כולל מע&quot;מ, כלומר הכסף התקבל, וסטטוס '
+                  'התשלום בשורה &quot;לא שולם&quot;. <button type="button" class="fin-linkbtn fin-nag" '
+                  'data-nag="books_receipt_unpaid:1" data-nag-from="detail"', '>לא פער</button></li>',
+                  detail[:detail.index("</td></tr>")])
     detail = html[html.index('<tr class="fin-detail">', html.index('data-row="2"')):]
-    assert ("<li>מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 40000: אין בחשבשבת מסמך תקף במספר הזה. <button "
-            'type="button" class="fin-linkbtn fin-nag" data-nag="books_ref_invalid:2" data-nag-from="detail">לא פער</button>'
-            "</li>") in detail
+    assert titled("<li>מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 40000: אין בחשבשבת מסמך תקף במספר הזה. <button "
+                  'type="button" class="fin-linkbtn fin-nag" data-nag="books_ref_invalid:2" data-nag-from="detail"',
+                  ">לא פער</button></li>", detail)
 
 
 def test_a_number_not_yet_in_the_copy_is_said_in_the_rows_details_and_nowhere_else():
