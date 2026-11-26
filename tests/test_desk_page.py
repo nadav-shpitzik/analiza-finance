@@ -1707,6 +1707,54 @@ def test_a_reading_whose_view_could_not_be_built_is_said_as_the_servers_fault_wi
     assert "הנתונים עוד לא נקראו" in drive(answer(None), [], monday=world())["first"]
 
 
+REFRESH_FAILED = "הרענון נכשל, ומוצגים הנתונים הקודמים"
+
+
+@pytest.mark.parametrize("failure, said", [
+    ({"status": 503, "error": "finance_unavailable"},
+     REFRESH_FAILED + ": לא הצלחנו לקרוא עכשיו את לוחות החיובים. נסו שוב בעוד כמה דקות."),
+    ({"status": 500, "error": "http_500"}, REFRESH_FAILED + " (http_500)."),
+    ({"blocked": True, "status": 401, "error": "unauthorized"}, REFRESH_FAILED + " (unauthorized)."),
+    ({"message": "Failed to fetch"}, REFRESH_FAILED + "."),                  # no answer at all
+])
+def test_a_refresh_that_fails_keeps_the_desk_and_what_was_typed_and_says_so_beside_the_readings_time(failure, said):
+    """QA 24.11, left for D4 (its review, 4a): "רענון" that failed with any error but a 429 replaced the whole desk with an
+    error screen, and what was typed in the search went with it. The desk stays as it was, the search too, the button is
+    "רענון" again, and the line beside the reading's time says the refresh failed and why - until the next reading lands.
+    Drawn as the screen holds it (raw), never drawn again from the view."""
+    import html as h
+    got = drive(answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/refresh": [{"hold": True, "reject": failure}, {"hold": True, "body": newer_body(NEWER, 0)}]},
+                monday={"absent": True},
+                steps=[{"click": [{"refresh": "1"}], "raw": True}, {"type": "שורה", "land": "POST /api/desk/refresh", "raw": True},
+                       {"click": [{"refresh": "1"}], "raw": True}, {"type": "שורה-", "wait": 400, "raw": True},
+                       {"land": "POST /api/desk/refresh", "raw": True}])
+    pressed, failed, _again, waiting, landed = (s["html"] for s in got["steps"])
+    assert "fin-tabs" in failed and "data-retry" not in failed and search_box(failed) == "שורה"
+    asof = h.unescape(failed[failed.index('<span class="fin-asof">'):failed.index('<span class="fin-spacer">')])
+    assert '<span class="fin-refresh-failed" role="status">%s</span>' % said in asof
+    assert '<button class="fin-btn" type="button" data-refresh="1">רענון</button>' in failed
+    # pressed again: while it is on its way a drawing (the search settling) no longer says the failure; then it lands, the
+    # newer reading under the same search
+    assert "fin-refresh-failed" not in pressed and "fin-refresh-failed" not in waiting and "שורה-חדשה" not in waiting
+    assert "fin-refresh-failed" not in landed and "שורה-חדשה" in landed and search_box(landed) == "שורה-"
+    # with no desk on the screen yet, the error is said in its place, with the way to try again
+    first = drive(answers={"GET /api/desk": [{"reject": failure}]}, monday={"absent": True})["first"]
+    assert "fin-tabs" not in first and 'data-retry="1"' in first
+
+
+def test_a_newer_reading_that_lands_on_a_return_to_the_view_clears_a_failed_refresh():
+    """After "רענון" failed, the reading that lands when the view takes the focus back (askAgain, no press of hers) is the one
+    on the screen: the line beside its time no longer says the refresh failed."""
+    got = drive(answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/refresh": [{"reject": {"status": 500, "error": "http_500"}}, {"body": newer_body(NEWER, 0)}]},
+                monday={"absent": True}, clock=True,
+                steps=[{"click": [{"refresh": "1"}], "raw": True}, {"back": [60_000, "focus"], "raw": True}])
+    failed, back = (s["html"] for s in got["steps"])
+    assert "fin-refresh-failed" in failed and "שורה-חדשה" not in failed
+    assert "fin-refresh-failed" not in back and "שורה-חדשה" in back
+
+
 def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
     """An instance that has not read yet may answer a return or a refresh: the reading on the screen stays."""
     none = {"body": answer(None)}

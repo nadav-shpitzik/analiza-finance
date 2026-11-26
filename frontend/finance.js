@@ -167,6 +167,10 @@
  *      what is checked.
  * 3  A "תאריך תקבול" written from here was laid on the row as the day it is shown by, but not as its month, so the row stayed
  *      under its old period until the next reading. applyWritten files it under the written date's month too.
+ * 4a "רענון" that failed with any error but a 429 replaced the whole desk with an error screen, and what was typed in the
+ *      search went with it (QA 24.11, left for D4). The desk stays, and the line beside the reading's time says the refresh
+ *      failed and why (REFRESH_FAILED), until a reading is taken or "רענון" is pressed again; only a page with no desk yet
+ *      says the error in its place.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -3359,9 +3363,18 @@
   var REFRESHING = "מתעדכן";
   var SEARCH_ICON = "<svg class=\"fin-searchicon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\">" +
     "<circle cx=\"7\" cy=\"7\" r=\"4.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M10.5 10.5 13.5 13.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+  /* QA 24.11, left for D4 (its review, 4a): "רענון" that failed with any error but a 429 replaced the whole desk with an
+     error screen, and what was typed in the search went with it. The desk on the screen stays, and the line beside its
+     reading's time says the refresh failed and why, until a reading is taken or "רענון" is pressed again */
+  var REFRESH_FAILED = "";
+  function refreshFailedWords(e) {
+    var key = e && e.error;
+    return "הרענון נכשל, ומוצגים הנתונים הקודמים" + (ERRORS[key] ? ": " + ERRORS[key] : key ? " (" + key + ")." : ".");
+  }
   function paint() {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1><span class=\"fin-asof\">נכון ל-" + esc(asOf()) +
-      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>" : "") + "</span>" +
+      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>"
+        : REFRESH_FAILED ? " <span class=\"fin-refresh-failed\" role=\"status\">" + esc(REFRESH_FAILED) + "</span>" : "") + "</span>" +
       "<span class=\"fin-spacer\"></span><span class=\"fin-searchbox\">" + SEARCH_ICON +
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
@@ -3417,7 +3430,7 @@
   /* when the answer on the screen landed, by this computer's clock: its age is the server's `age_seconds` plus the time
      since, so a computer whose clock is off still counts it right */
   var bodyAt = 0;
-  function took(body) { BODY = body; bodyAt = Date.now(); }
+  function took(body) { BODY = body; bodyAt = Date.now(); REFRESH_FAILED = ""; }
   /* a later answer (the page's own second request, a refresh, a return): taken, and its view drawn when it is another
      reading than the one on the screen. D2: an answer without a view (no reading yet on the instance that answered)
      never replaces the view on the screen */
@@ -3498,6 +3511,9 @@
     }).catch(function (e) {
       use("load_failed", { code: useWord(e && e.error) || "unknown" });
       if (VIEW && e && e.error === "rate_limited") { notBefore(e); landed(); flash(errorText(e)); return; }
+      /* a desk on the screen stays, and its status line says the refresh failed (D4's review, 4a); only a page with no
+         desk yet says the error in its place */
+      if (VIEW) { if (BODY) { BODY.refreshing = false; } REFRESH_FAILED = refreshFailedWords(e); landed(); return; }
       message(errorText(e));
     });
   }
@@ -3711,7 +3727,9 @@
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
     /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,
        a ח.פ) */
-    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return; }
+    else if (el.dataset.refresh) {
+      use("refresh"); liveStale(); REFRESH_FAILED = ""; el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return;
+    }
     render();
     /* on a wide screen the app scrolls #content, not the window */
     var scroller = document.getElementById("content");

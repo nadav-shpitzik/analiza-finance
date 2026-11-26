@@ -121,7 +121,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
   through finance.js's one door (`mondayCall`; its writes in `mondayWrite`, behind `WRITABLE`: a column change, and a billing edit's Update only when the app has `updates:write`). What the server never
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
-  page's memory and sent nowhere. Tests: `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
+  page's memory and sent nowhere. A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
+  until the next reading (`REFRESH_FAILED`, D4's review). Tests: `tests/test_desk_page.py` (node) and
+  `tests/test_desk_browser.py` (Playwright).
 - **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/usage_store.py`; `migrations/005`
   is analiza-metrics' 004 statement for statement, so D5 imports that history row for row): closed words and counts, checked
   by `app/desk/usage.py` (analiza-metrics' vocabulary, ported faithfully), never a name, an amount, a search's text or an ID

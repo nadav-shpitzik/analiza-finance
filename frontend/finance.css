@@ -49,6 +49,8 @@ body[data-theme="dark"] #screen-finance {
   animation: fin-pulse 1.4s ease-in-out infinite; }
 @keyframes fin-pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { #screen-finance .fin-refreshing::before { animation: none; } }
+/* D4's review (4a): a refresh that failed, beside the reading's time, the desk kept on the screen */
+#screen-finance .fin-refresh-failed { margin-inline-start: 8px; color: var(--fin-bad-ink); }
 #screen-finance .fin-spacer { flex: 1; }
 #screen-finance .fin-searchbox { position: relative; display: inline-flex; }
 #screen-finance .fin-searchicon { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); color: var(--fin-muted);
