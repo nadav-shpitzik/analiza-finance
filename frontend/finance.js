@@ -180,6 +180,8 @@
     books_ref_invalid: "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
     books_amount_differs: "בשורה {row}, בחשבשבת {books}",
     books_receipt_unpaid: "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+    /* D4: what the books propose to fill on the row - the server fills each "{...}" (the row's `books`; booksMark) */
+    books_ref_fill: "בחשבשבת: {number}", books_date_fill: "תאריך מחשבשבת: {date}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -193,11 +195,12 @@
     receipt_no_money: 1, books_ref_invalid: 1, books_amount_differs: 1, books_receipt_unpaid: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
-    billed_no_invoice: 1, terms_missing: 1 };
+    billed_no_invoice: 1, terms_missing: 1, books_ref_fill: 1, books_date_fill: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
     "receipt_no_money", "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid", "refund_last_day_passed",
     "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
-    "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
+    "refund_last_day_unknown", "invoice_missing", "books_ref_fill", "books_date_fill", "billed_no_invoice",
+    "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
   var GROUP_NAME = { b2c: "סטודנטים", b2b: "לקוחות עסקיים" };
@@ -777,7 +780,10 @@
     /* D3: the server's sentence of each mark of the books (which number and why, the two sums, the document) */
     books_ref_invalid: function (r) { return booksText(r, "books_ref_invalid"); },
     books_amount_differs: function (r) { return booksText(r, "books_amount_differs"); },
-    books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
+    books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); },
+    /* D4: the server's sentence of what the books propose (the document, its day and total, and what is written) */
+    books_ref_fill: function (r) { return booksText(r, "books_ref_fill"); },
+    books_date_fill: function (r) { return booksText(r, "books_date_fill"); }
   };
   function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
   /* D3 fix 2: a number the row cites that is just past the end of its series is not yet in the copy of the books (read

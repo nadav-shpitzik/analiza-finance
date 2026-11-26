@@ -51,6 +51,7 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..recon.ref_fill import FILL_WINDOW_DAYS
 from .reading import TAB_BOARDS
 from .reading import (AC, ACCOUNTS_BOARD, B2, B2B_CHARGE, BOARDS, CO, COHORTS_BOARD, DEALS_BOARD, DL, EN,  # noqa: F401
                       ENROLLMENTS_BOARD, LD, LEADS_BOARD, SC, STUDENT_CHARGE, _uniq, cohort_ids, enrollment_cohorts,
@@ -304,6 +305,10 @@ BOOKS_LIST_TITLE = "מסמכים בחשבשבת בלי חיוב במאנדיי"
 BOOKS_UNCLEAR_TITLE = "מסמכים בחשבשבת שלא ברור אם הם של סטודנט/ית או של חברה"
 BOOKS_CANDIDATE = "מועמדת לפי שם"
 BOOKS_AS_OF_WORD = "לפי הספרים"
+# D4: the action that writes what the books propose (DESK_ACTIONS `books_fill`), and the list's words for a proposal
+BOOKS_FILL_BUTTON = "רישום מחשבשבת"
+BOOKS_PROPOSAL = "הצעה"
+BOOKS_FILL_ALL = "לרשום את כל ההצעות"
 # the list's columns: the document as the books hold it, and its total (the legend defines each)
 BOOKS_DOC_HEADS = ("מספר מסמך", "סוג מסמך", "תאריך מסמך", "שם בכרטיס")
 BOOKS_SUM_WORD = "סכום בחשבשבת"
@@ -453,6 +458,10 @@ _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
 # what every mark of the books says of where its row is (D3; spec §6.1.1, §6.4.2)
 _BOOKS_MARK_ROW = ("לא משנה את השיבוץ. תקבול מ-%s ואילך שיש בו סימון כזה מופיע גם ב\"לטיפול\"; תקבול ישן יותר נשאר "
                    "במשבצת שלו עם הסימון." % BOOKS_ERA_SAID)
+# D4 (app/desk/books.py `proposals`): what every proposal of the books says of where it is and who writes it
+_BOOKS_REF_FILL = "בחשבשבת: {number}"
+_BOOKS_FILL_ROW = ("בפרטים, %s כותב אותו במאנדיי בשמך, רק בתא ריק. רק בתקבול ובמסמך מ-%s ואילך. לא משנה את השיבוץ."
+                   % (BOOKS_FILL_BUTTON, BOOKS_ERA_SAID))
 LEGEND_FLAGS = {
     "b2c": [
         # "נבנה", not "נכתב", which is the word of the desk's own writes ("נכתב, מתעדכן"; QA 24.11)
@@ -487,8 +496,17 @@ LEGEND_FLAGS = {
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
         ("refund_last_day_unknown", LAST_DAY_LABEL + " לא ידוע", "אין תאריך בקשת ביטול: התקבול לא מקושר להרשמה, או "
                                                                  "שבהרשמה אין תאריך. הפרטים אומרים איזה מהשניים."),
-        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ: את "
-                                                   "האסמכתאות ימלא החיבור לחשבשבת." % _PAID),
+        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ. כשחשבשבת "
+                                                   "מציעה את המספר, לידה: \"בחשבשבת: ...\"." % _PAID),
+        # D4 (app/desk/books.py `proposals`): what the books propose to fill, written only by the person ("רישום מחשבשבת")
+        ("books_ref_fill", _BOOKS_REF_FILL,
+         "אסמכתת חשבונית ריקה, וחשבשבת מציעה מספר: חשבונית מס/קבלה תקפה אחת בלבד בכרטיס של סטודנט/ית, ששום שורה בלוחות "
+         "החיובים לא מפנה אליה, שהשם בכרטיס זהה לשם השורה (באותן מילים ובכל סדר), שהסכום שלה שווה לסכום ששולם עד שקל, "
+         "ושהתאריך שלה עד %d יום לפני תאריך התקבול או אחריו; ושום שורה אחרת בשם ובסכום האלה לא מחכה לה. %s"
+         % (FILL_WINDOW_DAYS, _BOOKS_FILL_ROW)),
+        ("books_date_fill", "תאריך מחשבשבת: {date}",
+         "באסמכתת חשבונית יש חשבונית מס/קבלה תקפה בחשבשבת, הסכום שווה, וסטטוס התשלום אומר שהכסף נכנס, ותאריך תקבול ריק: "
+         "חשבשבת מציעה את תאריך המסמך. %s" % _BOOKS_FILL_ROW),
         ("receipt_pending", "שליחת קבלה: טרם", "סטטוס תשלום %s, ושליחת קבלה %s או ריקה." % (_PAID, _q(RECEIPT[R_PENDING]))),
         ("credit_ref_missing", "חסרה אסמכתת זיכוי", "תשלום שהוחזר מ-%s ואילך, ואסמכתת זיכוי ריקה. לא משנה את השיבוץ."
                                                      % CREDIT_REF_FROM.strftime("%d.%m.%Y")),
@@ -589,7 +607,9 @@ def flag_legend_term(text: str) -> str:
 FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
               "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid",   # D3: contradictions with the books
               "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
-              "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
+              "over_deal_value", "refund_last_day_unknown", "invoice_missing",
+              "books_ref_fill", "books_date_fill",   # D4: what the books propose, beside what is missing
+              "billed_no_invoice", "receipt_pending",
               "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
               "partial_amount_unknown", "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"]
 

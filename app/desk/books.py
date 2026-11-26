@@ -40,6 +40,23 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
    row. A document with neither a key nor a name is judged alone, by its own type - an invoice-receipt a student's, as
    FR-6's interim rule; a tax invoice unclear (`key_masked`, `key_empty`).
 
+AND ONE THING THE BOOKS PROPOSE (D4, "רישום מחשבשבת", 26.11; spec §6.2 `ref_fill` and `receipt_date_fill`, §7): a fill of
+a Student Charge row's two empty cells, which the person approves and writes in the browser (app/desk/view.py
+DESK_ACTIONS `books_fill`; the server writes nothing, ADR-0188). Never a rule of its own: `proposals` runs the two rules as
+they are, on the desk's own reading and the whole copy:
+- the number (FR-C2): app/recon/ref_fill.py `analyse` - the plan's question, on Student Charge's rows, B2B Charge's (a
+  number they cite is no student's) and the Accounts' keys the desk already reads (`AccountKeys`) - its `fill` bucket;
+- the date (FR-C5): app/recon/receipt_dates.py `analyse` (A1's `b2c_receipt_date_fill`) on the rows as they would be with
+  every proposed number written - its `fill` bucket, the document's `value_date` for an empty "תאריך תקבול". So a row
+  proposed a number is proposed its document's date with it when its date is empty, and a row that already cites a valid
+  invoice-receipt and has an empty date is proposed the date alone. A filled date is never proposed again.
+**Only the desk's era** (ERA_FROM, Chava's start, ADR-0168 §5): a row the desk dates from ERA_FROM on, with a document
+dated from it on. Anything older - a row, or a row's document - is the cleanup a session runs (backlog 0301 C1), never a
+proposal here (spec §6.4.2). A proposal and a mark never meet on one row: every mark is of a row that cites a number,
+and FR-C2 proposes only to an empty cell; A1 gives a date only to a row whose status says the money came in, and
+`books_receipt_unpaid` only to one whose status says it did not. A proposal is laid on the view (`merge`) only from a
+part that is current (`ok`) and computed on the very reading shown, never from a held one: the page writes what it shows.
+
 EVERY DOCUMENT OF THE ERA LANDS IN ONE PLACE (spec §6.3.1), the first that fits in PLACES: outside (another status or
 type, a cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row, answered
 "not found" (missing), counted apart (the vouchers' card), or listed - the students', the companies' or the unclear.
@@ -52,9 +69,9 @@ copy and why it is not newer; with none, `none` and why. A whole copy older than
 (`demo`: the books of the Demo company must never meet the real boards, the rules' §0.6), nor without a database
 (`not_configured`): `off`.
 
-WHAT LEAVES. The result lives in this instance's memory and in the desk's gated answer only: the marks and the students'
-list in the students' tab (Student Charge's members), the companies' list in the companies' tab (B2B Charge's), the
-unclear documents only to a member of both (app/desk/view.py `visible_part`). Nothing of it is logged, stored or put in
+WHAT LEAVES. The result lives in this instance's memory and in the desk's gated answer only: the marks, the proposals and
+the students' list in the students' tab (Student Charge's members), the companies' list in the companies' tab (B2B
+Charge's), the unclear documents only to a member of both (app/desk/view.py `visible_part`). Nothing of it is logged, stored or put in
 /health, which says the state, the copy's time and the reasons - never a count. A card's name from the books was cleaned
 of ID numbers before it was stored (spec §3.4), and no card key, no ID number and no business number is in an answer.
 """
@@ -74,6 +91,7 @@ from ..books.doctypes import DRAFT_STATUS, INFERRED, role
 from ..books.store import BooksStoreError, not_ready, summarize_series
 from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
+from ..recon import ref_fill as fr_c2
 # The cards, the names and where a document lands are shared with FR-C2 (app/recon/ref_fill.py) since 26.11: moved from
 # here, never copied, so the desk's list and the plan's fills judge a document by one code
 from ..recon.cards import (ERA_FROM, INVOICE, INVOICE_RECEIPT, KEY_MASK, LISTED_ROLES, NAME_CARD, PLACES,  # noqa: F401
@@ -97,6 +115,10 @@ logger = logging.getLogger("analiza_finance.desk")
 MARKS = ("books_ref_invalid", "books_amount_differs", "books_receipt_unpaid")
 MARK_OF_BUCKET = {"ref_not_in_books": "books_ref_invalid", "ref_ambiguous": "books_ref_invalid",
                   "ref_not_an_invoice": "books_ref_invalid", "amount_mismatch": "books_amount_differs"}
+# D4: what the books propose on a row, as a chip of its own (its words view.LEGEND_FLAGS', filled here): the number (and
+# with it the date, when that is empty too), or the date alone
+FILLS = ("books_ref_fill", "books_date_fill")
+FILL_ACTION = "books_fill"  # app/desk/view.py DESK_ACTIONS: the one action that writes what the books propose
 # `books_receipt_unpaid` is read off the row itself (`receipt_unpaid_facts`), whatever A1's bucket: the statuses that say
 # no money came in and are no decision of their own - "לא שולם", "יש בעיה", or empty. Never "מלגת אנליזה" (a scholarship:
 # nothing is due) and never a label the desk does not know (the review of dfa967b: noise)
@@ -387,6 +409,58 @@ def marks_of(analysis: dict, rows_by_id: dict, idx: dict) -> tuple:
     return marks, notes
 
 
+# ---- what the books propose to fill (D4) ----------------------------------------------------------------------------------
+def proposals(sc_raw: list, b2_raw: list, documents: list, keys: dict, rows_by_id: dict) -> dict:
+    """{item id: {"number"?, "date"?}} for every row of the desk's era that the books propose a fill to - FR-C2's number
+    (ref_fill.analyse, its `fill` bucket, on the desk's own reading: Student Charge's rows, B2B Charge's and the Accounts'
+    keys) and A1's date (receipt_dates.analyse, its `fill` bucket, on the rows as they would be with every proposed number
+    written: a proposed number stands alone in its group, cited by no other row, so no other row's judgement moves). The
+    era: the row's date as the desk dates it (`rows_by_id`, the view's rows: "תאריך תקבול", else the day it was made) and
+    the document's, both from ERA_FROM on; an older one is a session's cleanup (backlog 0301 C1), and a row whose number is
+    not proposed for its document's age is proposed no date of that document either."""
+    era = ERA_FROM.isoformat()
+    c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]
+    numbers = {i: e["proposed"] for i, e in c2.items() if e["bucket"] == "fill"}
+    after = [dict(r, **{a1.REF_COLUMN: numbers[str(r.get("id"))]}) if str(r.get("id")) in numbers else r for r in sc_raw]
+    dated = a1.analyse(after, documents)["rows"]
+    out: dict = {}
+    for item_id, row in rows_by_id.items():
+        if not row.get("date") or row["date"] < era:
+            continue
+        fill: dict = {}
+        if item_id in numbers:
+            if c2[item_id]["document_date"] < era:
+                continue
+            fill["number"] = numbers[item_id]
+        entry = dated.get(item_id)
+        if entry is not None and entry["bucket"] == "fill" and entry["books_day"] >= era:
+            fill["date"] = entry["books_day"]
+        if fill:
+            out[item_id] = {"values": fill, "documents": [fill["number"]] if "number" in fill else list(entry["documents"])}
+    return out
+
+
+def fill_mark(fill: dict, idx: dict) -> dict:
+    """A proposal as a chip of the row (FILLS, its words view.LEGEND_FLAGS', filled) and the sentence its details say: the
+    documents it rests on, their day and their total, and what "רישום מחשבשבת" writes."""
+    values, numbers, by_number = fill["values"], fill["documents"], idx["by_number"]
+    docs = [by_number[n][0] for n in numbers]
+    days = sorted({_day(d.get("value_date")).isoformat() for d in docs})
+    total = sum((_money(d.get("total_incl")) or Decimal(0) for d in docs), Decimal(0))
+    said = "%s מ-%s על %s כולל מע\"מ" % (_docs_said(numbers, by_number), ", ".join(_dmy(x) for x in days), money_text(total))
+    if "number" in values:
+        kind = FILLS[0]
+        chip = _flag_text(kind).replace("{number}", values["number"])
+        text = ("בחשבשבת %s: היחידה בשם שבשורה, בסכום ששולם ובתוך %d יום מהתאריך שלה, ששום שורה לא מפנה אליה. רישום "
+                "מחשבשבת כותב את המספר באסמכתת חשבונית%s." % (said, fr_c2.FILL_WINDOW_DAYS,
+                                                           " ואת התאריך בתאריך תקבול" if "date" in values else ""))
+    else:
+        kind = FILLS[1]
+        chip = _flag_text(kind).replace("{date}", _dmy(values["date"]))
+        text = "באסמכתת חשבונית: %s בחשבשבת. תאריך תקבול ריק, ורישום מחשבשבת כותב בו את התאריך הזה." % said
+    return {"kind": kind, "chip": chip, "text": text, "documents": list(numbers)}
+
+
 # ---- the documents with no charge ----------------------------------------------------------------------------------------
 # `place_of` (where a held document lands, the first of PLACES that fits) is app/recon/cards.py's: the desk asks it from
 # ERA_FROM, FR-C2 from the first day of Student Charge's window
@@ -414,8 +488,9 @@ def _newest(entries: list) -> list:
 
 
 def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
-    """The books part of one reading and one whole copy: the marks, the three lists and the vouchers' count, and
-    `places` (stock id -> place) and `counts` (by place), which tests hold and nothing sends."""
+    """The books part of one reading and one whole copy: the marks, the proposals (D4: `fills`, {item id: {"values",
+    "documents", "mark"}}, and on each students' document proposed, its `proposal`), the three lists and the vouchers'
+    count, and `places` (stock id -> place) and `counts` (by place), which tests hold and nothing sends."""
     documents = snapshot["documents"]
     sc_raw = reading["student_charge"]["rows"]
     b2_raw = reading["b2b_charge"]["rows"]
@@ -426,7 +501,14 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
         raw = raw_by_id.get(r["id"]) or {}
         rows_by_id[r["id"]] = dict(r, paid_raw=raw.get(a1.AMOUNT_COLUMN))
     analysis = a1.analyse(sc_raw, documents)
-    marks, notes = marks_of(analysis, rows_by_id, index_copy(documents))
+    idx = index_copy(documents)
+    marks, notes = marks_of(analysis, rows_by_id, idx)
+    fills = proposals(sc_raw, b2_raw, documents, keys, rows_by_id)
+    for fill in fills.values():
+        fill["mark"] = fill_mark(fill, idx)
+    # the document each proposed number names (FR-3: one status-1 document carries it), and the row it is proposed to
+    proposed = {idx["by_number"][f["values"]["number"]][0]["stock_id"]: (i, f["values"]["number"])
+                for i, f in fills.items() if "number" in f["values"]}
 
     cited = cited_numbers(sc_raw, a1.REF_COLUMN) | cited_numbers(b2_raw, B2["invoice"])
     sides = card_sides(documents, keys)
@@ -448,6 +530,9 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
             found = candidates_of(e["card"], by_words)
             e.update(candidates=[_candidate(r) for r in found[:CANDIDATES_MAX]],
                      candidates_more=max(0, len(found) - CANDIDATES_MAX))
+            if d["stock_id"] in proposed:  # D4: the row the books propose to write its number in
+                item_id, number = proposed[d["stock_id"]]
+                e["proposal"] = {"item_id": item_id, "name": rows_by_id[item_id].get("name", ""), "number": number}
             lists["students"].append(e)
         elif place == "companies":
             e = _entry(d)
@@ -457,7 +542,8 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
             e = _entry(d)
             e.update(why=why, why_text=UNCLEAR_WHY.get(why, ""))
             lists["unclear"].append(e)
-    return {"marks": marks, "notes": notes, "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
+    return {"marks": marks, "notes": notes, "fills": fills, "reading_at": reading.get("read_at"),
+            "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
             "unclear": _newest(lists["unclear"]), "vouchers": vouchers, "places": places,
             "counts": dict(Counter(places.values())), "buckets": {i: e["bucket"] for i, e in analysis["rows"].items()}}
 
@@ -507,6 +593,9 @@ def merge(view: dict, part: dict) -> dict:
     out["books"] = public(part)
     marks, notes = part.get("marks") or {}, part.get("notes") or {}
     era = ERA_FROM.isoformat()
+    # D4: what the books propose is laid only from a current part computed on this very reading - never from a held one,
+    # and never from one of another reading laid over this one (an answer at once may carry the last part computed)
+    laid = part.get("state") == "ok" and bool(part.get("reading_at")) and part.get("reading_at") == view.get("read_at")
     if view.get("b2c") is not None:
         b2c = dict(view["b2c"])
         rows = []
@@ -521,7 +610,8 @@ def merge(view: dict, part: dict) -> dict:
             rows.append(r)
         b2c["rows"] = rows
         b2c["periods"] = [dict(p, tasks=_tasks_of(rows, p.get("months") or [])) for p in b2c["periods"]]
-        b2c["books"] = {"title": BOOKS_LIST_TITLE, "about": STUDENTS_ABOUT, "documents": list(part.get("students") or [])}
+        documents = [e if laid else {k: v for k, v in e.items() if k != "proposal"} for e in part.get("students") or []]
+        b2c["books"] = {"title": BOOKS_LIST_TITLE, "about": STUDENTS_ABOUT, "documents": documents}
         out["b2c"] = b2c
     if view.get("b2b") is not None:
         n = int(part.get("vouchers") or 0)
@@ -672,7 +762,7 @@ class DeskBooks:
     def _made(self, state: str, reasons: list, base: Optional[dict] = None) -> dict:
         part = dict(base or {}, state=state, reasons=list(reasons))
         if base is None:
-            part.update(as_of=None, marks={}, notes={}, students=[], companies=[], unclear=[], vouchers=0)
+            part.update(as_of=None, marks={}, notes={}, fills={}, students=[], companies=[], unclear=[], vouchers=0)
         # the key names the part (the merged view is kept by it, the totals and the files are asked by it): two parts differ
         # in it whenever what they say differs - their state, their copy's time, the computation they come from (when, and
         # which of this instance's: two in one second, a copy whose run moved and kept its time, are two) and their reasons
