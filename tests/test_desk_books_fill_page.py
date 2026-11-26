@@ -175,10 +175,13 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
                 'class="fin-btn fin-fill-btn" data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button></div>'
                 % (rid, h.escape(name), rid)) in rows[number]
     assert "fin-fill" not in rows["62606"] + rows["62613"]
-    assert 'data-books-all="1">לרשום את כל ההצעות <span class="fin-subtle">(4)</span></button>' in part
+    # changed deliberately (QA 26.11, C): the button says what it writes - cells, rows, numbers and dates - not its rows
+    assert 'data-books-all="1">לרשום את כל ההצעות <span class="fin-subtle">(%s)</span></button>' % ALL_SAID in part
     assert part.index('data-books-all="1"') < part.index("<table")                     # above the list
-    assert ('<p class="fin-listnote">ועוד הצעה אחת לתאריך תקבול בלבד, בתקבול שכבר יש בו אסמכתת חשבונית: היא ליד השורה '
-            'שלו, ו&quot;לרשום את כל ההצעות&quot; כותב גם אותה.</p>') in part
+    # and beside it, before the list, what a date alone is
+    said = ('<p class="fin-listnote">הצעה אחת היא תאריך תקבול בלבד: שורה שכבר מפנה לחשבונית שלה, וחסר בה רק תאריך תקבול. '
+            'היא ליד השורה שלה ברשימת התקבולים ולא כאן, ו&quot;לרשום את כל ההצעות&quot; כותב גם אותה.</p>')
+    assert said in part and part.index(said) < part.index("<table")
     # a proposal is a candidate's, never called a match
     assert not re.search("התאמה|מותאם|קושר", h.unescape(part[part.index("<tbody>"):]))
 
@@ -269,10 +272,14 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
     # the reading after it: the document left the list, and the row cites it
     after = books_part(done["html"])
     table = after[after.index("<tbody>"):after.index("</tbody>")]
-    assert "62601" not in table and "62602" in table and "(3)" in after
+    assert "62601" not in table and "62602" in table and "(%s)" % LEFT_SAID in after
 
 
 DESK_AFTER = fd.DESK_ACTIONS["books_fill"]["after"]
+# what "לרשום את כל ההצעות" writes, on the button and in its confirmation (QA 26.11, C): every proposal of the fixture (rows
+# 1 and 4 a number and a date, 2 a number, 3 a date), and those left once row 1 is written
+ALL_SAID = "6 רישומים ב-4 שורות: 3 מספרים, 3 תאריכים"
+LEFT_SAID = "4 רישומים ב-3 שורות: 2 מספרים, 2 תאריכים"
 WROTE_ONE = "נכתב במאנדיי בשמך בשורה אחת"
 
 
@@ -317,7 +324,7 @@ def test_every_proposal_at_once_writes_exactly_the_proposals_each_its_own():
     assert got["sent"][0]["variables"] == {"i": ["4", "2", "1", "3"], "c": [NUMBER_COL, DATE_COL, STATUS_COL, PAID_COL],
                                            "b": [SC_BOARD]}
     page = h.unescape(plan["html"])
-    assert "ייכתב במאנדיי בשמך, ב-4 שורות:" in page
+    assert "ייכתב במאנדיי בשמך, %s." % ALL_SAID in page                  # the button's words (QA 26.11, C)
     assert '<li><b>יואב שטרן</b> · אסמכתת חשבונית: עכשיו ריק, ייכתב "62602"</li>' in page
     assert '<li><b>מאיה גולן</b> · תאריך תקבול: עכשיו ריק, ייכתב 03.11.26</li>' in page
     assert writes_of(got) == [(SC_BOARD, "4", {NUMBER_COL: "62604", DATE_COL: {"date": "2026-11-18"}}),
@@ -416,7 +423,7 @@ def test_the_rows_details_write_its_proposal_and_show_it_at_once():
                 hold=True)["steps"][2]["html"]
     part = books_part(tasks)
     assert 'data-books-fill="sc:1"' not in part and "הצעה: לרשום בשורה של נועה ברק <span class=\"fin-written\">" in part
-    assert "(3)" in part                                                               # the others still wait
+    assert "(%s)" % LEFT_SAID in part                                                   # the others still wait
 
 
 def test_a_date_written_here_files_the_row_under_its_new_month_at_once():
@@ -439,8 +446,8 @@ def test_a_date_written_here_files_the_row_under_its_new_month_at_once():
 
 
 def test_past_one_batchs_worth_the_rest_waits_for_the_next_press():
-    """Twenty-nine proposals: "לרשום את כל ההצעות (29)" takes the first 25 - one request reads them (monday's items(ids:)
-    answers 25 at most) - and the confirmation says the four left wait for the next press."""
+    """Twenty-nine proposals: "לרשום את כל ההצעות" (on 29 rows) takes the first 25 - one request reads them (monday's
+    items(ids:) answers 25 at most) - and the confirmation says the four left wait for the next press."""
     view, _m = fill_view()
     row = next(r for r in view["b2c"]["rows"] if r["id"] == "1")
     more = [dict(_copy.deepcopy(row), id=str(7000 + i), name="תלמיד/ה %d" % i, books_fill={"number": str(70000 + i)})
@@ -451,9 +458,38 @@ def test_past_one_batchs_worth_the_rest_waits_for_the_next_press():
     board = {r["id"]: {"__name": r["name"], NUMBER_COL: "", DATE_COL: ""} for r in more}
     board.update(monday_of()["boards"][SC_BOARD])
     got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}], view=view, monday={"boards": {SC_BOARD: board}})
-    assert 'לרשום את כל ההצעות <span class="fin-subtle">(29)</span>' in got["steps"][0]["html"]
+    fills = [r["books_fill"] for r in view["b2c"]["rows"] if r.get("books_fill")]
+    numbers, dates = sum(1 for f in fills if "number" in f), sum(1 for f in fills if "date" in f)
+    assert (len(fills), numbers, dates) == (29, 28, 2)
+    assert ('לרשום את כל ההצעות <span class="fin-subtle">(30 רישומים ב-29 שורות: 28 מספרים, 2 תאריכים)</span>'
+            in got["steps"][0]["html"])
     assert len(got["sent"][0]["variables"]["i"]) == 25 and len(got["steps"][1]["batch"]["items"]) == 25
     assert "ועוד 4 הצעות: בלחיצה נוספת אחרי הכתיבה, עד 25 שורות בכתיבה אחת." in h.unescape(got["steps"][1]["html"])
+
+
+def test_every_proposal_at_once_says_on_its_button_and_in_its_confirmation_what_it_writes_in_the_same_words():
+    """QA 26.11 (C): the button said 28 - the rows with a proposal - and its confirmation "ב-20 שורות", while most of what it
+    writes is a date alone, on rows the books' list does not show. Here 2 rows are proposed a number and a date and 18 a date
+    alone: the button and the confirmation both say "22 רישומים ב-20 שורות: 2 מספרים, 20 תאריכים", and beside the list one
+    sentence says what the 18 are - rows that already cite their invoice, missing only "תאריך תקבול"."""
+    view, _m = fill_view()
+    keep = [r for r in view["b2c"]["rows"] if r["id"] not in ("2", "3")]          # rows 1 and 4: a number and a date
+    three = next(r for r in view["b2c"]["rows"] if r["id"] == "3")
+    alone = [dict(_copy.deepcopy(three), id=str(7100 + i), name="תלמיד/ה %d" % i) for i in range(18)]
+    view["b2c"]["rows"] = keep + alone
+    for e in view["b2c"]["books"]["documents"]:
+        if e.get("proposal", {}).get("item_id") == "2":
+            e.pop("proposal")
+    board = monday_of()["boards"][SC_BOARD]
+    board.update({r["id"]: dict(board["3"], __name=r["name"]) for r in alone})        # as monday holds row 3: cites 62603
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}], view=view, monday={"boards": {SC_BOARD: board}})
+    said = "22 רישומים ב-20 שורות: 2 מספרים, 20 תאריכים"
+    shown, plan = h.unescape(got["steps"][0]["html"]), h.unescape(got["steps"][1]["html"])
+    assert "לרשום את כל ההצעות (%s)" % said in re.sub(r"<[^>]+>", "", shown)
+    assert [i["verdict"] for i in got["steps"][1]["batch"]["items"]] == ["write"] * 20
+    assert "ייכתב במאנדיי בשמך, %s." % said in plan
+    assert ("18 הצעות הן תאריך תקבול בלבד: שורות שכבר מפנות לחשבונית שלהן, וחסר בהן רק תאריך תקבול. הן ליד השורות שלהן "
+            "ברשימת התקבולים ולא כאן") in books_part(shown)
 
 
 def test_the_fills_usage_kind_is_one_closed_word_of_the_vocabulary_and_the_page():
@@ -516,7 +552,7 @@ def test_a_newer_reading_while_the_confirmation_is_open_moves_a_changed_proposal
     assert items_of(landed) == [("sc:4", "write", ""), ("sc:2", "write", ""), ("sc:1", "skip", FILL_CHANGED),
                                 ("sc:3", "write", "")] and landed["batch"]["phase"] == "confirm"
     page = h.unescape(landed["html"])
-    assert "ייכתב במאנדיי בשמך, ב-3 שורות:" in page and "<p>לא ייכתב:</p><ul><li><b>נועה ברק</b> · %s</li>" % FILL_CHANGED in page
+    assert "ייכתב במאנדיי בשמך, %s." % LEFT_SAID in page and "<p>לא ייכתב:</p><ul><li><b>נועה ברק</b> · %s</li>" % FILL_CHANGED in page
     assert "ועוד הצעה אחת: בלחיצה נוספת אחרי הכתיבה, עד 25 שורות בכתיבה אחת." in page
     assert [w[1] for w in writes_of(got)] == ["4", "2", "3"]
     assert [(i["key"], i["result"]) for i in done["batch"]["items"]] == [
@@ -738,7 +774,7 @@ def test_in_a_browser_a_proposals_confirmation_floats_beside_what_was_pressed_an
             assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"] and box["inBooks"], (size, name, box)
         assert steps["one"]["closed"] == steps["one"]["before"]
         assert 'ייכתב במאנדיי בשורה "נועה ברק", בשמך:' in steps["one"]["box"]["text"]
-        assert "ייכתב במאנדיי בשמך, ב-4 שורות:" in steps["all"]["box"]["text"]
+        assert "ייכתב במאנדיי בשמך, %s." % ALL_SAID in steps["all"]["box"]["text"]
         assert steps["writes"] == [["4", {NUMBER_COL: "62604", DATE_COL: {"date": "2026-11-18"}}], ["2", {NUMBER_COL: "62602"}],
                                    ["1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}}],
                                    ["3", {DATE_COL: {"date": "2026-11-03"}}]], size

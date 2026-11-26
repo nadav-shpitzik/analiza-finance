@@ -213,6 +213,9 @@
  * A  With the row near the top, a box's first line ("ייכתב במאנדיי בשורה...") was cut under the table's header, which sticks
  *      at the top of the view ("הוחזר חלקי", "חויב": a row's action floats inside its details, which paint under it).
  *      placePop's room starts below a header stuck at the view's top (stuckHeads), for every floating box.
+ * C  "לרשום את כל ההצעות (28)" counted rows with a proposal, its confirmation "ב-20 שורות" the rows written in one press.
+ *      Both say what is written, in the same words (fillCounts: cells, rows, numbers, dates), and beside the list's head a
+ *      sentence says what a date alone is: a row that already cites its invoice, missing only "תאריך תקבול".
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1296,20 +1299,31 @@
       : a && fillable(r) ? " <button type=\"button\" class=\"fin-btn fin-fill-btn\" data-books-fill=\"" + esc(rowKey(r)) +
         "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" : "") + "</div>";
   }
-  /* above the students' list: every proposal at once, its count (the documents' and the dates alone, allFills), and under
-     the list how many of them are a date alone, whose rows already cite their number and are not on it */
+  /* above the students' list: every proposal at once, what it writes (the documents' and the dates alone, allFills), and
+     beside it how many of them are a date alone, whose rows already cite their number and are not on it.
+     QA 26.11 (C): the button said 28 - the rows with a proposal - and its confirmation "ב-20 שורות", the rows written in
+     one press, while most of what is written is a date alone, on rows this list does not show. The button and the
+     confirmation say what they write in the same words, from the server's own proposals (each row's `books_fill`): how
+     many cells, in how many rows, how many of them numbers and how many dates */
   var FILL_ALL = "לרשום את כל ההצעות";
+  function fillCounts(rows) {
+    var n = rows.filter(function (r) { return (r.books_fill || {}).number; }).length;
+    var d = rows.filter(function (r) { return (r.books_fill || {}).date; }).length;
+    return plural(n + d, "רישום אחד", "רישומים") + " " + (rows.length === 1 ? "בשורה אחת" : "ב-" + NF.format(rows.length) + " שורות") +
+      ": " + [n ? plural(n, "מספר אחד", "מספרים") : "", d ? plural(d, "תאריך אחד", "תאריכים") : ""].filter(Boolean).join(", ");
+  }
   function fillAllHtml(fills) {
     return fills.length ? "<div class=\"fin-actions\"><button type=\"button\" class=\"fin-btn\" data-books-all=\"1\"" +
-      (busy() ? " disabled" : "") + ">" + esc(FILL_ALL) + " <span class=\"fin-subtle\">(" + NF.format(fills.length) +
+      (busy() ? " disabled" : "") + ">" + esc(FILL_ALL) + " <span class=\"fin-subtle\">(" + esc(fillCounts(fills)) +
       ")</span></button></div>" : "";
   }
   function datesAloneSaid(fills) {
     var n = fills.filter(function (r) { return !(r.books_fill || {}).number; }).length;
     return !n ? "" : "<p class=\"fin-listnote\">" + esc(n === 1
-      ? "ועוד הצעה אחת לתאריך תקבול בלבד, בתקבול שכבר יש בו אסמכתת חשבונית: היא ליד השורה שלו, ו\"" + FILL_ALL + "\" כותב גם אותה."
-      : "ועוד " + NF.format(n) + " הצעות לתאריך תקבול בלבד, בתקבולים שכבר יש בהם אסמכתת חשבונית: הן ליד השורות שלהם, ו\"" +
-        FILL_ALL + "\" כותב גם אותן.") + "</p>";
+      ? "הצעה אחת היא תאריך תקבול בלבד: שורה שכבר מפנה לחשבונית שלה, וחסר בה רק תאריך תקבול. היא ליד השורה שלה ברשימת " +
+        "התקבולים ולא כאן, ו\"" + FILL_ALL + "\" כותב גם אותה."
+      : NF.format(n) + " הצעות הן תאריך תקבול בלבד: שורות שכבר מפנות לחשבונית שלהן, וחסר בהן רק תאריך תקבול. הן ליד השורות " +
+        "שלהן ברשימת התקבולים ולא כאן, ו\"" + FILL_ALL + "\" כותב גם אותן.") + "</p>";
   }
   function booksCell(k, e) {
     if (k === "number") { return ltr(e.number) || NOT_SET; }
@@ -1337,13 +1351,13 @@
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(part.title) + "</h2>" +
       (none ? "" : "<div class=\"fin-subtle\">" + plural(docs.length, "מסמך אחד", "מסמכים") + "</div>") +
       "<p class=\"fin-about\">" + esc(part.about) + "</p>" +
-      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div>" +
-      fillAllHtml(fills) + "</div>";
+      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") +
+      datesAloneSaid(fills) + "</div>" + fillAllHtml(fills) + "</div>";
     var body = docs.length ? booksTable(kind, docs) : none ? "" : "<div class=\"fin-empty\"><p>אין מסמכים כאלה.</p></div>";
     /* D4: a batch pressed in this list floats here, beside what was pressed */
     var pop = kind === "b2c" && popInBooks(BATCH) ? batchBox(BATCH) : "";
     if (pop) { POP_IN_BOOKS = true; }
-    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body + datesAloneSaid(fills) +
+    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body +
       (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + pop + "</div>";
   }
   /* under "לטיפול" of a tab: its list, and the unclear documents when the server sent them (a member of both boards) */
@@ -2622,7 +2636,9 @@
     if (b.phase === "confirm") {
       return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
         "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
-          : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
+          /* QA 26.11 (C): what the books' proposals write, in the button's words */
+          : books ? "ייכתב במאנדיי בשמך, " + esc(fillCounts(writes.map(function (it) { return it.row; }))) + "."
+            : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
           return batchLine(it, planWords(it.plan));
         }).join("") + "</ul>" + notWritten +
         (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +

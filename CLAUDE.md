@@ -184,7 +184,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   proposal is not for, why (`candidate_why`, QA 26.11): FR-C2's bucket for the row from the same analysis (`c2`, passed
   into `proposals`), "other_document" or "era", in closed words (`CANDIDATE_WHY`), never a name. The page (finance.js D4): the
   chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
-  ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
+  ההצעות" above it, saying what it writes as its confirmation does ("22 רישומים ב-20 שורות: 2 מספרים, 20 תאריכים",
+  `fillCounts` of the rows' `books_fill`, and beside it what a date alone is; QA 26.11) - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
   whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
   pressed - its report too: beside the document's line (`data-books-at`, kept once written), and where it was on the page
   once a reading took the document off (`POP_AT`); a batch's box is its one report, a flash only while the students' list
