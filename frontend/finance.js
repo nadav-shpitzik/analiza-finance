@@ -1706,8 +1706,10 @@
   /* the press: only for an alert the server sent with its evidence, never for a viewer; while anything is written, off */
   function nagButton(kind, subject, evidence, from) {
     if (!kind || !subject || !evidence || !mayNag()) { return ""; }
+    /* its title is what the press does, the confirmation's own sentence (the UX review of 26.11: two hiding words on one
+       document's line, "לא פער" and "לא להציע", said nothing until pressed) */
     return "<button type=\"button\" class=\"fin-linkbtn fin-nag\" data-nag=\"" + esc(nagKey(kind, subject)) + "\" data-nag-from=\"" +
-      from + "\"" + (busy() ? " disabled" : "") + ">" + esc(nagWord(kind)) + "</button>";
+      from + "\" title=\"" + esc(nagSaid(kind)) + "\"" + (busy() ? " disabled" : "") + ">" + esc(nagWord(kind)) + "</button>";
   }
   /* who hid it: "אתה", or the monday user id - the page knows no other person's name, and the server keeps none */
   function nagWho(by) { return BODY && BODY.user && String(BODY.user.id) === String(by) ? "אתה" : "משתמש/ת " + by; }
@@ -4017,7 +4019,11 @@
     "סימון אדום \"חשבשבת: ...\" ליד תקבול: חשבשבת אומרת אחרת ממאנדיי. המשפט המלא כשמצביעים עליו, ובפרטים.",
     "ב\"לטיפול\": \"" + "מסמכים בחשבשבת בלי חיוב במאנדיי" + "\", ולכל מסמך השורות ששמן כשם בכרטיס.",
     "\"רישום מחשבשבת\": מספר החשבונית ותאריך התקבול שחשבשבת מציעה נכתבים במאנדיי בשמך, אחרי אישור.",
-    "\"לפי מחזור\" בלשונית הסטודנטים: לכל מחזור שוברים צפי, שולם ויתרה לגבייה לפי סטטוס השובר."];
+    "\"לפי מחזור\" בלשונית הסטודנטים: לכל מחזור שוברים צפי, שולם ויתרה לגבייה לפי סטטוס השובר.",
+    /* the UX review of 26.11: what came with the move after these four, each where she meets it */
+    "\"לא פער\" ליד סימון או מסמך של חשבשבת, ו\"לא להציע\" ליד הצעה: מסתירים לכולם, אחרי אישור, עד שמשהו בהם משתנה.",
+    "\"שולם, שליחת קבלה: טרם\": הוותיק ראשון, ליד כל תקבול כמה ימים הוא ממתין, ולאילו מהם הקבלה כבר הופקה בחשבשבת.",
+    "\"ייצוא לאקסל עם ת.ז\" ליד \"ייצוא לאקסל\" ברשימת התקבולים: אותו קובץ, עם עמודת ת.ז."];
   var whatsNewShut = false;
   function whatsNewClosed() {
     if (whatsNewShut) { return true; }
@@ -4438,7 +4444,15 @@
       use("customer", { from: el.dataset.customer ? "aging" : "all" });
       render(); scrollPageTo(y); return;
     }
-    if (el.dataset.fintab) { state.tab = el.dataset.fintab; use("tab"); }
+    if (el.dataset.fintab) {
+      /* a confirmation of "לא פער" / "לא להציע" belongs to the tab it was pressed on: another tab closes it as its "ביטול"
+         would, unless it is being saved (the UX review of 26.11: it floated over the companies' tab, about a student) */
+      if (NAG && !busyNag() && el.dataset.fintab !== state.tab) {
+        if (NAG.phase === "confirm") { use("not_a_gap", { alert: NAG.kind, phase: "cancel" }); }
+        NAG = null;
+      }
+      state.tab = el.dataset.fintab; use("tab");
+    }
     else if (el.dataset.notes) { state.notes = !state.notes; use("notes", { open: !!state.notes }); render(); return; }
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
     /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,

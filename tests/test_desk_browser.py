@@ -561,8 +561,8 @@ def test_the_page_takes_the_desks_answers_gzipped_and_draws_them(serve):
 
 
 def test_what_changed_shows_on_a_first_visit_and_once_closed_not_again_in_this_browser(serve):
-    """QA 26.11 (H): "מה השתנה" on a first visit, four lines under the top bar; "סגירה" closes it, and the page loaded again
-    in the same browser opens without it (localStorage)."""
+    """QA 26.11 (H): "מה השתנה" on a first visit, its lines under the top bar (seven since the UX review of 26.11); "סגירה"
+    closes it, and the page loaded again in the same browser opens without it (localStorage)."""
     base, _log = serve()
     got = qa_visit(r"""
   const seen = () => page.evaluate(() => { const b = document.querySelector(".fin-new");
@@ -578,7 +578,7 @@ def test_what_changed_shows_on_a_first_visit_and_once_closed_not_again_in_this_b
 """, base, fake_sdk({}), whats_new=True)
     assert got["errors"] == []
     steps = got["steps"]
-    assert steps["first"] == {"lines": 4, "above": True} and steps["closed"] is None and steps["again"] is None
+    assert steps["first"] == {"lines": 7, "above": True} and steps["closed"] is None and steps["again"] is None
 
 
 def test_the_desk_holds_its_place_sideways_when_the_page_gets_shorter_and_its_scrollbar_goes(serve):
