@@ -97,7 +97,7 @@ def cohorts_workbook(lines: list, unpriced: list, about: dict) -> bytes:
     sheets = [("סטודנטים", student_columns(lines), students, said),
               ("בלי מחיר", UNPRICED_COLUMNS, list(unpriced), ["%s: מוצגים בלי %s ובלי %s." % (UNPRICED_TITLE, EXPECTED_WORD,
                                                                                             BALANCE_WORD)])]
-    return _workbook(VIEW_WORD, cohort_columns(lines), lines, about, "התלמידים לפי מחזור מתוך שולחן הכספים",
+    return _workbook(VIEW_WORD, cohort_columns(lines), lines, about, "הסטודנטים לפי מחזור מתוך שולחן הכספים",
                      [("הסכומים", "כולל מע\"מ, כמו בלוח Student Charge. %s: המחיר כפול %s, ועוד מה ששילמו סטודנטים "
                                    "עם %s או %s. %s: כל מה שנכנס, גם %s ו%s. %s: %s פחות %s לכל סטודנט/ית, ולא פחות "
                                    "מ-0, מחולקת לפי סטטוס השובר" % (EXPECTED_WORD, STUDENTS_WORD, WAIVED_WORD, OUT_WORD,

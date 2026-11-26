@@ -129,7 +129,7 @@
   function scopesLine(c) {
     if (!c) { setLine("scopes", "no", "אין הקשר ממאנדיי, ולכן אין מה לבדוק"); return; }
     var p = c.permissions || null;
-    if (!p || !Array.isArray(p.approvedScopes)) { setLine("scopes", "info", "מאנדיי לא מסר הרשאות בהקשר"); return; }
+    if (!p || !Array.isArray(p.approvedScopes)) { setLine("scopes", "info", "מאנדיי לא מסרה הרשאות בהקשר"); return; }
     var approved = p.approvedScopes, required = Array.isArray(p.requiredScopes) ? p.requiredScopes : [];
     var missing = required.filter(function (s) { return approved.indexOf(s) === -1; });
     var parts = ["מאושרות: " + (approved.join(", ") || "אף אחת")];

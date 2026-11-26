@@ -347,9 +347,12 @@
     /* D2: this service's gate refuses a guest by name (app/desk/gate.py); the words are D1's */
     guest: "אורחים לא רואים את השולחן.",
     not_a_board_member: "התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם.",
-    members_unavailable: "לא הצלחנו לבדוק עכשיו מי רשאי לראות את לוחות החיובים. נסו שוב בעוד דקה.",
-    finance_unavailable: "לא הצלחנו לקרוא עכשיו את לוחות החיובים. נסו שוב בעוד כמה דקות."
+    members_unavailable: "לא הצלחנו לבדוק עכשיו מי רשאי לראות את לוחות החיובים. אפשר לנסות שוב בעוד דקה.",
+    finance_unavailable: "לא הצלחנו לקרוא עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."
   };
+  /* an answer whose error the page has no words for: said without its code (the texts' review of 26.11: "(view_error)"
+     reached the screen); the code goes to the usage events as it always did */
+  var ERROR_ANY = "לא הצלחנו לטעון את הנתונים. אפשר לנסות שוב בעוד רגע, ואם זה חוזר, לפנות לנדב.";
 
   var deps = null, root = null, VIEW = null, BODY = null;
   var ROWS = { sc: [], b2: [] };
@@ -4102,7 +4105,7 @@
       var wait = e.retryAfter || 0;
       return wait ? "אפשר לרענן שוב בעוד " + wait + " שניות." : "אפשר לרענן שוב עוד רגע.";
     }
-    return ERRORS[key] || "לא הצלחנו לטעון את הנתונים (" + (key || "שגיאה") + ").";
+    return key === "view_error" ? VIEW_ERROR : ERRORS[key] || ERROR_ANY;
   }
   /* An answer marked `refreshing` is the last reading, served at once. The newer one is read in the page's own
      second request (`?fresh=1`): on Autoscale an instance has CPU only while it answers, so the server never

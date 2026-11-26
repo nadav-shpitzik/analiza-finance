@@ -142,7 +142,7 @@
         board: FINANCE_BOARDS[board] ? board : ""
       }).then(function () { show("finance"); });
     }).catch(function () {
-      blocked("משהו השתבש. נסו שוב");
+      blocked("משהו השתבש. אפשר לנסות שוב בעוד רגע.");
     });
   }
 

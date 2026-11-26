@@ -291,7 +291,7 @@ def test_a_read_that_fails_or_is_cut_makes_no_file_and_offers_the_file_without_i
 
 @pytest.mark.parametrize("table, code, said", [
     ({"reject": {"error": "finance_unavailable", "status": 503}}, "finance_unavailable",
-     "לא הצלחנו לקרוא עכשיו את לוחות החיובים. נסו שוב בעוד כמה דקות"),
+     "לא הצלחנו לקרוא עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות"),
     ({"reject": {"error": "rate_limited", "retryAfter": 30, "status": 429}}, "rate_limited", "השולחן ביקש להאט; לנסות שוב בעוד דקה"),
     ({"reject": {"error": "not_a_board_member", "status": 403}}, "not_a_board_member",
      "התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם"),
