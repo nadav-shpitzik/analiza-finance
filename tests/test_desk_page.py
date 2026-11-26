@@ -2210,6 +2210,14 @@ def test_the_queues_line_says_the_servers_split_in_words():
     assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "הקבלות על כולם כבר הופקו בחשבשבת: נשאר לסמן במאנדיי."
     assert line(one({"issued": 0, "not": 4, "unknown": 0}, UNSEEN)) == "לאף אחד מהם לא זוהתה קבלה בחשבשבת."
     assert line(one({"issued": 0, "not": 0, "unknown": 4}, None)).startswith("מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע")
+    # the second review of 26.11: a number just past the end of its series is neither issued nor missing yet
+    assert line(one({"issued": 2, "not": 1, "later": 1, "unknown": 0})) == (
+        "ל-2 מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. לאחד מהם לא זוהתה קבלה בחשבשבת. באחד מהם המספר שבשורה "
+        "עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
+    assert line(one({"issued": 0, "not": 0, "later": 3, "unknown": 0})) == (
+        "המספרים בכל השורות עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
+    assert line(one({"issued": 1, "not": 0, "later": 4, "unknown": 0})) == (
+        "לאחד מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ב-4 מהם המספר שבשורה עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
     # no line before the totals land, for a total of another reading, or without the split
     assert "fin-rcpt-line" not in _queue(ISSUED, None)[0]
     assert "fin-rcpt-line" not in _queue(ISSUED, {"other_reading": True, "taken_at": "x"})[0]

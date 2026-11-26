@@ -628,7 +628,7 @@
   var RECEIPTS_UNKNOWN = "מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע: אין השוואה עדכנית של הקריאה הזו לחשבשבת.";
   function receiptsLine(t) {
     if (!t || t.failed || t.other_reading || !t.receipts) { return ""; }
-    var x = t.receipts, n = x.issued + x.not + x.unknown, out = [];
+    var x = t.receipts, later = x.later || 0, n = x.issued + x.not + later + x.unknown, out = [];
     if (!n) { return ""; }
     if (x.unknown) { return "<p class=\"fin-rcpt-line\">" + esc(RECEIPTS_UNKNOWN) + "</p>"; }
     if (x.issued) {
@@ -639,6 +639,11 @@
     if (x.not) {
       out.push((x.not === n ? (n === 1 ? "לא זוהתה עליו קבלה" : "לאף אחד מהם לא זוהתה קבלה")
         : x.not === 1 ? "לאחד מהם לא זוהתה קבלה" : "ל-" + NF.format(x.not) + " מהם לא זוהתה קבלה") + " בחשבשבת.");
+    }
+    /* the second review of 26.11: a number just past the end of its series is neither issued nor missing yet */
+    if (later) {
+      out.push((later === n ? (n === 1 ? "המספר שבשורה" : "המספרים בכל השורות") : later === 1 ? "באחד מהם המספר שבשורה"
+        : "ב-" + NF.format(later) + " מהם המספר שבשורה") + " עוד לא בהעתק של הספרים, שמתעדכן כל שעה.");
     }
     return "<p class=\"fin-rcpt-line\">" + esc(out.join(" ")) + "</p>";
   }

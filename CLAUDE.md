@@ -164,12 +164,15 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   Nadav 26.11, receipts go out slowly),
   a line of its own under the date (9d4d5b8: on the date's line it widened the column). And what the books hold of each receipt
   (the same day; `receipt_books`, app/desk/books.py `receipt_in_books`, laid by `merge` only from a current part of this reading,
-  as a proposal is): "הופקה בחשבשבת" when a number the row cites is an invoice-receipt A1 accepts, or FR-C2's analysis finds the
-  one uncited invoice-receipt of its name and amount (`fill`, whatever the era: a label, never a write), its number in the
-  chip's title and in the details; else "לא זוהתה בחשבשבת", which is not "none issued" (the legend says so). A chip beside the
+  as a proposal is): "הופקה בחשבשבת" when A1 matched the row (`fr_c2.A1_MATCHED`) and a number it cites is the one valid
+  invoice-receipt carrying it, answered by the books (not `missing`) and on a card of the row's name, or when the desk proposes
+  the row a number (D4's proposal: from the era on, and "לא להציע" takes the label with it, dismissals.py `hide`) - the second
+  review of 26.11 found "issued" on another payment's, year's or person's receipt and on one the books answered "not found";
+  its number in the chip's title and in the details; "עוד לא בהעתק" when a number it cites is just past the end of its series
+  (`late_numbers`, counted `later`); else "לא זוהתה בחשבשבת", which is not "none issued" (the legend says so). A chip beside the
   books' others under the state, never in "שליחת קבלה" (a word wide: "בחשבשבת" broke in the middle there), two lines at most at
   1280 and 1400 (tests/test_desk_books_page.py); the line over the queue, its split, is GET /api/desk/totals `receipts`
-  (`receipts_split`: issued, not, unknown), counted once. Tests: `tests/test_desk_receipts.py`, the page's in test_desk_page.py. At
+  (`receipts_split`: issued, not, later, unknown), counted once. Tests: `tests/test_desk_receipts.py`, the page's in test_desk_page.py. At
   the desk's foot, "חסר כאן משהו? פנייה לנדב" is back as analiza-metrics' desk had it (`ASK_URL`, usage `ask`; QA 26.11).
   Until 24.12.2026 a closable "מה השתנה" of seven lines under the top bar (`WHATS_NEW`: the move's four, and since the UX
   review of 26.11 "לא פער", the receipts' queue and the file with the ID number), closed for good in the browser

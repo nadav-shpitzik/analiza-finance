@@ -298,7 +298,8 @@ TASKS_ABOUT = {
 # the students' two money figures, the desk's own words for what it counts (the legend says how): what came in, and how
 # much of it went back - the Excel file heads its counted refund by the second, beside monday's "סכום החזר" (QA 24.11)
 RECEIVED_WORD, REFUNDED_WORD = "התקבלו", "הוחזרו"
-_RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפרטים: היום, או כמה ימים נותרו עד אליו, או כמה ימים עברו מאז.")
+_RELATIVE_DAYS = ("היום · בעוד · לפני", "ליד תאריך בפרטים: היום, או כמה ימים נותרו עד אליו, או כמה ימים עברו מאז. "
+                  "בתור הקבלות גם ברשימה (\"ממתין N ימים\").")
 # what the page writes in a status cell that holds a value with no label (`unnamed_labels`), and what the Excel files write
 # there too (QA 24.11: the file's cell was empty); and beside a company whose "תנאי תשלום" is empty, on the page and in
 # the files alike
@@ -352,10 +353,13 @@ _BOOKS_UNCLEAR = (BOOKS_UNCLEAR_TITLE + " · " + BOOKS_UNCLEAR_WHY,
 # which a row may carry too. Not in "שליחת קבלה": that column is a word wide, and "בחשבשבת" broke in the middle there
 RECEIPT_ISSUED_SAID = "הופקה בחשבשבת"
 RECEIPT_UNSEEN_SAID = "לא זוהתה בחשבשבת"
+RECEIPT_LATER_SAID = "עוד לא בהעתק"
 RECEIPT_HOW_SAID = {
-    "cited": "חשבונית מס/קבלה {number} תקפה בחשבשבת, המספר שבאסמכתת חשבונית",
+    "cited": "חשבונית מס/קבלה {number} תקפה בחשבשבת, המספר שבאסמכתת חשבונית, באותו שם ובאותו סכום",
     "found": ("חשבונית מס/קבלה {number} תקפה בחשבשבת, אחת בלבד בשם ובסכום של התקבול, עד %d יום מהתאריך שלו, ששום שורה "
-              "לא מפנה אליה" % FILL_WINDOW_DAYS)}
+              "לא מפנה אליה" % FILL_WINDOW_DAYS),
+    # the second review of 26.11: a number just past the end of its series is issued since the copy's last hourly read
+    "not_yet": "המספר {number} שבאסמכתת חשבונית ממשיך את הסדרה בחשבשבת, אבל עוד לא בהעתק של הספרים, שמתעדכן כל שעה"}
 RECEIPT_UNSEEN_WHY = ("אין בחשבשבת מספר, שם וסכום שמתאימים לתקבול. זה לא אומר בוודאות שלא הופקה קבלה: אולי היא בשם אחר "
                       "או בסכום אחר")
 LEGEND = {
@@ -430,13 +434,19 @@ LEGEND = {
                                                           _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
         # Nadav 26.11 (receipts go out slowly): the queue "שולם, שליחת קבלה: טרם" split by what the books say
-        ("%s · %s" % (RECEIPT_ISSUED_SAID, RECEIPT_UNSEEN_SAID),
-         "מתחת לשיבוץ של תקבול ב%s, ובפרטים שלו. %s: יש בחשבשבת חשבונית מס/קבלה תקפה עליו - המספר שבאסמכתת חשבונית, או "
-         "אחת בלבד בשם ובסכום שלו, עד %d יום מהתאריך שלו, ששום שורה לא מפנה אליה. כלומר הקבלה כבר הופקה, ונשאר לסמן "
-         "במאנדיי ששליחת הקבלה יצאה. המספר שלה כתוב כשמצביעים עליו ובפרטים. %s: %s. מעל הרשימה כתוב כמה מכל אחד. בלי "
-         "השוואה עדכנית לחשבשבת לא כתוב אף אחד מהשניים."
+        ("%s · %s · %s" % (RECEIPT_ISSUED_SAID, RECEIPT_UNSEEN_SAID, RECEIPT_LATER_SAID),
+         "מתחת לשיבוץ של תקבול ב%s, ובפרטים שלו. %s: יש בחשבשבת חשבונית מס/קבלה תקפה עליו - המספר שבאסמכתת חשבונית, "
+         "באותו שם ובאותו סכום, או הצעה של רישום מחשבשבת (אחת בלבד בשם ובסכום שלו, עד %d יום מהתאריך שלו, ששום שורה לא "
+         "מפנה אליה). כלומר הקבלה כבר הופקה, ונשאר לסמן במאנדיי ששליחת הקבלה יצאה. המספר שלה כתוב כשמצביעים עליו "
+         "ובפרטים. %s: %s. %s: המספר שבשורה ממשיך את הסדרה בחשבשבת, ועוד לא בהעתק של הספרים, שמתעדכן כל שעה. מעל הרשימה "
+         "כתוב כמה מכל אחד. בלי השוואה עדכנית לחשבשבת לא כתוב אף אחד מהם."
          % (_q("%s, שליחת קבלה: %s" % (PAY[P_PAID], RECEIPT[R_PENDING])), _q(RECEIPT_ISSUED_SAID), FILL_WINDOW_DAYS,
-            _q(RECEIPT_UNSEEN_SAID), RECEIPT_UNSEEN_WHY)),
+            _q(RECEIPT_UNSEEN_SAID), RECEIPT_UNSEEN_WHY, _q(RECEIPT_LATER_SAID))),
+        # the second review of 26.11: the queue's days, drawn in every list a pending receipt is in, were in no term
+        ("ממתין N ימים",
+         "מתחת לתאריך של תקבול ב%s, בכל רשימה שהוא בה, ובפרטים שלו: כמה ימים עברו מהתאריך שלו - תאריך התקבול, או יום "
+         "יצירת השורה כשאין תאריך תקבול. באדום משבוע ומעלה. הרשימה של התור מסודרת מהוותיק לחדש."
+         % _q("%s, שליחת קבלה: %s" % (PAY[P_PAID], RECEIPT[R_PENDING]))),
         # R5 (app/desk/dismissals.py): what the books say, hidden by a person while its evidence is the same
         (" · ".join((NAG_WORD, NAG_FILL_WORD, NAG_LIST_WORD, NAG_BACK_WORD)),
          "%s ליד סימון של חשבשבת בפרטים של תקבול ולצד מסמך ברשימה של מסמכים בלי חיוב, ו%s ליד הצעה של חשבשבת: מסתיר אותם "

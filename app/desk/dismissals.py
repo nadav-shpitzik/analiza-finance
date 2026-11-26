@@ -233,6 +233,11 @@ def hide(part: dict, live: Iterable[dict]) -> dict:
             fill = dict(fill, mark=dict(m, returned=_by(d)))
         fills[item_id] = fill
     out["fills"] = fills
+    # a payment's receipt "found" by its proposal (app/desk/books.py `receipt_in_books`) goes with the proposal: "לא להציע"
+    # says the document is not this row's, so none is identified for it (the second review of 26.11)
+    if withdrawn and part.get("receipts"):
+        out["receipts"] = {i: ({} if str(i) in withdrawn and (v or {}).get("how") == "found" else v)
+                           for i, v in part["receipts"].items()}
 
     for place, tab in (("students", "b2c"), ("companies", "b2b"), ("unclear", "unclear")):
         shown = []

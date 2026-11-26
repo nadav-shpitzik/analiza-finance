@@ -202,8 +202,14 @@ def file_text(v: Any) -> str:
     with lxml and raw without it (CI and, by requirements.txt, the deployment have none), and XML reads a raw one back as a
     line feed; so the file never depends on which, and the browser's writer (frontend/xlsx.js `clean`) does the same (the
     review of 26.11, then CI)."""
-    text = ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v))
+    text = _NONCHARACTERS.sub("", ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v)))
     return text.replace("\r\n", "\n").replace("\r", "\n") if "\r" in text else text
+
+
+# what XML 1.0 cannot hold beyond openpyxl's list: half of a surrogate pair alone, U+FFFE and U+FFFF - with lxml the file was
+# refused (500), without it written broken; the browser's writer drops them too (frontend/xlsx.js `clean`; the second
+# review of 26.11)
+_NONCHARACTERS = re.compile("[\ud800-\udfff\ufffe\uffff]")
 
 
 def _text(cell, v: Any) -> None:
