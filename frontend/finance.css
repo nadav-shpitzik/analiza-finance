@@ -496,9 +496,12 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 /* D4: the students' file with the ID number (frontend/finance.js idsNote) - on its way, or why it was not made, under the
    list's head */
 #screen-finance .fin-idsnote { padding: 0 16px 10px; font-size: 13px; line-height: 1.5; }
-/* how long a pending receipt has waited, beside its date (Nadav 26.11) */
-#screen-finance .fin-waited { color: var(--fin-approval); white-space: nowrap; }
-/* what the books say of a pending receipt, beside "טרם" and in its details, and the queue's line (Nadav 26.11) */
-#screen-finance .fin-rcpt { color: var(--fin-muted); white-space: nowrap; }
+/* how long a pending receipt has waited: its own line under the date, smaller and free to wrap (Nadav 26.11; 9d4d5b8 - on
+   the date's line it widened the column, and at 1280 the books' chips of "לטיפול" took three lines) */
+#screen-finance .fin-waited { display: block; color: var(--fin-approval); font-size: 12px; white-space: normal; }
+/* what the books say of a pending receipt: its own small line under "טרם" in "שליחת קבלה", free to wrap, never on one line
+   with it (the same QA widths), and inline in its details' line; and the queue's line under its sentence (Nadav 26.11) */
+#screen-finance .fin-rcpt { display: block; color: var(--fin-muted); font-size: 12px; white-space: normal; }
+#screen-finance .fin-dx-sit .fin-rcpt { display: inline; font-size: inherit; }
 #screen-finance .fin-rcpt-issued { color: var(--fin-paid); }
 #screen-finance .fin-rcpt-line { margin: 4px 0 0; font-size: 13px; }

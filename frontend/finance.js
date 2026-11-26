@@ -609,7 +609,8 @@
   function receiptMark(r) {
     var b = r.state === "receipt_pending" ? r.receipt_books : null;
     if (!b || !b.text) { return ""; }
-    return " <span class=\"fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
+    /* its own small line under "טרם", free to wrap (finance.css): on one line with it, it widened the column at 1280 */
+    return "<span class=\"fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
       esc(b.text) + "</span>";
   }
   /* the queue's line under its sentence: of its rows, how many the books already hold a receipt of and how many none was
@@ -634,7 +635,9 @@
   }
   function waitedMark(r) {
     var t = waitedText(r);
-    return t ? " <span class=\"fin-waited\">· " + t + "</span>" : "";
+    /* its own line under the date, free to wrap: on the date's line it widened the column, and at 1280 the books' chips of
+       "לטיפול" went to three lines (tests/test_desk_books_page.py, the QA's widths) */
+    return t ? "<span class=\"fin-waited\">" + t + "</span>" : "";
   }
   function paidDateSaid(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
@@ -979,7 +982,7 @@
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>" +
-        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptMark(r) ? " ·" + receiptMark(r) : "");
+        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptMark(r) ? " · " + receiptMark(r) : "");
       /* the two dates side by side: the legal day and its lateness, then the transfer round set at approval. The amount is
          monday's "סכום לזיכוי", never a word of its own (QA 2.5: "להחזיר") */
       case "refund_to_execute": return "<b>סכום לזיכוי " + money2(r.credit_approved) + "</b> · " + LAST_DAY_LABEL + " " +
