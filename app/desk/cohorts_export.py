@@ -9,7 +9,7 @@ THE SHEETS:
    the price, the payments with no enrollment.
 2. "סטודנטים": every student of those cohorts under the same money columns, each balance in its part's column, so each
    column of a cohort's students sums to that cohort's line (backlog 0313: "סכומי הסטודנטים שווים לשורת המחזור"). What a
-   waived or an out student paid is in a column of its own, as the page strikes it through: in no sum of the line.
+   waived or an out student paid is in "שולם בפועל" and their expected, as on the line (the review of D4).
 3. "בלי מחיר": the cohorts the view lists without money, and why.
 No ID number: the reading never holds one (NEVER_READ).
 """
@@ -32,13 +32,12 @@ def _part(key: str) -> tuple:
 
 
 _MONEY = {
-    "expected": ((lambda x: x["expected"] or None), (lambda s: s["price"])),
-    "paid": ((lambda x: x["paid"] or None), (lambda s: (s["paid"] or None) if s["standing"] == "counted" else None)),
+    "expected": ((lambda x: x["expected"] or None), (lambda s: s["expected"] or None)),
+    "paid": ((lambda x: x["paid"] or None), (lambda s: s["paid"] or None)),
     "balance": ((lambda x: x["balance"] or None), (lambda s: s["balance"] or None)),
     **{"part_" + k: _part(k) for k in PARTS},
 }
 WIDTH = {"cohort": 9, "price": 11, "students": 9}
-NOT_COUNTED_PAID = "%s, %s או %s" % (PAID_WORD, WAIVED_WORD, OUT_WORD)
 IN_EXPECTED = "בצפי"   # a student counted, beside the waived and the out, whose line says why
 
 
@@ -70,8 +69,7 @@ def student_columns(lines: list) -> list:
     for col in columns_for(lines):
         if col["key"] in _MONEY:
             out.append((col["header"], _MONEY[col["key"]][1], "money", 15))
-    return out + [(NOT_COUNTED_PAID, lambda s: (s["paid"] or None) if s["standing"] != "counted" else None, "money", 16),
-                  ("מזהה במאנדיי", lambda s: s["id"], "text", 13)]
+    return out + [("מזהה במאנדיי", lambda s: s["id"], "text", 13)]
 
 
 UNPRICED_COLUMNS: list = [("מחזור", lambda x: x["code"], "text", 9), ("שם המחזור", lambda x: x["title"], "text", 30),
@@ -89,14 +87,16 @@ def cohorts_workbook(lines: list, unpriced: list, about: dict) -> bytes:
     the reading and the filter, for "פרטים"."""
     students = students_of(lines)
     said = ["סכומי הסטודנטים של כל מחזור, בכל עמודת כסף, שווים לשורת המחזור בגיליון \"%s\"." % VIEW_WORD,
-            "%s: מה ששילמו סטודנטים עם %s או %s. לא נספר בשורת המחזור." % (NOT_COUNTED_PAID, WAIVED_WORD, OUT_WORD)]
+            "%s כולל מה ששילמו סטודנטים עם %s או %s, ואצלם %s הוא אותו סכום." % (PAID_WORD, WAIVED_WORD, OUT_WORD,
+                                                                              EXPECTED_WORD)]
     sheets = [("סטודנטים", student_columns(lines), students, said),
               ("בלי מחיר", UNPRICED_COLUMNS, list(unpriced), ["%s: מוצגים בלי %s ובלי %s." % (UNPRICED_TITLE, EXPECTED_WORD,
                                                                                             BALANCE_WORD)])]
     return _workbook(VIEW_WORD, cohort_columns(lines), lines, about, "התלמידים לפי מחזור מתוך שולחן הכספים",
-                     [("הסכומים", "כולל מע\"מ, כמו בלוח Student Charge. %s: המחיר כפול %s. %s: %s פחות %s לכל "
-                                   "סטודנט/ית, ולא פחות מ-0, מחולקת לפי סטטוס השובר" % (EXPECTED_WORD, STUDENTS_WORD,
-                                                                                    BALANCE_WORD, _PRICE_H, PAID_WORD)),
+                     [("הסכומים", "כולל מע\"מ, כמו בלוח Student Charge. %s: המחיר כפול %s, ועוד מה ששילמו סטודנטים "
+                                   "עם %s או %s. %s: כל מה שנכנס. %s: %s פחות %s לכל סטודנט/ית, ולא פחות מ-0, מחולקת "
+                                   "לפי סטטוס השובר" % (EXPECTED_WORD, STUDENTS_WORD, WAIVED_WORD, OUT_WORD, PAID_WORD,
+                                                       BALANCE_WORD, _PRICE_H, PAID_WORD)),
                       ("החלקים", " · ".join(p["label"] for p in PARTS.values())),
                       ("סטודנטים", "%d בגיליון \"סטודנטים\"" % len(students)),
                       (UNPRICED_TITLE, "%d בגיליון \"בלי מחיר\"" % len(unpriced))], sheets=sheets)

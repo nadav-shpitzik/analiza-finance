@@ -992,19 +992,16 @@
     }
     return num(x[k]) ? cash(x[k]) : NOT_SET;
   }
-  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid struck through,
-     as "סכום מחוק" is (shown, in no sum of the line) */
+  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid is in the
+     line's "שולם בפועל" and is their expected (the review of D4: everything that came in) */
   function studentCell(col, s) {
     var k = col.key, counted = s.standing === "counted";
     if (k === "cohort") {
       return itemLink("en", s.id, "fin-name", esc(s.name)) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
         (s.notes.length ? "<div class=\"fin-chips\">" + s.notes.map(function (t) { return "<span class=\"fin-chip\">" + esc(t) + "</span>"; }).join("") + "</div>" : "");
     }
-    if (k === "expected") { return counted ? cash(s.price) : NOT_SET; }
-    if (k === "paid") {
-      if (!num(s.paid)) { return NOT_SET; }
-      return counted ? cash(s.paid) : "<s class=\"fin-subtle\" title=\"" + esc(s.said + ": לא נספר") + "\">" + cash(s.paid) + "</s>";
-    }
+    if (k === "expected") { return num(s.expected) ? cash(s.expected) : NOT_SET; }
+    if (k === "paid") { return num(s.paid) ? cash(s.paid) : NOT_SET; }
     if (k === "balance") { return counted && num(s.balance) ? cash(s.balance) : NOT_SET; }
     return counted && k === "part_" + s.part && num(s.balance) ? cash(s.balance) : NOT_SET;
   }

@@ -40,6 +40,21 @@ def test_money_the_desk_files_under_the_cohort_is_still_counted_as_balance_to_co
         "'אושר - ממתין לתשלום' (%s)" % (ln["expected"], came_in, ln["balance"], ln["part_approved"]))
 
 
+def test_the_cohorts_paid_is_not_everything_that_came_in():
+    """LOW/MEDIUM - a definition to settle with Chava before the switch (backlog 0313 asks "שולם בפועל: כמה כבר התקבל
+    בסך הכול"). A waived student (voucher "נדחה", 2) paid her 4,000 deposit; a student who cancelled (voucher 6) paid 4,000
+    that was not refunded. Both sums came in for the cohort, and the books hold them. The line's "שולם בפועל" leaves both
+    out (`waived_paid`, `out_paid`, said only when the cohort is opened), so the line cannot be reconciled against what the
+    books say came in for the cohort: 4,000 here against 12,000 received."""
+    pays = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), sc(3, paid="4000", enr=["E3"])]
+    part = part_of(pays, [coh(price="12,000", roster=["E1", "E2", "E3"])],
+                   [enr("E1", voucher="1"), enr("E2", voucher="2"), enr("E3", voucher="6")])
+    ln = line(part)
+    came_in = D("12000")                                   # three deposits of 4,000, none refunded
+    assert ln["paid"] == came_in, ("'שולם בפועל' of the cohort is %s; %s came in (waived %s, out %s, struck through "
+                                   "on open only)" % (ln["paid"], came_in, ln["waived_paid"], ln["out_paid"]))
+
+
 def test_the_prompts_scenario_owes_nothing():
     """Not a finding - the reviewer's own fixture, held: a 4,000 deposit and the helper's "X | השלמת תשלום" of 8,000 on a
     12,000 cohort, voucher 4, owes 0 (kept here so the fixer sees it pass)."""

@@ -112,8 +112,11 @@ def test_every_voucher_status_lands_in_its_part_by_index(voucher):
         assert all(ln["part_" + k] == 0 for k in ch.PARTS if k != part)
         assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["paid"] == D("4000")
     else:
-        assert s["balance"] == 0 and ln["balance"] == 0 and ln["students"] == 0 and ln["expected"] == 0
-        assert ln["paid"] == 0 and ln[standing] == 1 and ln[standing + "_paid"] == D("4000")
+        # changed deliberately (the review of D4): what a waived or an out student paid is in "שולם בפועל", everything that
+        # came in, and is their expected - no balance, so the line still ties
+        assert s["balance"] == 0 and ln["balance"] == 0 and ln["students"] == 0 and ln["expected"] == D("4000")
+        assert ln["paid"] == D("4000") and ln[standing] == 1 and ln[standing + "_paid"] == D("4000")
+        assert s["expected"] == s["paid"] == D("4000") and s["price"] is None
 
 
 def test_every_live_voucher_index_is_placed_and_the_parts_are_chavas_in_her_order():
@@ -141,19 +144,21 @@ def test_an_empty_grey_or_unknown_voucher_status_has_its_own_line_and_is_never_h
 
 # ---- 2. waived, and out of the count -----------------------------------------------------------------------------------
 @pytest.mark.parametrize("voucher", ["2", "3"])
-def test_a_rejected_voucher_is_waived_no_balance_and_not_in_the_expected(voucher):
+def test_a_rejected_voucher_is_waived_no_balance_and_what_it_paid_is_its_expected(voucher):
     rows = [enr("E1", voucher=voucher), enr("E2", voucher="1")]
     ln = line(part_of([sc(1, paid="4000", enr=["E1"])], [coh(roster=["E1", "E2"])], rows))
     s = student(ln, "E1")
     assert s["standing"] == "waived" and s["balance"] == 0 and s["price"] is None and s["paid"] == D("4000")
     assert s["said"] == 'ויתור: "%s"' % fd.VOUCHER[voucher]
-    assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["balance"] == D("10000") and ln["paid"] == 0
-    assert ln["waived"] == 1 and ln["waived_paid"] == D("4000")
+    # changed deliberately (the review of D4): "שולם בפועל" is everything that came in, the waived deposit too, and the
+    # waived student's expected is what they paid - the line is 14,000 expected, 4,000 paid, 10,000 still to come
+    assert ln["students"] == 1 and ln["expected"] == D("14000") and ln["balance"] == D("10000") and ln["paid"] == D("4000")
+    assert ln["waived"] == 1 and ln["waived_paid"] == D("4000") and s["expected"] == D("4000")
 
 
 @pytest.mark.parametrize("how", ["voucher_6", "voucher_7", "voucher_10", "status_0", "status_5", "status_6", "status_7",
                                  "status_8", "status_empty", "status_unknown", "two_cohorts"])
-def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_sum(how):
+def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_balance(how):
     kind, _, value = how.partition("_")
     out = (enr("E1", voucher=value) if kind == "voucher"
            else enr("E1", voucher="1", cohorts=["C1", "C2"]) if kind == "two"
@@ -163,8 +168,10 @@ def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_sum(how):
     ln = line(part)
     s = student(ln, "E1")
     assert s["standing"] == "out" and s["balance"] == 0 and s["said"].startswith(ch.OUT_WORD + ": ")
-    assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["paid"] == 0 and ln["balance"] == D("10000")
-    assert ln["out"] == 1 and ln["out_paid"] == (0 if kind == "two" else D("3000"))
+    # changed deliberately (the review of D4): what an out student paid is in "שולם בפועל" and is their expected
+    paid = D(0) if kind == "two" else D("3000")
+    assert ln["students"] == 1 and ln["expected"] == D("10000") + paid and ln["paid"] == paid
+    assert ln["balance"] == D("10000") and ln["out"] == 1 and ln["out_paid"] == paid and s["expected"] == paid
     if kind == "two":
         # in both cohorts' lists, in neither's count; its payment names two cohorts, so it is counted for no one
         assert s["said"] == "%s: %s" % (ch.OUT_WORD, ch.OUT_WHY["cohorts"])
@@ -425,8 +432,12 @@ def test_the_sums_tie_through_random_cohorts():
         assert part["checks"]["ties"] is True
         for ln in part["cohorts"]:
             counted = [s for s in ln["students_list"] if s["standing"] == "counted"]
-            assert ln["students"] == len(counted) and ln["expected"] == ln["price"] * len(counted)
-            assert ln["paid"] == sum((s["paid"] for s in counted), D(0))
+            others = [s for s in ln["students_list"] if s["standing"] != "counted"]
+            # the review of D4: what the waived and the out paid is in "שולם בפועל", and is their expected
+            assert ln["students"] == len(counted)
+            assert ln["expected"] == ln["price"] * len(counted) + sum((s["paid"] for s in others), D(0))
+            assert ln["paid"] == sum((s["paid"] for s in ln["students_list"]), D(0))
+            assert ln["waived_paid"] + ln["out_paid"] == sum((s["paid"] for s in others), D(0))
             for k in ch.PARTS:
                 assert ln["part_" + k] == sum((s["balance"] for s in counted if s["part"] == k), D(0))
             assert ln["balance"] == sum((ln["part_" + k] for k in ch.PARTS), D(0))
@@ -438,7 +449,7 @@ def test_the_sums_tie_through_random_cohorts():
                     assert s["balance"] == max(ln["price"] - s["paid"], D(0))
                     assert s["overpaid"] == max(s["paid"] - ln["price"], D(0))
                 else:
-                    assert s["balance"] == 0 and s["part"] == ""
+                    assert s["balance"] == 0 and s["part"] == "" and s["expected"] == s["paid"]
                 seen[s["standing"]] += 1
                 seen["overpaid"] += bool(s["overpaid"])
             seen["shared"] += ln["shared"]["count"]
@@ -463,6 +474,11 @@ def test_a_broken_line_is_said_by_the_check():
     for field, value in (("paid", D("4001")), ("part_approved", D("5999")), ("expected", D("9000")), ("students", 2),
                          ("balance", D("1"))):
         assert not ch._ties(dict(ln, **{field: value})), field
+    # a student and the line that agree with each other, and with expected = paid + balance, but not with the price: the
+    # line's expected is the price for each student counted, and what the waived and the out paid
+    off = dict(ln["students_list"][0], expected=D("9000"), balance=D("5000"))
+    wrong = dict(ln, students_list=[off], expected=D("9000"), balance=D("5000"), part_approved=D("5000"))
+    assert ch._sums([off])["expected"] == wrong["expected"] and not ch._ties(wrong)
 
 
 def test_the_cohorts_come_money_that_should_have_come_in_first_and_the_students_by_part():
@@ -765,12 +781,12 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
 # ---- the routes: the totals and the file of the view, gated as the students' list ------------------------------------
 def cohort_snapshot() -> dict:
     """A701 (10,000): E1 approved, 4,000 paid; E2 settled, its deposit and the helper's balance row; E3 waived, its
-    4,000 deposit paid. A702
-    (12,000): E4 not submitted, 4,000 paid; E5 submitted, nothing paid. A703 without a price."""
+    4,000 deposit paid - in A701's "שולם בפועל" and its expected (the review of D4). A702 (12,000): E4 not submitted,
+    4,000 paid; E5 submitted, nothing paid. A703 without a price."""
     balance = sc(3, paid="6000", enr=["E2"], receipt="0", invoice="", ctype="השלמת תשלום")
     balance["name"] = "סטודנט/ית E2 | השלמת תשלום"
     payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), balance, sc(4, paid="4000", enr=["E4"]),
-                sc(5, paid="4000", enr=["E3"])]       # E3's deposit: waived, so in no sum of A701's line
+                sc(5, paid="4000", enr=["E3"])]       # E3's deposit: waived, so in A701's paid and expected, no balance
     cohorts = [coh("C1", "A701", roster=["E1", "E2", "E3"]), coh("C2", "A702", price="12000", roster=["E4", "E5"]),
                coh("C3", "A703", price="")]
     enrollments = [enr("E1", "C1", voucher="1", name="רונית כהן"), enr("E2", "C1", voucher="4"),
@@ -797,7 +813,8 @@ def test_the_cohorts_totals_are_the_servers_for_the_list_as_filtered_and_for_its
     assert t["count"] == 2 and t["taken_at"] == taken
     assert {k: t["sums"][k] for k in ("expected", "paid", "balance", "part_approved", "part_submitted",
                                        "part_not_submitted", "part_settled", "students", "waived")} == {
-        "expected": "44000", "paid": "18000", "balance": "26000", "part_approved": "6000", "part_submitted": "12000",
+        # (the review of D4, changed deliberately: E3's waived 4,000 is in "שולם בפועל" and its expected)
+        "expected": "48000", "paid": "22000", "balance": "26000", "part_approved": "6000", "part_submitted": "12000",
         "part_not_submitted": "8000", "part_settled": "0", "students": 4, "waived": 1}
     t = get("tab=b2c_cohorts&q=%D7%9B%D7%94%D7%9F").json()                            # "כהן": a student of A701
     assert t["count"] == 1 and t["sums"]["balance"] == "6000"
@@ -843,8 +860,10 @@ def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_coho
         for h in money:
             assert sum(s[h] or 0 for s in srows if s["מחזור"] == code) == (ln[h] or 0), (code, h)
     waived = next(s for s in srows if s["מזהה במאנדיי"] == "E3")
-    assert waived[ch.PAID_WORD] is None and waived["בחשבון"].startswith(ch.WAIVED_WORD)
-    assert waived["%s, %s או %s" % (ch.PAID_WORD, ch.WAIVED_WORD, ch.OUT_WORD)] == 4000      # in a column of its own
+    # changed deliberately (the review of D4): in the paid column, and its expected - no column of its own any more
+    assert waived[ch.PAID_WORD] == 4000 == waived[ch.EXPECTED_WORD] and waived["בחשבון"].startswith(ch.WAIVED_WORD)
+    assert lines["A701"][ch.PAID_WORD] == 18000 and lines["A701"][ch.EXPECTED_WORD] == 24000
+    assert not [h for h in sheads if h and h.startswith(ch.PAID_WORD + ",")]
     unpriced = wb["בלי מחיר"]
     assert [unpriced.cell(row=2, column=c).value for c in (1, 5)] == ["A703", "אין מחיר"]
     info = {row[0].value: row[1].value for row in wb["פרטים"].iter_rows()}

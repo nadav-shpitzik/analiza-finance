@@ -48,10 +48,13 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    statuses. Never hidden. "נדחה" and "נדחה - קיבל מלגה מאנליזה" (2, 3) are waived: no balance, the waiver recorded on the
    enrollment only. "ביטל השתתפות" (6, 7) and "לא רלוונטי" (10) are out of the count.
 
-THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected (the price for each student counted), what
-they paid, each part, the balance and what was paid over the price - and expected = paid + balance - overpaid, to the
-agora (Decimal end to end). `checks["ties"]` says so, and the tests hold it. Waived and out students are listed with what
-they paid, in no sum of the cohort's line but their own (`waived_paid`, `out_paid`).
+THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected, what they paid, each part, the balance
+and what was paid over the price - and expected = paid + balance - overpaid, to the agora (Decimal end to end).
+`checks["ties"]` says so, and the tests hold it. "שולם בפועל" is everything that came in (Chava's word in backlog 0313:
+"כמה כבר התקבל בסך הכול"): what the waived and the out paid too (the review of D4). Their expected is what they paid - the
+balance was waived, or they left - and their balance 0, so the line still ties; what they paid is said apart as well
+(`waived_paid`, `out_paid`). So a line's expected is its price for each student counted, and what the waived and the out
+paid.
 
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
@@ -124,7 +127,8 @@ TRACK_LABEL = "שוברים משרד העבודה"   # Registration Flow's label
 # the one sentence that says which cohorts the view holds (above the table, and in the legend)
 TRACK_SAID = ("רק מחזורים שנוהל ההרשמה שלהם %s: החלקים הם סטטוסי שובר, ומחזור במסלול אחר לא מוצג ולא נספר, גם כשיש לו "
               "מחיר." % _q(TRACK_LABEL))
-ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים), %s, ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
+ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים, ועוד מה ששילמו סטודנטים עם ויתור או מחוץ לחשבון), %s (כל "
+         "מה שנכנס), ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
          "כסף שכבר היה צריך להיכנס. %s לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה. "
          "הקוד של מחזור והשם של סטודנט/ית פותחים אותם במאנדיי."
          % (EXPECTED_WORD, PAID_WORD, BALANCE_WORD, _q(VOUCHER["1"]), TRACK_SAID))
@@ -134,19 +138,20 @@ LEGEND = [
     (STUDENTS_WORD,
      "ההרשמות של המחזור בלוח ההרשמות שה-Status שלהן %s, הרשמה אחת לכל אדם (לפי Person); בלי מי שהשובר שלו נדחה, ביטל "
      "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % _IN_LABELS),
-    (EXPECTED_WORD, "המחיר כפול הסטודנטים: מה שהיה צריך להיכנס מכולם."),
-    (PAID_WORD, "מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמה בלוח Student Charge, %s פחות %s, כמו בשאר המסך - המקדמה, "
-                "ושורת %s שנפתחת כשמכירות מסמנים %s." % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]))),
+    (EXPECTED_WORD, "המחיר כפול מספר ה%s, ועוד מה ששילמו סטודנטים עם %s או %s (אצלם הצפי הוא מה ששילמו, והיתרה 0): "
+                    "מה שהיה צריך להיכנס מכולם." % (STUDENTS_WORD, _q(WAIVED_WORD), _q(OUT_WORD))),
+    (PAID_WORD, "כל מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
+                "המקדמה, ושורת %s שנפתחת כשמכירות מסמנים %s. גם מה ששילמו סטודנטים עם %s או %s."
+     % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]), _q(WAIVED_WORD), _q(OUT_WORD))),
     (BALANCE_WORD, "לכל סטודנט/ית: המחיר פחות %s, ולא פחות מ-0. היתרה של המחזור היא סכום היתרות, מחולקת לחלקים לפי סטטוס "
                    "השובר:" % PAID_WORD),
 ] + [(p["label"], p["about"]) for p in PARTS.values()] + [
-    (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר בצפי."
-                  % (_q(VOUCHER["2"]), _q(VOUCHER["3"]))),
+    (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר ב%s; מה "
+                  "ששילם/ה נספר ב%s, וגם בצפי." % (_q(VOUCHER["2"]), _q(VOUCHER["3"]), STUDENTS_WORD, PAID_WORD)),
     (OUT_WORD, "%s, %s או %s, הרשמה שה-Status שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, "
-               "ולא נספרת בצפי וביתרה." % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]),
-                                           _IN_LABELS)),
+               "ולא נספרת ב%s וביתרה; מה ששולם בה נספר ב%s, וגם בצפי."
+     % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), _IN_LABELS, STUDENTS_WORD, PAID_WORD)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
-    ("סכום מחוק", "ב%s: מה ששילם/ה סטודנט/ית עם ויתור או מחוץ לחשבון. מוצג, ולא נספר בשורת המחזור." % PAID_WORD),
     (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה, ואין לדעת של מי מהסטודנטים הם: אף "
                     "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם לא יורדים מאף יתרה, ולכן היתרה של "
                     "המחזור עשויה להיות גדולה ממה שבאמת חסר. מוצגים בשורת המחזור."),
@@ -300,7 +305,9 @@ def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list
             "status": _label_said(s_idx, s_label), "status_idx": s_idx,
             "voucher": _label_said(v_idx, v_label), "voucher_idx": v_idx,
             "standing": standing, "part": part, "said": said,
-            "price": price if counted else None, "paid": paid, "balance": balance, "overpaid": overpaid,
+            # the expected: the price for a student counted; for a waived or an out one what they paid (the review of D4)
+            "price": price if counted else None, "expected": price if counted else paid, "paid": paid,
+            "balance": balance, "overpaid": overpaid,
             "payments": [str(p["id"]) for p in payments],
             "notes": [NOTES[k] for k in notes], "flags": notes}
 
@@ -325,11 +332,12 @@ def _student_order(s: dict) -> tuple:
 
 # ---------------------------------------------------------------- a cohort
 def _sums(students: list) -> dict:
-    """A cohort's figures, as the sums of its students': counted students only, but what waived and out ones paid."""
+    """A cohort's figures, as the sums of its students': the balance, its parts and what was paid over the price of the
+    counted ones; the expected and what was paid of every one (a waived or an out student's expected is what they paid)."""
     counted = [s for s in students if s["standing"] == "counted"]
     out = {"students": len(counted), "waived": sum(1 for s in students if s["standing"] == "waived"),
            "out": sum(1 for s in students if s["standing"] == "out"),
-           "expected": _dsum(s["price"] for s in counted), "paid": _dsum(s["paid"] for s in counted),
+           "expected": _dsum(s["expected"] for s in students), "paid": _dsum(s["paid"] for s in students),
            "overpaid": _dsum(s["overpaid"] for s in counted),
            "waived_paid": _dsum(s["paid"] for s in students if s["standing"] == "waived"),
            "out_paid": _dsum(s["paid"] for s in students if s["standing"] == "out")}
@@ -342,11 +350,12 @@ def _sums(students: list) -> dict:
 
 
 def _ties(line: dict) -> bool:
-    """The cohort's line is its students' sums, and its expected is what was paid and what is still to come."""
+    """The cohort's line is its students' sums, its expected is what was paid and what is still to come, and it is the
+    price for each student counted and what the waived and the out paid."""
     again = _sums(line["students_list"])
     same = all(again[f] == line[f] for f in SUM_FIELDS + COUNT_FIELDS + tuple("part_" + k for k in PARTS))
     return same and line["expected"] == line["paid"] + line["balance"] - line["overpaid"] \
-        and line["expected"] == line["price"] * line["students"]
+        and line["expected"] == line["price"] * line["students"] + line["waived_paid"] + line["out_paid"]
 
 
 def _frame() -> dict:
