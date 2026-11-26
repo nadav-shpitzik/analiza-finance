@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from .cohorts import (BALANCE_WORD, EXPECTED_WORD, OUT_WORD, OVERPAID_WORD, PAID_WORD, PARTS, SHARED_WORD, STUDENTS_WORD,
-                      UNLINKED_WORD, UNPRICED_TITLE, VIEW_WORD, WAIVED_WORD, columns_for)
+from .cohorts import (BALANCE_WORD, ENROLLMENT_STATUS_WORD, EXPECTED_WORD, OUT_WORD, OVERPAID_WORD, PAID_WORD, PARTS,
+                      SHARED_WORD, STUDENTS_WORD, UNLINKED_WORD, UNPRICED_TITLE, VIEW_WORD, WAIVED_WORD, columns_for)
 from .export import _workbook, file_part
 from .view import FLOW_LABEL
 
@@ -66,7 +66,8 @@ def cohort_columns(lines: list) -> list:
 def student_columns(lines: list) -> list:
     """The students' sheet: who, which cohort, their two statuses, then the very money columns of the first sheet."""
     out: list = [("מחזור", lambda s: s["code"], "text", 9), ("סטודנט/ית", lambda s: s["name"], "text", 26),
-                 ("סטטוס שובר משה\"ע", lambda s: s["voucher"], "text", 22), ("Status", lambda s: s["status"], "text", 12),
+                 ("סטטוס שובר משה\"ע", lambda s: s["voucher"], "text", 22),
+                 (ENROLLMENT_STATUS_WORD, lambda s: s["status"], "text", 14),
                  ("בחשבון", lambda s: s["said"] or IN_EXPECTED, "text", 30)]
     for col in columns_for(lines):
         if col["key"] in _MONEY:

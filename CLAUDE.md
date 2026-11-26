@@ -199,7 +199,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   money; a payment filed by its lead with no enrollment is the student's whose enrollment links that lead, `EN["lead"]`
   "קישור לליד", or who is its lead's person, `LD["person"]`, when exactly one student is, `_lead_payer`; else it is said on
   the cohort's line, `unlinked`, and in no balance), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
-  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out: listed, in no balance, and what they paid is
+  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out: listed with why (the enrollment's Status said
+  "סטטוס ההרשמה" in a Hebrew line, its label as monday has it, QA 26.11), in no balance, and what they paid is
   in "שולם בפועל", everything that came in (Chava's "כמה כבר התקבל בסך הכול"), and is their expected; the line's "שולם
   בפועל" holds `unlinked` and `shared` too (QA 26.11), in no student's row and no balance. A line is its students' sums and
   that money (`_line_sums`, `checks.ties`), and ties to what the list files under its cohort, summed from the payments apart

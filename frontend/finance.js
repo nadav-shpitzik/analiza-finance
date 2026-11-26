@@ -198,6 +198,8 @@
  * 6  When the page got shorter (a search with few results, "ללא תקבול", a cohort closed) its scrollbar went and the centered
  *      desk moved about 7 pixels sideways, so a click on the search's X missed. desk.css keeps the bar's room on the root
  *      (`scrollbar-gutter: stable`); tests/test_desk_browser.py measures it with the scrollbars that take room.
+ * 7  A cohort's "מחוץ לחשבון" lines said 'Status "Frozen"', an English word inside Hebrew: the server says "סטטוס ההרשמה",
+ *      the label as monday has it (app/desk/cohorts.py OUT_WHY); the page draws the server's sentence.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one

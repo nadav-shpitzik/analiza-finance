@@ -106,6 +106,9 @@ WAIVED_WORD, OUT_WORD = "ויתור", "מחוץ לחשבון"
 NO_STATUS_LABEL = "בלי סטטוס שובר"
 UNPRICED_TITLE = "מחזורים בלי מחיר"
 UNLINKED_WORD, SHARED_WORD = "תקבולים בלי הרשמה", "תקבול של כמה סטודנטים"
+# the enrollment's "Status" (`color_mm0sxcvn`), said in Hebrew inside a Hebrew sentence (QA of 26.11, 7: "מחוץ לחשבון: Status
+# "Frozen""); its labels stay as monday has them, and the legend says which column it is
+ENROLLMENT_STATUS_WORD = "סטטוס ההרשמה"
 _IN_LABELS = ", ".join(_q(x) for x in list(ENROLLMENT_IN.values())[:-1]) + " או " + _q(list(ENROLLMENT_IN.values())[-1])
 
 # Chava's parts, in her order, each in her words (backlog 0313, her answer of 26.11); then the desk's two. `about` is the
@@ -147,8 +150,8 @@ LEGEND_TITLE = VIEW_WORD
 LEGEND = [
     (VIEW_WORD, ABOUT),
     (STUDENTS_WORD,
-     "ההרשמות של המחזור בלוח ההרשמות שה-Status שלהן %s, הרשמה אחת לכל אדם (לפי Person); בלי מי שהשובר שלו נדחה, ביטל "
-     "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % _IN_LABELS),
+     "ההרשמות של המחזור בלוח ההרשמות ש%s שלהן %s, הרשמה אחת לכל אדם (לפי Person); בלי מי שהשובר שלו נדחה, ביטל "
+     "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % (ENROLLMENT_STATUS_WORD, _IN_LABELS)),
     (EXPECTED_WORD, "המחיר כפול מספר ה%s, ועוד מה ששילמו סטודנטים עם %s או %s (אצלם הצפי הוא מה ששילמו, והיתרה 0): "
                     "מה שהיה צריך להיכנס מכולם." % (STUDENTS_WORD, _q(WAIVED_WORD), _q(OUT_WORD))),
     (PAID_WORD, "כל מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
@@ -161,9 +164,10 @@ LEGEND = [
 ] + [(p["label"], p["about"]) for p in PARTS.values()] + [
     (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר ב%s; מה "
                   "ששילם/ה נספר ב%s, וגם בצפי." % (_q(VOUCHER["2"]), _q(VOUCHER["3"]), STUDENTS_WORD, PAID_WORD)),
-    (OUT_WORD, "%s, %s או %s, הרשמה שה-Status שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, "
+    (OUT_WORD, "%s, %s או %s, הרשמה ש%s שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, "
                "ולא נספרת ב%s וביתרה; מה ששולם בה נספר ב%s, וגם בצפי."
-     % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), _IN_LABELS, STUDENTS_WORD, PAID_WORD)),
+     % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), ENROLLMENT_STATUS_WORD, _IN_LABELS,
+        STUDENTS_WORD, PAID_WORD)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
     (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה, ואין לדעת של מי מהסטודנטים הם: אף "
                     "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם נספרים ב%s של המחזור ולא יורדים "
@@ -175,7 +179,8 @@ LEGEND = [
                      "ובלי יתרה." % _q(TRACK_LABEL)),
     (PRICE_WORD, "עמודה בלוח המחזורים: המחיר המלא שהסטודנט/ית משלם/ת. השובר הוא ההחזר של משרד העבודה לסטודנט/ית "
                  "(נספח ו'), ולכן אינו יורד מהמחיר."),
-    ("Status", "עמודה בלוח ההרשמות: מצב ההרשמה, למשל %s או %s." % (_q("נרשם"), _q("ביטל השתתפות"))),
+    (ENROLLMENT_STATUS_WORD, "העמודה %s בלוח ההרשמות: מצב ההרשמה, למשל %s או %s. התווית מוצגת כפי שהיא במאנדיי."
+     % (_q("Status"), _q("נרשם"), _q("ביטל השתתפות"))),
 ]
 
 # A student's chips: the server's words, the page draws them as sent; each is in the legend (NOTES_SAID)
@@ -211,7 +216,7 @@ UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור �
 # said in its place when its own computation failed (app/desk/view.py `_cohorts_of`): a fault of the server's
 CRASHED_SAID = ("התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל."
                 % _q(VIEW_WORD))
-OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
+OUT_WHY = {"status": ENROLLMENT_STATUS_WORD, "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
 # (a part's key) is drawn only when a cohort shown has money in it - on the page and in the file alike. The page says the

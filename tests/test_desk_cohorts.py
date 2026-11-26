@@ -180,7 +180,24 @@ def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_balance(how):
         assert line(part, "A701")["paid"] == D("3000") and line(part, "A701")["shared"] == ln["shared"]
     elif kind == "status":
         label = {"empty": "ריק", "unknown": '"תווית חדשה"'}.get(value, '"%s"' % STATUS.get(value, ""))
-        assert s["said"] == "%s: Status %s" % (ch.OUT_WORD, label)
+        # changed deliberately (QA 26.11, 7): "סטטוס ההרשמה", not monday's "Status", inside the Hebrew sentence
+        assert s["said"] == "%s: סטטוס ההרשמה %s" % (ch.OUT_WORD, label)
+
+
+@pytest.mark.parametrize("status_", ["6", "7", "5", "0"])
+def test_an_out_students_line_says_the_enrollments_status_in_hebrew_and_its_label_as_monday_has_it(status_):
+    """QA 26.11 (7): "מחוץ לחשבון: Status "ביטל השתתפות"" and "Status "Frozen"" put an English word inside a Hebrew line.
+    The line says "סטטוס ההרשמה", the label as monday has it (Frozen stays Frozen), and the legend says which column it is;
+    the file's students' sheet heads that column with the same word."""
+    part = part_of([], [coh(roster=["E1"])], [enr("E1", voucher="1", status_=status_)])
+    s = student(line(part), "E1")
+    assert s["said"] == '%s: %s "%s"' % (ch.OUT_WORD, ch.ENROLLMENT_STATUS_WORD, STATUS[status_])
+    assert "Status" not in s["said"]
+    said = {x["term"]: x["text"] for x in part["legend"]["items"]}
+    assert ch.ENROLLMENT_STATUS_WORD in said and '"Status"' in said[ch.ENROLLMENT_STATUS_WORD] and "Status" not in said
+    assert not [t for t in (said[ch.STUDENTS_WORD], said[ch.OUT_WORD]) if "Status" in t]
+    from app.desk.cohorts_export import student_columns
+    assert ch.ENROLLMENT_STATUS_WORD in [c[0] for c in student_columns(part["cohorts"])]
 
 
 def test_an_archived_enrollment_or_cohort_is_read_as_any_other_since_a_refresh_cannot_see_an_archive():
