@@ -61,6 +61,9 @@ KINDS: dict[str, tuple[str, ...]] = {
     # history D5 imports, which may hold such rows
     "bill": ("phase", "code", "fields"),
     "export": ("list",),                       # an Excel file asked for
+    # D4 (26.11): the students' file with the ID number, written in the browser - how many rows it holds (`results`, the
+    # vocabulary's row count), or why it was not made (`code`: the page's word for it). Never a number read for it
+    "export_ids": ("results", "code"),
     "legend": ("open",),
     "notes": ("open",),                        # "פרטים על הנתונים"
     "refresh": (),                             # the "רענון" button

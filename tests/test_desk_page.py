@@ -698,9 +698,12 @@ def test_every_monday_request_of_the_page_goes_through_the_one_door():
     door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
     assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
     assert page.count('"mutation ') == 2 and page.count("mondayCall(WRITE_ROW") == 1 and page.count("mondayCall(WRITE_UPDATE") == 1
-    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too
+    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too; and
+    # D4's file with the ID number, the cells read in pages of up to 100 (READ_CELLS_N, monday's limit), a query too
     assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == [
-        "READ_CELLS", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+        "READ_CELLS", "READ_CELLS_N", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    paged = re.search(r'var READ_CELLS_N = ("[^;]*);', page).group(1)
+    assert paged.startswith('"query (') and "mutation" not in paged and "items(ids: $i, limit: $n)" in paged
     citing = re.search(r'var READ_CITING = ("[^;]*);', page).group(1)
     assert citing.startswith('"query (') and "mutation" not in citing and "items_page_by_column_values(" in citing
     update = page[page.index("function mondayUpdate("):page.index("function readRows(")]

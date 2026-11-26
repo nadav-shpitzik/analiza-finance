@@ -230,7 +230,22 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   always a string (never a formula, an error or a number: "=...", "+972", "00123" stay as typed), the server's styles,
   right to left, the frozen header with its filter and the SUBTOTAL under the rows; a number or a date that is not one
   throws (`code` "file"), never an empty cell. Read back with openpyxl, its file is the server's of the same description,
-  cell for cell, format for format (`tests/test_desk_xlsx.py`). Tests: `tests/test_desk_export_ids.py`.
+  cell for cell, format for format (`tests/test_desk_xlsx.py`). The page (finance.js, its block "D4 ... with the ID
+  number"): "ייצוא לאקסל עם ת.ז" beside the students' list's "ייצוא לאקסל" only (not "לפי מחזור", not the companies),
+  disabled outside monday (`deps.monday`) and by the list's own rules; one press asks the table with the list's own filter
+  (`exportBody`, shared with `exportList`), reads the leads' numbers as the person through the one door (`readCells` with
+  monday's limit, `READ_CELLS_N`: `items(ids:)` answers 25 without one; each lead once, `ID_PAGE` 100 a request, one request
+  at a time, the board and column checked each time), fills the column by analiza-metrics' `with_id_numbers` (`idOf`: the
+  first of a row's leads, in monday's order, that holds one), and saves the file under the server's name (a Blob and an
+  `<a download>`). A row with none is counted by why (no lead, none in its leads, its leads not answered: deleted, moved,
+  or out of her sight) in the flash and right under "פרטים"'s ID line (`idLines`). Any refusal, timeout or rate limit, of
+  monday's or the server's, makes no file, never one half filled: `idsNote` under the list's head says why and offers the
+  file without the number and another try. The numbers live in the function's memory until the file is made: never sent,
+  stored, logged, drawn or put in the details' store. Usage kind `export_ids` (`results`, or `code`). **Unverified live:** a
+  download from monday's iframe (its sandbox is not documented, ui-surfaces trap 11; the list's own file opens a signed
+  link in a new tab instead) - the first press inside monday settles it. Tests: `tests/test_desk_export_ids.py`,
+  `tests/test_desk_export_ids_page.py` (node, and Playwright against this service's own app: the file's rows are the
+  screen's, every request of the page scanned for every number).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
