@@ -228,6 +228,9 @@
  *      כסף" and the status (a label the desk does not know, in its chip's words; uncountedWhy).
  * G  "חסר כאן משהו? פנייה לנדב" at the foot of the desk, which D2's 2.2 took out, is back as analiza-metrics' desk had it
  *      (da671b2): the same words, the same form on the technical board (ASK_URL), the usage word `ask`.
+ * H  "מה השתנה": four lines under the top bar - the red marks, the books' list, "רישום מחשבשבת", "לפי מחזור" - the short
+ *      way in where the legend is about 17,000 characters. Closed, it stays closed in this browser (localStorage, best
+ *      effort); from WHATS_NEW_UNTIL (four weeks after the switch) it is not shown.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -3566,6 +3569,30 @@
     var key = e && e.error;
     return "הרענון נכשל, ומוצגים הנתונים הקודמים" + (ERRORS[key] ? ": " + ERRORS[key] : key ? " (" + key + ")." : ".");
   }
+  /* QA 26.11 (H): what changed with the move, in four lines, for its first weeks - the legend is about 17,000 characters,
+     and this is the short way in. Closed, it stays closed in this browser (localStorage, best effort: where the browser
+     keeps nothing, it stays closed for the visit); from WHATS_NEW_UNTIL on it is not shown at all */
+  var WHATS_NEW_KEY = "fin-whats-new-2026-11", WHATS_NEW_UNTIL = "2026-12-24";
+  var WHATS_NEW = [
+    "סימון אדום \"חשבשבת: ...\" ליד תקבול: חשבשבת אומרת אחרת ממאנדיי. המשפט המלא כשמצביעים עליו, ובפרטים.",
+    "ב\"לטיפול\": \"" + "מסמכים בחשבשבת בלי חיוב במאנדיי" + "\", ולכל מסמך השורות ששמן כשם בכרטיס.",
+    "\"רישום מחשבשבת\": מספר החשבונית ותאריך התקבול שחשבשבת מציעה נכתבים במאנדיי בשמך, אחרי אישור.",
+    "\"לפי מחזור\" בלשונית הסטודנטים: לכל מחזור שוברים צפי, שולם ויתרה לגבייה לפי סטטוס השובר."];
+  var whatsNewShut = false;
+  function whatsNewClosed() {
+    if (whatsNewShut) { return true; }
+    try { return window.localStorage.getItem(WHATS_NEW_KEY) === "closed"; } catch (e) { return false; }
+  }
+  function closeWhatsNew() {
+    whatsNewShut = true;
+    try { window.localStorage.setItem(WHATS_NEW_KEY, "closed"); } catch (e) { /* kept for this visit only */ }
+  }
+  function whatsNewHtml() {
+    if (whatsNewClosed() || israelToday() >= WHATS_NEW_UNTIL) { return ""; }
+    return "<section class=\"fin-new\" aria-label=\"מה השתנה\"><div class=\"fin-new-head\"><strong>מה השתנה</strong>" +
+      "<button type=\"button\" class=\"fin-linkbtn\" data-whats-new=\"close\">סגירה</button></div><ul>" +
+      WHATS_NEW.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul></section>";
+  }
   function paint() {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1><span class=\"fin-asof\">נכון ל-" + esc(asOf()) +
       (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>"
@@ -3573,7 +3600,7 @@
       "<span class=\"fin-spacer\"></span><span class=\"fin-searchbox\">" + SEARCH_ICON +
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
-      overviewHtml() + "<div class=\"fin-foot\">" + healthHtml() +
+      whatsNewHtml() + overviewHtml() + "<div class=\"fin-foot\">" + healthHtml() +
       "<a class=\"fin-ask\" data-ask=\"1\" href=\"" + ASK_URL + "\" target=\"_blank\" rel=\"noopener\">חסר כאן משהו? פנייה לנדב</a></div></div>";
   }
   function message(text) {
@@ -3816,7 +3843,7 @@
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
       "[data-books-fill],[data-books-all]," +
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
-      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask]");
+      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask],[data-whats-new]");
     if (!el || !root.contains(el)) { return; }
     /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "כתיבה", its close */
     if (el.dataset.pick || el.dataset.pickAll || el.dataset.pickClear) {
@@ -3879,6 +3906,8 @@
     if (el.dataset.vatRetry) { delete VATS[el.dataset.vatRetry]; redraw(); return; }
     /* "חסר כאן משהו? פנייה לנדב": the link opens the request form as it did; this only counts it (QA 26.11, G) */
     if (el.dataset.ask) { use("ask"); flushUse(false); return; }
+    /* "מה השתנה" closed (QA 26.11, H): for good, in this browser */
+    if (el.dataset.whatsNew) { closeWhatsNew(); redraw(); return; }
     /* a company's billing details (D2, ADR-0188): their edit, written as the person */
     if (el.dataset.billEdit) { startBill(el.dataset.billEdit); return; }
     if (el.dataset.billGo) { billGo(); return; }

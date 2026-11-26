@@ -241,6 +241,11 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-panel.fin-empty { margin-top: 16px; }
 #screen-finance .fin-listnote { margin: 0; padding: 8px 16px 10px; border-top: 1px solid var(--fin-line); color: var(--fin-muted); font-size: 12px; }
 
+/* QA 26.11 (H): "מה השתנה" - four quiet lines under the top bar, for the first weeks, closed for good with one press */
+#screen-finance .fin-new { margin: 0 0 14px; padding: 8px 14px 10px; border: 1px solid var(--fin-line); border-radius: 10px;
+  background: var(--fin-sel); font-size: 13px; }
+#screen-finance .fin-new-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+#screen-finance .fin-new ul { margin: 4px 0 0; padding-inline-start: 18px; }
 /* the footer: whether everything was read, and the way to ask - one quiet line under a hairline (the link left in D2, 2.2,
    and came back with the QA of 26.11, G, as analiza-metrics' desk had it) */
 #screen-finance .fin-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 24px;

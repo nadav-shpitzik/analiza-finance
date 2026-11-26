@@ -416,6 +416,7 @@ const [base, sdk, sizes] = process.argv.slice(1);
   await page.route("**/desk/vendor/monday-sdk.js*", (r) => r.fulfill({ contentType: "application/javascript", body: sdk }));
   const text = (sel) => page.$eval(sel, (el) => el.innerText);
   const at = size.join("x");
+  /*WHATS_NEW*/
   /*SETUP*/
   await page.goto(base + "/desk/");
   await page.waitForSelector("#screen-finance:not([hidden]) .fin-tabs", { timeout: 15000 });
@@ -429,10 +430,18 @@ QA_CODA = r"""
 """
 
 
-def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),), setup: str = "", scrollbars: bool = False) -> dict:
+# QA 26.11 (H): "מה השתנה" shows on a first visit for a few weeks; a test of anything else opens the desk as one who closed it
+WHATS_NEW_CLOSED = r"""
+  await page.addInitScript(() => { try { window.localStorage.setItem("fin-whats-new-2026-11", "closed"); } catch (e) { /* none */ } });
+"""
+
+
+def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),), setup: str = "", scrollbars: bool = False,
+             whats_new: bool = False) -> dict:
     """`setup` runs before the page opens (a route that holds a request, a clock). `scrollbars`: the page's scrollbars take
-    their room, as in Chava's browser - Playwright's headless Chromium hides them by default (`--hide-scrollbars`)."""
-    prelude = QA_PRELUDE.replace("/*SETUP*/", setup)
+    their room, as in Chava's browser - Playwright's headless Chromium hides them by default (`--hide-scrollbars`).
+    `whats_new`: the page as a first visit shows it, "מה השתנה" open; otherwise as one who closed it."""
+    prelude = QA_PRELUDE.replace("/*SETUP*/", setup).replace("/*WHATS_NEW*/", "" if whats_new else WHATS_NEW_CLOSED)
     if scrollbars:
         prelude = prelude.replace("chromium.launch()", 'chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"] })')
     run = subprocess.run([NODE, "-e", prelude + script + QA_CODA, base, sdk, json.dumps([list(s) for s in sizes])],
@@ -549,6 +558,27 @@ def test_the_page_takes_the_desks_answers_gzipped_and_draws_them(serve):
     assert got["errors"] == []
     steps = got["steps"]
     assert steps["rows"] == 21 and ["/api/desk", "gzip"] in steps["answers"], steps
+
+
+def test_what_changed_shows_on_a_first_visit_and_once_closed_not_again_in_this_browser(serve):
+    """QA 26.11 (H): "מה השתנה" on a first visit, four lines under the top bar; "סגירה" closes it, and the page loaded again
+    in the same browser opens without it (localStorage)."""
+    base, _log = serve()
+    got = qa_visit(r"""
+  const seen = () => page.evaluate(() => { const b = document.querySelector(".fin-new");
+    return b ? { lines: b.querySelectorAll("li").length, above: b.getBoundingClientRect().bottom <=
+      document.querySelector(".fin-tabbar").getBoundingClientRect().top } : null; });
+  out.steps.first = await seen();
+  await page.click('[data-whats-new="close"]');
+  await page.waitForSelector(".fin-new", { state: "detached" });
+  out.steps.closed = await seen();
+  await page.reload();
+  await page.waitForSelector("#screen-finance:not([hidden]) .fin-tabs", { timeout: 15000 });
+  out.steps.again = await seen();
+""", base, fake_sdk({}), whats_new=True)
+    assert got["errors"] == []
+    steps = got["steps"]
+    assert steps["first"] == {"lines": 4, "above": True} and steps["closed"] is None and steps["again"] is None
 
 
 def test_the_desk_holds_its_place_sideways_when_the_page_gets_shorter_and_its_scrollbar_goes(serve):

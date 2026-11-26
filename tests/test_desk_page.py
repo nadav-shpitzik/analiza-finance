@@ -65,6 +65,11 @@ let scrolled = null;                                /* where a step scrolled the
 global.window = { scrollY: 0, scrollTo(x, y) { this.scrollY = y; scrolled = y; }, open() {}, location: { href: "https://desk.test/desk/" },
   addEventListener(t, f) { (listeners["window:" + t] = listeners["window:" + t] || []).push(f); },
   crypto: require("crypto").webcrypto };
+/* the browser's storage (QA 26.11, H): what it holds to start with, or one that refuses every use */
+const stored = Object.assign({}, input.stored || {});
+window.localStorage = input.storage === "refuses"
+  ? { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); } }
+  : { getItem: (k) => (Object.prototype.hasOwnProperty.call(stored, k) ? stored[k] : null), setItem: (k, v) => { stored[k] = String(v); } };
 let html = "", paints = 0;                          /* every drawing of the page, counted */
 const root = { get innerHTML() { return html; }, set innerHTML(v) { html = v; paints += 1; },
   addEventListener(t, f) { handlers[t] = f; }, contains() { return true; },
@@ -147,7 +152,8 @@ const deps = { api: (p) => answer("GET " + p),
     }
     posts.push([p, body === undefined ? null : body]); return answer("POST " + p);
   },
-  monday: monday, board: input.board === undefined ? "5093448677" : input.board, later: (fn) => fn(), today: () => "2026-11-24",
+  monday: monday, board: input.board === undefined ? "5093448677" : input.board, later: (fn) => fn(),
+  today: () => input.today || "2026-11-24",
   useFlushMs: input.useFlushMs, useSearchMs: input.useSearchMs, mondayWaitMs: input.mondayWaitMs };
 let clicked = null;
 function click(ds, cls) {
@@ -221,7 +227,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
   }
   /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
   fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
-    usage: usage, toasts: toasts, copied: copied, executed: executed, updates: updates }));
+    usage: usage, toasts: toasts, copied: copied, executed: executed, updates: updates, stored: stored }));
   process.exit(0);
 })();
 """
@@ -788,6 +794,40 @@ def test_an_amount_not_counted_is_struck_through_and_says_why_when_pointed_at(st
     cell = re.search(r'<tr class="fin-rowbtn[^"]*" data-row="3101".*?</tr>', html, flags=re.S).group(0)
     assert '<s class="fin-subtle" title="%s"><bdi>2,500.00 ₪</bdi></s>' % why in cell
     assert "לא נספר" not in re.search(r'<tr class="fin-rowbtn[^"]*" data-row="3102".*?</tr>', html, flags=re.S).group(0)
+
+
+WHATS_NEW_KEY = "fin-whats-new-2026-11"
+
+
+def whats_new(html: str) -> list:
+    """The lines of "מה השתנה" in a drawing of the page, [] when it is not drawn."""
+    box = re.search(r'<section class="fin-new" aria-label="מה השתנה">(.*?)</section>', html, flags=re.S)
+    return re.findall(r"<li>(.*?)</li>", box.group(1)) if box else []
+
+
+def test_what_changed_shows_four_lines_under_the_top_bar_until_closed_and_stays_closed_in_this_browser():
+    """QA 26.11 (H): the legend is about 17,000 characters; for the first weeks, four lines under the top bar say what changed
+    with the move - the red marks, the books' list, "רישום מחשבשבת", "לפי מחזור" - in the legend's words. "סגירה" closes it
+    for good in this browser (its storage), and a visit after that opens without it."""
+    import html as h
+    got = drive(answer(), [{"click": [{"whatsNew": "close"}]}, {"show": {"tab": "b2b"}}])
+    lines = [h.unescape(x) for x in whats_new(got["first"])]
+    assert len(lines) == 4 and got["first"].index('class="fin-new"') < got["first"].index('class="fin-tabbar"')
+    assert lines[0].startswith('סימון אדום "חשבשבת: ..."') and "מסמכים בחשבשבת בלי חיוב במאנדיי" in lines[1]
+    assert lines[2].startswith('"רישום מחשבשבת"') and lines[3].startswith('"לפי מחזור"')
+    assert 'data-whats-new="close">סגירה</button>' in got["first"]
+    assert [whats_new(s["html"]) for s in got["steps"]] == [[], []] and got["stored"] == {WHATS_NEW_KEY: "closed"}
+    again = drive(answer(), [], stored={WHATS_NEW_KEY: "closed"})
+    assert whats_new(again["first"]) == []
+
+
+def test_what_changed_closes_for_the_visit_where_the_browser_keeps_nothing_and_ends_after_its_weeks():
+    """Best effort: a browser that refuses its storage (a private window, blocked site data) shows the box until it is
+    closed, and keeps it closed for the visit; from 24.12.2026, four weeks after the switch, it is not shown at all."""
+    got = drive(answer(), [{"click": [{"whatsNew": "close"}]}, {"show": {"tab": "b2c"}}], storage="refuses")
+    assert len(whats_new(got["first"])) == 4 and [whats_new(s["html"]) for s in got["steps"]] == [[], []]
+    assert whats_new(drive(answer(), [], today="2026-12-23")["first"]) != []
+    assert whats_new(drive(answer(), [], today="2026-12-24")["first"]) == []
 
 
 def test_the_page_has_no_retired_term_and_keeps_the_house_style():
