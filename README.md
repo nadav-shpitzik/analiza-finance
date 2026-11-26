@@ -226,7 +226,32 @@ curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/probe -H "Au
    שלם. זו הבדיקה היחידה שלא תלויה במגבלה שהספק מפעיל בעצמו: ה-`limit` של הקובץ לא נשלח. **השערה, שהריצה הראשונה תכריע.**
 4. תשובה ריקה ("data not found") היא חודש ריק, אלא אם המסד מחזיק לחודש הזה שורות: אז היא `emptied`, ולא מוחקת דבר.
 
-עוד אין route שמריץ את זה.
+**הריצה** היא `POST /api/books/ledger/run`, מאחורי `BOOKS_SYNC_KEY` (המפתח נבדק לפני שהגוף נקרא), עם הגוף
+`{"months": ["2026-09", "2026-10"]}` (1 עד 12 חודשים), או בלי גוף: החודש הקודם והנוכחי, לפי שעון ישראל. גוף עם מפתח אחר (למשל
+`company`) נדחה. התשובה תמיד 200, בקופסה של הסבב: `ok`, ‏`skipped`, ‏`reasons` מרשימה סגורה (`RUN_REASONS`), ולכל חודש `rows`,
+‏`sort_codes`, ‏`kept_lines`, ‏`single_account`, ‏`single_sides`, ‏`masked_keys`, ‏`batch_9998_rows`, ‏`cut`, ‏`parts`, ‏`stored` ולמה לא.
+ספירות בלבד, אף סכום. מייק יקרא לה כל לילה (עוד לא מחובר).
+
+**הסכומים** נקראים ב-`GET /api/books/ledger/totals?from=2026-09&to=2026-10` (`to` לא חובה, עד 60 חודשים), מאחורי אותו מפתח: השורות
+שנשמרו, כל אחת עם שם הקוד, חובה, זכות, שורות, חשבונות ו-`masked_keys`, ולכל חודש הספירות ומנה 9998. סכום נשלח כטקסט מדויק
+(`"4145.66"`), וצד שנשמר ריק הוא `null`.
+
+**`/health`** אומר ב-`books.ledger` רק מתי הייתה הריצה האחרונה, אם הייתה `ok` ולמה לא, ואילו חודשים מוחזקים. אף סכום ואף ספירה.
+
+**הפריסה היא שינוי סכימה** (הסדר ב-`CLAUDE.md`):
+1. נחיתה ב-`main`.
+2. ב-Shell של ה-Repl: `bash scripts/sync-from-github.sh && pip install -q -r requirements.txt && python3 -m app.migrate`. צפוי
+   `Now at: <sha7 של main>`, אחר כך `database: helium/...` (הפיתוח), ובסוף שורת `ok:`.
+3. ‏Republish בממשק, וקוראים את ה-SQL שהוא מראה: רק `CREATE`. כל `DROP` הוא Cancel.
+4. ‏`/health`: ‏`build.sha` הוא של `main`, חמש הטבלאות `ledger_*` הן `"present"` ב-`store.tables`, ו-`store.missing_columns` הוא `[]`.
+5. ריצה ראשונה, מה-Shell:
+
+```bash
+curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/run -H "Authorization: Bearer $BOOKS_SYNC_KEY" -H "Content-Type: application/json" -d '{"months": ["2026-10"]}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=1))'
+```
+
+איך קוראים אותה: `stored: true` ו-`ok: true` אומרים שאוקטובר נשמר. ‏`unbalanced` אומר שהחובה והזכות לא שוות: ההשערה של סעיף 3 נפלה,
+ולא נשמר דבר. ‏`cut` אומר שגם הפיצול לא הוריד חלק מתחת למגבלה.
 
 ## הקריאה של ההצלבה מ-monday (R0)
 
@@ -383,8 +408,8 @@ ADR-0088: מסמך על כמה שורות, או שורה על כמה מסמכי�
 1. רשימת webhooks שאינה ריקה (אפס רשומים בשתי החברות): הסיכום מדווח את שמות השדות שמצא.
 2. האם מחרוזת התחברות חדשה מבטלת את הקודמת (האפיון §10): `session_test` ב-live-check, ו-`/check` מהפריסה.
 3. גוף ה-POST: נשלח JSON, כמו בתיעוד וב-OpenAPI. הלקוח הרשמי הישן של הספק (npm, ‏2020) שולח form.
-4. דוח הכרטסת (B3): התשובה של `exportData` לא נראתה מעולם, וגם לא הצורה של פרמטר תאריך (`'2026-10-01'` היא השערה). ‏`describe`
-   אומר מה נמצא.
+4. דוח הכרטסת (B3): התשובה של `exportData` נראתה ב-26.11 (השורות ב-`status.repdata`, לפי כותרת הטור), וגם צורת פרמטר התאריך אומתה.
+   עוד לא נראו: חתך קוד מיון צר מכל הטווח (הפיצול שולח אותו), חודש שמגיע למגבלה, והאיזון של חודש שלם (סעיף 3 של "הסכומים").
 
 ## הרצה ובדיקות
 

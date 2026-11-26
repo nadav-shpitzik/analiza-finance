@@ -561,6 +561,181 @@ def test_a_crash_finishes_the_runs_row_and_says_its_class(pg, monkeypatch):
     assert sql(pg, "SELECT ok, reasons, note FROM ledger_runs") == [(False, ["crashed"], "the run stopped on ValueError")]
 
 
+# ---- the routes --------------------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def app(monkeypatch, clock):
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    books = Books()
+    monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
+    monkeypatch.setenv("BOOKS_SYNC_KEY", SYNC_KEY)
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    monkeypatch.setenv("WIZ_LEDGER_REPORT", SECRET)
+    monkeypatch.delenv("WIZ_COMPANY", raising=False)
+    monkeypatch.delenv("WIZ_SERVER", raising=False)
+    main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
+    main.app.state.transport = httpx.MockTransport(books.handler)
+    main.app.state.clock = clock
+    main.app.state.client = None
+    main.app.state.store_factory = lambda cfg: FakeStore()
+    clock.t = 1_794_000_000.0  # 2026-11-06 in Israel: the last two months are October and November
+    yield TestClient(main.app), books
+    main.app.state.transport = None
+    main.app.state.clock = __import__("time").time
+    main.app.state.client = None
+    main.app.state.store_factory = None
+    main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
+
+
+AUTH = {"Authorization": f"Bearer {SYNC_KEY}"}
+RUN = "/api/books/ledger/run"
+TOTALS = "/api/books/ledger/totals"
+
+
+@needs_pg
+def test_both_routes_need_the_sync_key_before_anything(app, pg):
+    client, books = app
+    for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": SYNC_KEY}):
+        assert client.post(RUN, json={"months": ["2026-10"]}, headers=headers).status_code == 401
+        assert client.post(RUN, content=b"{not json", headers=headers).status_code == 401
+        assert client.get(TOTALS + "?from=2026-10", headers=headers).status_code == 401
+    assert books.requests == [] and sql(pg, "SELECT count(*) FROM ledger_runs")[0][0] == 0
+
+
+@needs_pg
+def test_the_run_route_runs_the_last_two_months_in_israel_time_and_says_counts_only(app, pg, caplog):
+    client, books = app
+    caplog.set_level(logging.DEBUG)
+    r = client.post(RUN, headers=AUTH)
+    body = r.json()
+    assert r.status_code == 200 and body["ok"] is True and body["company"] == "demo"
+    assert list(body["months"]) == ["2026-10", "2026-11"] and body["months"]["2026-11"]["rows"] == 0
+    assert body["months"]["2026-10"] == {"stored": True, "reason": None, "cut": False, "parts": 1, **OCTOBER_COUNTS}
+    assert lines(pg) == OCTOBER_LINES
+    body = client.post(RUN, json={"months": ["2026-10", "2026-09"]}, headers=AUTH).json()
+    assert list(body["months"]) == ["2026-09", "2026-10"]
+    assert scan(r.text, EVERYTHING) == [] and scan(caplog.text, EVERYTHING) == [] and KEY not in caplog.text
+
+
+@pytest.mark.parametrize("now,months", [
+    ("2026-10-31T22:30:00+00:00", ["2026-10", "2026-11"]),  # already November in Israel
+    ("2026-10-31T21:30:00+00:00", ["2026-09", "2026-10"]),
+    ("2027-01-01T00:00:00+02:00", ["2026-12", "2027-01"]),
+    ("2026-03-31T22:30:00+00:00", ["2026-03", "2026-04"]),  # summer time: UTC+3
+])
+def test_the_default_months_are_israels(now, months):
+    from datetime import datetime
+
+    from app.main import default_months
+
+    assert default_months(datetime.fromisoformat(now).timestamp()) == months
+
+
+@needs_pg
+@pytest.mark.parametrize("content", [
+    b"{not json", b"\xff\xfe", b"[]", b'"2026-10"', b'{"months": []}', b'{"months": "2026-10"}', b'{"months": ["2026-13"]}',
+    b'{"months": ["2026-10", "2026-10"]}', b'{"months": [202610]}', b'{"months": ["2026-10"], "company": "analiza"}',
+    b'{"company": "demo"}', json.dumps({"months": [f"2026-{m:02d}" for m in range(1, 13)] + ["2025-12"]}).encode(),
+])
+def test_a_body_that_is_not_one_is_bad_request_never_echoed_and_never_run(app, pg, content):
+    client, books = app
+    r = client.post(RUN, content=content, headers={**AUTH, "Content-Type": "application/json"})
+    body = r.json()
+    assert r.status_code == 200 and (body["ok"], body["reasons"], body["months"]) == (False, ["bad_request"], {})
+    assert "202610" not in r.text and "analiza" not in r.text and "2026-13" not in r.text
+    assert books.requests == [] and sql(pg, "SELECT count(*) FROM ledger_runs")[0][0] == 0
+
+
+@needs_pg
+def test_twelve_months_are_one_run(app, pg):
+    client, books = app
+    months = [f"2026-{m:02d}" for m in range(1, 13)]
+    body = client.post(RUN, json={"months": months}, headers=AUTH).json()
+    assert body["ok"] and list(body["months"]) == months and len(books.calls) == 12
+
+
+@needs_pg
+def test_a_crash_in_the_route_is_a_200_with_its_class_only(app, pg, monkeypatch):
+    client, _ = app
+
+    def boom(*args, **kwargs):
+        raise ValueError("ישראל ישראלי 48213.77")
+
+    monkeypatch.setattr(ledger_totals, "read_month", boom)
+    r = client.post(RUN, json={"months": ["2026-10"]}, headers=AUTH)
+    assert r.status_code == 200 and (r.json()["reasons"], r.json()["error"]) == (["crashed"], "ValueError")
+    assert "48213" not in r.text and "ישראל" not in r.text
+
+
+@needs_pg
+def test_the_totals_route_says_the_kept_lines_and_never_a_row(app, pg, caplog):
+    client, _ = app
+    caplog.set_level(logging.DEBUG)
+    client.post(RUN, json={"months": ["2026-09", "2026-10"]}, headers=AUTH)
+    r = client.get(TOTALS + "?from=2026-09&to=2026-10", headers=AUTH)
+    body = r.json()
+    assert body["ok"] is True and (body["from"], body["to"]) == ("2026-09", "2026-10")
+    got = {(x["month"], x["sort_code"]): (x["debit"], x["credit"], x["rows"], x["accounts"], x["masked_keys"], x["name"])
+           for x in body["lines"]}
+    want = {(m, code): (None if d is None else format(d, "f"), None if c is None else format(c, "f"), rows, accounts, masked,
+                        NAMES[code])
+            for m, held in (("2026-09", SEPTEMBER_LINES), ("2026-10", OCTOBER_LINES))
+            for code, (d, c, rows, accounts, masked) in held.items()}
+    assert got == want and [x["month"] for x in body["lines"]] == sorted(x["month"] for x in body["lines"])
+    october = body["months"]["2026-10"]
+    assert (october["batch_9998_rows"], october["batch_9998_debit"], october["batch_9998_credit"]) == (3, "4145.66", "4145.66")
+    assert (october["single_account"], october["single_sides"], october["kept_lines"]) == (3, 3, 5)
+    assert scan(r.text, PRIVATE - SAID) == [] and scan(caplog.text, EVERYTHING) == []
+    assert client.get(TOTALS + "?from=2026-10", headers=AUTH).json()["months"].keys() == {"2026-10"}
+    assert client.get(TOTALS + "?from=2025-01&to=2025-03", headers=AUTH).json()["lines"] == []
+
+
+@needs_pg
+@pytest.mark.parametrize("query", ["", "?from=2026-13", "?from=2026-10&to=2026-09", "?to=2026-10", "?from=2020-01&to=2026-10",
+                                   "?from=x"])
+def test_a_totals_query_that_is_not_one_is_bad_request(app, pg, query):
+    client, _ = app
+    body = client.get(TOTALS + query, headers=AUTH).json()
+    assert (body["ok"], body["error"]) == (False, "bad_request")
+
+
+@needs_pg
+def test_health_says_the_last_run_and_the_months_held_never_a_total(app, pg):
+    from app import main
+
+    client, books = app
+    h = client.get("/health").json()
+    assert h["books"]["ledger"] == {"last_run": None, "months": []}
+    assert {t: h["store"]["tables"][t] for t in LEDGER_TABLES} == dict.fromkeys(LEDGER_TABLES, "present")
+    books.rows = [r for r in ROWS if not (r["מספר תנועה"] == 88405 and r["מפתח חשבון"] == "70010")]  # October unbalanced
+    client.post(RUN, json={"months": ["2026-09", "2026-10"]}, headers=AUTH)
+    main._store_cache.update(at=0.0, key=None, value=None)
+    r = client.get("/health")
+    ledger_block = r.json()["books"]["ledger"]
+    assert ledger_block["months"] == ["2026-09"] and ledger_block["last_run"]["ok"] is False
+    assert ledger_block["last_run"]["reasons"] == ["unbalanced"] and ledger_block["last_run"]["finished_at"]
+    assert scan(r.text, PRIVATE) == [] and "1313.68" not in r.text and "4145.66" not in r.text
+
+
+@needs_pg
+def test_health_without_the_ledgers_tables_says_none_and_lists_them_absent(app, pg):
+    from app import main
+
+    client, _ = app
+    sql(pg, "DROP TABLE " + ", ".join(LEDGER_TABLES))
+    main._store_cache.update(at=0.0, key=None, value=None)
+    h = client.get("/health").json()
+    assert h["books"]["ledger"] is None
+    assert {t: h["store"]["tables"][t] for t in LEDGER_TABLES} == dict.fromkeys(LEDGER_TABLES, "absent")
+    assert set(LEDGER_TABLES) <= set(h["store"]["missing_columns"])
+
+
 # ---- the migration -----------------------------------------------------------------------------------------------------
 
 

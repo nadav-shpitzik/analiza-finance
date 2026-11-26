@@ -90,9 +90,12 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   and only a month read whole: a part at the report's `limit` is split by sort code at the median of the codes it carried
   (at most `MAX_PARTS` calls, else `cut`); every row readable and inside its cut (`unreadable`, `outside`, `columns`); the
   month balanced (`unbalanced`, the guard that does not depend on the vendor's own cap, since `limit` is not sent; a
-  hypothesis the first run settles); an empty answer for a month held with rows is `emptied`, never trusted.
-  `tests/test_ledger_totals.py` scans every table for every form of the fixture's ID keys, and every answer and log for
-  every fixture value. No route reaches it yet.
+  hypothesis the first run settles); an empty answer for a month held with rows is `emptied`, never trusted. Routes behind
+  the sync key: `POST /api/books/ledger/run` (`{"months": [...]}`, 1 to 12, default the previous and the current month in
+  Israel time; boxed like a tick, always 200, counts and closed `reasons` only) and `GET /api/books/ledger/totals?from=&to=`
+  (the kept lines, money as text). `/health` `books.ledger`: the last run's times, ok and reasons, and the months held, never
+  a total. `tests/test_ledger_totals.py` scans every table for every form of the fixture's ID keys, and every answer and log
+  for every fixture value. Deploy it as a schema change (below); Make's nightly call is not wired yet.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
   `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
   bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the
