@@ -13,11 +13,11 @@ shared pool for their chunks; here the chains are staged together, so the cap ho
 3. the enrollments and the leads of the payments, and the deals of the company charges;
 4. the cohorts of the enrollments and of the deciding leads, and the accounts of the company charges and of the deals'
    payers;
-5. (D4, backlog 0313: the students by cohort) the enrollments of those cohorts that have a price and are not cancelled,
-   through each cohort's link to its enrollments (`roster_ids`), those step 3 did not read - none when no cohort has one.
-   They join the enrollments: one list of the board's rows, asked and counted as one (`asked["enrollments"]` holds both),
-   so a refresh lays them over the held reading like any other; a refresh reads the cohorts with a price again every
-   time, and the enrollments newly linked to them by id.
+5. (D4, backlog 0313: the students by cohort) the enrollments of the cohorts on the voucher track that have a price and
+   are not cancelled, through each cohort's link to its enrollments (`roster_ids`), those step 3 did not read - none when
+   no such cohort has one. They join the enrollments: one list of the board's rows, asked and counted as one
+   (`asked["enrollments"]` holds both), so a refresh lays them over the held reading like any other; a refresh reads those
+   cohorts again every time, and the enrollments newly linked to them by id.
 
 WHAT IS COUNTED (analiza-metrics' truth rules, and R0's):
 - a charge board is whole when its items_count, the rows read and the distinct ids agree, and every row is one of the
@@ -254,13 +254,23 @@ def keep_only(rows: list, ids: list) -> list:
 # that has a price, through the cohort's own link to them (CO["roster"]); which of them study in the cohort is decided by
 # each enrollment's own cohort link, the side that owns it (app/desk/cohorts.py).
 COHORT_CANCELLED = "2"  # Cohorts' Status "בוטל" (color_mkzh250v, by index; verified live 2026-08-09)
+# Cohorts' Registration Flow (color_mm31k62f) "שוברים משרד העבודה", by index (verified live 2026-08-09 and 2026-11-26: 0 נוהל
+# מלגות · 1 חיימש · 2 לשכת התעסוקה · 3 שוברים משרד העבודה): Chava's parts are voucher statuses, which mean something on this
+# track only, so the students by cohort are its cohorts'
+VOUCHER_TRACK = "3"
+
+
+def on_track(row: dict) -> bool:
+    """A cohort on the voucher track, by its Registration Flow's index."""
+    return str(row.get(CO["flow"] + "#") or "") == VOUCHER_TRACK
 
 
 def roster_cohort(row: dict) -> bool:
-    """A cohort whose enrollments the reading reads: its "מחיר" holds text, and its Status is not "בוטל" (a cancelled
-    cohort's students owe it nothing, app/desk/cohorts.py). Whether it is archived is not asked: a refresh cannot see an
-    item archived (its time does not move), and the desk reads a linked item the same, archived or not."""
-    return bool(str(row.get(CO["price"]) or "").strip()) and str(row.get(CO["status"] + "#") or "") != COHORT_CANCELLED
+    """A cohort whose enrollments the reading reads: on the voucher track, its "מחיר" holds text, and its Status is not
+    "בוטל" (a cancelled cohort's students owe it nothing, app/desk/cohorts.py). Whether it is archived is not asked: a
+    refresh cannot see an item archived (its time does not move), and the desk reads a linked item the same either way."""
+    return (on_track(row) and bool(str(row.get(CO["price"]) or "").strip())
+            and str(row.get(CO["status"] + "#") or "") != COHORT_CANCELLED)
 
 
 def roster_ids(cohorts: list) -> list:

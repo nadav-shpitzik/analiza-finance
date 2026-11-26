@@ -37,6 +37,8 @@ D = Decimal
 STATUS = {"0": "Registered", "1": "נרשם", "2": "פעיל", "3": "At Risk", "4": "סיים", "5": "עבר לקורס אחר",
           "6": "ביטל השתתפות", "7": "Frozen", "8": "ביקשה החזר"}
 COHORT_STATUS = {"2": "בוטל", "3": "פעיל", "6": "סגור", "7": "בסגירה"}
+FLOWS = {"0": "נוהל מלגות", "1": "חיימש", "2": "לשכת התעסוקה", "3": "שוברים משרד העבודה"}   # Registration Flow, by index
+VOUCHER_FLOW = status(FLOWS["3"], 3)                    # a World cohort on the voucher track
 
 
 def _st(row: dict, col: str, idx: str, labels: dict) -> None:
@@ -54,12 +56,13 @@ def enr(id_, cohort="C1", voucher="", status_="1", person=None, name=None, cohor
     return r
 
 
-def coh(id_="C1", code="A700", price="10,000", roster=(), status_="3", start="2026-08-01") -> dict:
-    """A Cohorts row: its price as typed, its link to its enrollments, its Status by index."""
-    r = {"id": str(id_), "name": "%s | קורס | 01.08.26" % code, rd.CO["code"]: code, rd.CO["flow"]: "שוברים משרד העבודה",
-         rd.CO["dates"]: "%s - 2026-12-01" % start, rd.CO["external"]: "קורס", rd.CO["price"]: price,
-         rd.CO["roster"]: [str(x) for x in roster]}
+def coh(id_="C1", code="A700", price="10,000", roster=(), status_="3", start="2026-08-01", flow_="3") -> dict:
+    """A Cohorts row: its price as typed, its link to its enrollments, its Status and its Registration Flow by index (on
+    the voucher track unless said)."""
+    r = {"id": str(id_), "name": "%s | קורס | 01.08.26" % code, rd.CO["dates"]: "%s - 2026-12-01" % start,
+         rd.CO["code"]: code, rd.CO["external"]: "קורס", rd.CO["price"]: price, rd.CO["roster"]: [str(x) for x in roster]}
     _st(r, rd.CO["status"], status_, COHORT_STATUS)
+    _st(r, rd.CO["flow"], flow_, FLOWS)
     return r
 
 
@@ -177,6 +180,22 @@ def test_an_archived_enrollment_or_cohort_is_read_as_any_other_since_a_refresh_c
     assert student(ln, "E1")["standing"] == "counted" and ln["students"] == 2
     part = part_of([], [dict(coh(roster=["E2"]), state="archived")], [enr("E2", voucher="1")])
     assert [x["id"] for x in part["cohorts"]] == ["C1"] and rd.roster_cohort(dict(coh(), state="archived"))
+
+
+def test_a_priced_cohort_on_another_track_is_not_shown_and_counted_nowhere():
+    # priced, with students and payments, on חיימש or on no track - nowhere, not even without money; the legend says so
+    part = part_of([sc(1, paid="4000", enr=["E1"])], [coh(flow_="1", roster=["E1"]), coh("C2", "A702", flow_="", roster=[])],
+                   [enr("E1", voucher="1")])
+    assert part["cohorts"] == [] and part["unpriced"] == [] and part["totals"]["count"] == 0
+    assert part["totals"]["expected"] == 0 and ch.TRACK_SAID in part["about"]
+    assert any(ch.TRACK_SAID in x["text"] for x in part["legend"]["items"])          # the legend says so, in one sentence
+    # and the reading never reads its students
+    assert rd.VOUCHER_TRACK == "3" and not rd.roster_cohort(coh(flow_="1")) and rd.roster_cohort(coh())
+    w = cohort_world()
+    w.set(401, flow=status(FLOWS["1"], 1), touch=False)
+    r = rd.read_desk(reader_of(w))
+    assert not {"203", "204"} & set(r["asked"]["enrollments"])
+    assert "A401" not in {x["code"] for x in fd.build_view(r, TODAY)["b2c"]["cohorts"]["cohorts"]}
 
 
 def test_the_enrollment_statuses_in_the_count_are_the_helpers_in_set():
@@ -459,9 +478,11 @@ def cohort_world() -> World:
     w.add(rd.LEADS_BOARD, 301, "ליד-אלף", cohort=rel(), rep="")
     w.add(rd.LEADS_BOARD, 302, "ליד-בית", cohort=rel(), rep="")
     w.add(rd.COHORTS_BOARD, 401, "מחזור-מחיר", code="A401", price="10,000", roster=rel(201, 203, 204),
-          status=status("פעיל", 3))
-    w.add(rd.COHORTS_BOARD, 402, "מחזור-בלי", code="A402", price="", roster=rel(202, 205), status=status("פעיל", 3))
-    w.add(rd.COHORTS_BOARD, 403, "מחזור-בוטל", code="A403", price="12,000", roster=rel(206), status=status("בוטל", 2))
+          status=status("פעיל", 3), flow=VOUCHER_FLOW)
+    w.add(rd.COHORTS_BOARD, 402, "מחזור-בלי", code="A402", price="", roster=rel(202, 205), status=status("פעיל", 3),
+          flow=VOUCHER_FLOW)
+    w.add(rd.COHORTS_BOARD, 403, "מחזור-בוטל", code="A403", price="12,000", roster=rel(206), status=status("בוטל", 2),
+          flow=VOUCHER_FLOW)
     return w
 
 
@@ -574,7 +595,7 @@ def roster_world(rng: random.Random) -> World:
     w = World()
     for c in range(1, 5):
         w.add(rd.COHORTS_BOARD, 400 + c, "מחזור-%d" % c, code="A40%d" % c, price=["10,000", "", "12000", ""][c - 1],
-              status=status("פעיל", 3), roster=rel())
+              status=status("פעיל", 3), roster=rel(), flow=VOUCHER_FLOW)
     for e in range(1, 13):
         c = 400 + rng.randint(1, 4)
         v = rng.choice(sorted(k for k in fd.VOUCHER if k))

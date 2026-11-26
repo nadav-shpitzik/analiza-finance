@@ -2,6 +2,10 @@
 built before the switch on Nadav's go. In each cohort with a price: what its students should pay, what came in, and what
 is still to come, each student's balance in one of Chava's parts by the voucher status of their enrollment.
 
+WHICH COHORTS: those on the voucher track only - Registration Flow (`color_mm31k62f`) "שוברים משרד העבודה", by index
+(app/desk/reading.py VOUCHER_TRACK). Chava's parts are voucher statuses, which mean something there only; a cohort on another
+track is not shown and is counted nowhere, priced or not.
+
 WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-payment and the boards, read 26.11):
 1. THE PRICE: the cohort's "מחיר" (`text_mm5fhydb`), a TEXT column typed "10,000" or "12000": one clean number (`price_of`),
    or the cohort is listed without money and says why (UNPRICED_WHY): no price, a price that is not one number, a price of
@@ -54,7 +58,7 @@ from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from typing import Any, Optional
 
-from .reading import CO, COHORT_CANCELLED, EN, SC, _uniq
+from .reading import CO, COHORT_CANCELLED, EN, SC, _uniq, on_track
 from .view import UNNAMED_LABEL, VOUCHER, ZERO, _cohort_meta, _dsum, _q, label_of
 
 # The enrollment's Status (color_mm0sxcvn) that is in the count, by index: the helper's "IN" set
@@ -102,10 +106,14 @@ UNPRICED_WHY = OrderedDict([("empty", "אין מחיר"), ("unreadable", "המח
                             ("cancelled", "המחזור בוטל")])
 
 # what the page says above the table, and the legend's part on the students' tab
+TRACK_LABEL = "שוברים משרד העבודה"   # Registration Flow's label at VOUCHER_TRACK, as monday spells it
+# the one sentence that says which cohorts the view holds (above the table, and in the legend)
+TRACK_SAID = ("רק מחזורים שנוהל ההרשמה שלהם %s: החלקים הם סטטוסי שובר, ומחזור במסלול אחר לא מוצג ולא נספר, גם כשיש לו "
+              "מחיר." % _q(TRACK_LABEL))
 ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים), %s, ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
-         "כסף שכבר היה צריך להיכנס. לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה. "
+         "כסף שכבר היה צריך להיכנס. %s לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה. "
          "הקוד של מחזור והשם של סטודנט/ית פותחים אותם במאנדיי."
-         % (EXPECTED_WORD, PAID_WORD, BALANCE_WORD, _q(VOUCHER["1"])))
+         % (EXPECTED_WORD, PAID_WORD, BALANCE_WORD, _q(VOUCHER["1"]), TRACK_SAID))
 LEGEND_TITLE = VIEW_WORD
 LEGEND = [
     (VIEW_WORD, ABOUT),
@@ -127,8 +135,8 @@ LEGEND = [
     ("סכום מחוק", "ב%s: מה ששילם/ה סטודנט/ית עם ויתור או מחוץ לחשבון. מוצג, ולא נספר בשורת המחזור." % PAID_WORD),
     (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה: לא נספרים לאף סטודנט/ית."),
     (SHARED_WORD, "תקבול שמקושר להרשמות של כמה סטודנטים, או של כמה מחזורים: לא נספר לאף אחד, כדי שלא ייספר פעמיים."),
-    (UNPRICED_TITLE, "מחזורים בקריאה בלי מחיר, שהמחיר בהם אינו מספר אחד או 0, או שבוטלו: מוצגים עם הסיבה, בלי צפי ובלי "
-                     "יתרה."),
+    (UNPRICED_TITLE, "מחזורים במסלול %s בלי מחיר, שהמחיר בהם אינו מספר אחד או 0, או שבוטלו: מוצגים עם הסיבה, בלי צפי "
+                     "ובלי יתרה." % _q(TRACK_LABEL)),
     (PRICE_WORD, "עמודה בלוח המחזורים: המחיר המלא שהסטודנט/ית משלם/ת. השובר הוא ההחזר של משרד העבודה לסטודנט/ית "
                  "(נספח ו'), ולכן אינו יורד מהמחיר."),
     ("Status", "עמודה בלוח ההרשמות: מצב ההרשמה, למשל %s או %s." % (_q("נרשם"), _q("ביטל השתתפות"))),
@@ -330,6 +338,8 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
 
     lines, unpriced = [], []
     for c in sorted(cohorts, key=_id_key):
+        if not on_track(c):
+            continue    # another track: not shown, counted nowhere
         cid = str(c["id"])
         m = meta[cid]
         price, why = price_of(c.get(CO["price"]))
