@@ -216,6 +216,9 @@
  * C  "לרשום את כל ההצעות (28)" counted rows with a proposal, its confirmation "ב-20 שורות" the rows written in one press.
  *      Both say what is written, in the same words (fillCounts: cells, rows, numbers, dates), and beside the list's head a
  *      sentence says what a date alone is: a row that already cites its invoice, missing only "תאריך תקבול".
+ * D  A red chip of the books wrapped to four lines in the narrow "שיבוץ" (six at 1280). The server sends it short (the
+ *      legend's term: "חשבשבת: לא נמצא", "חשבשבת: סכום שונה", "חשבשבת: שולם"), its sentence its title (chipTitle), the
+ *      details' sentence and the Excel file's whole words as before. Two lines at most at monday's widths.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -251,10 +254,11 @@
     refund_date_on_status: "תאריך החזר בסטטוס {status}", unlinked: "בלי הרשמה ובלי ליד מקור",
     /* a receipt that went out on a payment that brought no money in: in "חריג, לבדיקה" (QA 24.11, the server's rule 6) */
     receipt_no_money: "שליחת קבלה: יצאה, בסטטוס {status}",
-    /* D3: what the books contradict on the row - the server fills each "{...}" (the row's `books`; booksMark) */
-    books_ref_invalid: "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
-    books_amount_differs: "בשורה {row}, בחשבשבת {books}",
-    books_receipt_unpaid: "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+    /* D3: what the books contradict on the row - the server fills each "{...}" (the row's `books`; booksMark). Short since
+       the QA of 26.11 (D): the whole sentence is the chip's title, the details' and the Excel file's */
+    books_ref_invalid: "חשבשבת: {why}",
+    books_amount_differs: "חשבשבת: סכום שונה",
+    books_receipt_unpaid: "חשבשבת: שולם",
     /* D4: what the books propose to fill on the row - the server fills each "{...}" (the row's `books`; booksMark) */
     books_ref_fill: "בחשבשבת: {number}", books_date_fill: "תאריך מחשבשבת: {date}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
@@ -379,9 +383,12 @@
   function booksChips(r) {
     var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); });
     return keys.length ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
-      return "<span class=\"" + chipClass(k) + "\">" + esc(booksMark(r, k).chip) + "</span>";
+      return "<span class=\"" + chipClass(k) + "\"" + chipTitle(k, r) + ">" + esc(booksMark(r, k).chip) + "</span>";
     }).join("") + "</div>" : "";
   }
+  /* QA 26.11 (D): a mark's chip is short - its whole words wrapped to four lines in "שיבוץ"; now two at most, in the
+     narrow column at monday's widths - and its whole sentence, the details' own, is said when it is pointed at */
+  function chipTitle(k, r) { var m = booksMark(r, k); return m && m.long && m.text ? " title=\"" + esc(m.text) + "\"" : ""; }
   function flagText(k, r) {
     var m = booksMark(r, k);
     return m ? m.chip : (((FLAG_ON[r.board] || {})[k]) || FLAG[k]).replace("{status}", statusWord(r));
@@ -389,7 +396,9 @@
   /* what to look at in a row, as chips: its flags in FLAG_ORDER, at most five and "ועוד N" */
   function rowChips(r) {
     var keys = FLAG_ORDER.filter(function (k) { return r.flags.indexOf(k) !== -1; });
-    var out = keys.slice(0, 5).map(function (k) { return "<span class=\"" + chipClass(k) + "\">" + esc(flagText(k, r)) + "</span>"; });
+    var out = keys.slice(0, 5).map(function (k) {
+      return "<span class=\"" + chipClass(k) + "\"" + chipTitle(k, r) + ">" + esc(flagText(k, r)) + "</span>";
+    });
     if (keys.length > 5) { out.push("<span class=\"fin-chip q\">ועוד " + (keys.length - 5) + "</span>"); }
     return out.length ? "<div class=\"fin-chips\">" + out.join("") + "</div>" : "";
   }

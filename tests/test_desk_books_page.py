@@ -83,15 +83,18 @@ def test_tasks_holds_the_marked_rows_of_the_era_with_their_red_chip_and_the_tile
     # the mark sits under the row's own state, red, in the server's words - no column was added (QA 4's widths)
     state = cell(tasks, "1", "state")
     assert state.count("ללא תקבול") == 1 and state.index("ללא תקבול") < state.index("fin-books-chips")
-    assert state.endswith('<div class="fin-chips fin-books-chips"><span class="fin-chip bad">בחשבשבת חשבונית מס/קבלה 62502, '
-                          'והסטטוס &quot;לא שולם&quot;</span></div>')
+    # changed deliberately (QA 26.11, D): the chip is short, its whole sentence - the details' - its title
+    mark = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]["books"][0]
+    assert mark["long"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
+    assert state.endswith('<div class="fin-chips fin-books-chips"><span class="fin-chip bad" title="%s">חשבשבת: שולם</span>'
+                          '</div>' % h.escape(mark["text"]))
     assert "k-notes" not in tasks and "fin-books-chips" not in cell(tasks, "3", "state")
     # the tile says the server's count of "לטיפול", which its list shows
     tile = re.search(r'data-bstate="tasks"[^>]*><span class="n">(\d+)</span>', tasks).group(1)
     assert int(tile) == merged["b2c"]["periods"][0]["tasks"] == len(ids) == 2
     # the older row keeps its mark on the row: in "הכל", under its state
     assert "2" in re.findall(r'data-row="([^"]+)"', all_)
-    assert "40000 לא נמצא</span>" in cell(all_, "2", "state")
+    assert ">חשבשבת: לא נמצא</span>" in cell(all_, "2", "state")
 
 
 def test_a_rows_details_say_the_marks_sentence():
@@ -248,8 +251,8 @@ def test_every_chip_the_books_draw_for_a_group_of_rows_is_in_the_legend():
     is "בשורה ..., בחשבשבת ..." - a label neither monday's nor the legend's (QA 11.11, 2.2). Its test drew one-row groups
     only. One invoice-receipt of 4,000 cited by two rows of 4,000 (63109's shape): the chip stays inside the term."""
     view, merged = books_view(rows=[pay(1, "63109"), pay(2, "63109")], docs=[doc(63109, total="4000")])
-    chips = [m["chip"] for r in merged["b2c"]["rows"] for m in r.get("books") or []]
-    assert chips and all("השורות" in c for c in chips)                      # the case is reached
+    chips = [m["long"] for r in merged["b2c"]["rows"] for m in r.get("books") or []]
+    assert chips and all("השורות" in c for c in chips)                      # the case is reached (its whole words)
     html = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}])[0]
     known = fd.legend_terms("b2c") | MONDAY_TITLES["b2c"] | CONTROLS
     patterns = [re.compile("^" + re.escape(fd.flag_legend_term(t)).replace(re.escape("..."), ".+") + "$")
@@ -268,7 +271,10 @@ def test_a_marks_chip_in_what_to_check_is_the_servers_filled():
     assert row["state"] == "exception" and row["books"][0]["kind"] == "books_receipt_unpaid"
     html = draw(view, [{"tab": "b2c", "sc": {"state": "exception", "period": "", "open": {}}}])[0]
     notes = cell(html, "1", "notes")
-    assert "בחשבשבת חשבונית מס/קבלה 62502, והסטטוס &quot;לא שולם&quot;" in notes and "{doc}" not in notes
+    # changed deliberately (QA 26.11, D): the chip is short, and its title - the details' sentence - names its document
+    # and the row's status
+    assert ">חשבשבת: שולם</span>" in notes and "{doc}" not in notes
+    assert 'title="בחשבשבת חשבונית מס/קבלה 62502 מ-' in notes and "בשורה &quot;לא שולם&quot;." in notes
 
 
 def test_what_the_books_and_monday_name_is_drawn_as_text():
@@ -319,10 +325,15 @@ def marked_long_view() -> dict:
     """tests/test_desk_browser.py's view with rows as long as real ones, three of them marked by the books (one in a state
     that is no task, so "לטיפול" holds it by its mark), and the books' three lists - shaped as the server sends them."""
     v = long_view()
-    chip = "בחשבשבת חשבונית מס/קבלה 62502, והסטטוס \"לא שולם\""
-    for r in v["b2c"]["rows"][:3]:
-        r.update(flags=r["flags"] + ["books_receipt_unpaid"], books_task=True, books=[
-            {"kind": "books_receipt_unpaid", "chip": chip, "text": chip + ".", "documents": ["62502"]}])
+    long = "בחשבשבת חשבונית מס/קבלה 62502, והסטטוס \"לא שולם\""
+    text = ("בחשבשבת חשבונית מס/קבלה 62502 מ-03.11.2026 על 12,500.00 ₪ כולל מע\"מ, כלומר הכסף התקבל, וסטטוס התשלום בשורה "
+            "\"לא שולם\".")
+    # the three kinds, the widest short chips among them (QA 26.11, D)
+    marks = [("books_receipt_unpaid", "חשבשבת: שולם"), ("books_ref_invalid", "חשבשבת: סכום שלילי"),
+             ("books_amount_differs", "חשבשבת: סכום שונה")]
+    for r, (kind, chip) in zip(v["b2c"]["rows"][:3], marks):
+        r.update(flags=r["flags"] + [kind], books_task=True, books=[
+            {"kind": kind, "chip": chip, "long": long, "text": text, "documents": ["62502"]}])
     for p in v["b2c"]["periods"]:
         p["tasks"] = len([r for r in v["b2c"]["rows"] if r["state"] in ("exception", "refund_to_execute", "receipt_pending")
                           or r.get("books_task")])
@@ -344,7 +355,8 @@ def marked_long_view() -> dict:
 @pytest.mark.skipif(PW_ROOT is None, reason="node with playwright is not installed")
 def test_in_a_browser_the_books_draw_with_no_error_and_tasks_still_fits_its_frame(serve):  # noqa: F811
     """QA 4's widths hold with the marks (they sit under the state, no column was added), the lists draw under "לטיפול" on
-    both tabs, a candidate's name is a link to its card, and the page logs no console error and throws nothing."""
+    both tabs, a candidate's name is a link to its card, and the page logs no console error and throws nothing. And (QA
+    26.11, D) a red chip in the narrow "שיבוץ" column is one line - its whole words wrapped to four - its sentence on hover."""
     base, _log = serve(marked_long_view())
     got = qa_visit(r"""
   out.steps[at] = {};
@@ -356,6 +368,12 @@ def test_in_a_browser_the_books_draw_with_no_error_and_tasks_still_fits_its_fram
       const tw = document.querySelector(".fin-tw"), t = tw.querySelector("table");
       return { fits: t.getBoundingClientRect().width <= tw.getBoundingClientRect().width && tw.scrollWidth <= tw.clientWidth,
         marks: document.querySelectorAll(".fin-books-chips .fin-chip.bad").length,
+        chips: [...document.querySelectorAll(".fin-books-chips .fin-chip.bad")].map((c) => {
+          const range = document.createRange();
+          range.selectNodeContents(c);
+          const tops = [...range.getClientRects()].map((x) => x.top).sort((a, b) => a - b);
+          return [1 + tops.filter((t, i) => i && t - tops[i - 1] > 8).length, c.getAttribute("title") || ""];
+        }),
         lists: [...document.querySelectorAll(".fin-books")].map((p) => p.getAttribute("data-books")),
         candidate: (document.querySelector('.fin-books .fin-cand a.fin-name') || {}).textContent || "" };
     });
@@ -365,5 +383,9 @@ def test_in_a_browser_the_books_draw_with_no_error_and_tasks_still_fits_its_fram
     for size in ("1280x748", "1400x748"):
         b2c, b2b = got["steps"][size]["b2c"], got["steps"][size]["b2b"]
         assert b2c["fits"] and b2c["marks"] == 3 and b2c["lists"] == ["b2c", "unclear"], (size, b2c)
+        # at most two lines where its whole words took four; on one line always, the widest would push the table past its
+        # frame at 1280 (QA 4), which the column's own width decides
+        assert all(lines <= 2 and title.startswith("בחשבשבת חשבונית מס/קבלה 62502 מ-") for lines, title in b2c["chips"]), \
+            (size, b2c["chips"])
         assert b2c["candidate"] == "תלמיד/ה לדוגמה בשם ארוך-ארוך 3"
         assert b2b["fits"] and b2b["lists"] == ["b2b", "unclear"], (size, b2b)

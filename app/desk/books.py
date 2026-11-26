@@ -195,6 +195,17 @@ REF_WHY = {
 }
 # a number the copy holds only as a draft (spec §4.1: a draft carries its series' next number): no valid document (FR-2)
 DRAFT_WHY = ("טיוטה", "בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף")
+# QA of 26.11 (D): a mark's chip on the page is short - "חשבשבת: " and a word or two (view.LEGEND_FLAGS, the legend's term)
+# - since the narrow "שיבוץ" column wrapped the whole words to four lines. The whole words, filled as before (`long`), are
+# what the Excel file's "מה לבדוק" says, as it did; the row's details say the sentence (`text`), which is also the chip's
+# title on the page
+MARK_WORDS = {"books_ref_invalid": "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
+              "books_amount_differs": "בשורה {row}, בחשבשבת {books}",
+              "books_receipt_unpaid": "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}"}
+# the short word of a number the row cites that is no valid document, by why; two numbers refused for two reasons: "מספר
+# לא תקף"
+REF_SHORT = {"ref_not_in_books": "לא נמצא", "draft": "טיוטה", "ref_ambiguous": "מספר כפול", "negative": "סכום שלילי",
+             "no_total": "בלי סכום", "other_type": "לא חשבונית", "several": "לא תקף"}
 CANDIDATES_MAX = 10  # a common name shows its first ten rows, and how many more there are
 # D4 (QA of 26.11, 9): why the books propose nothing for a listed document on a candidate row: FR-C2's bucket for the row
 # (app/recon/ref_fill.py BUCKETS, the very analysis the proposals come from), in a few words the page draws beside the
@@ -302,23 +313,24 @@ def _flag_text(kind: str) -> str:
 
 
 def _ref_reason(number: str, bucket: str, idx: dict) -> tuple:
-    """(the chip's word, the details' sentence) for one number of the row that is no valid document."""
+    """(the long words' part, the details' sentence, why in a word: a key of REF_SHORT) for one number of the row that is
+    no valid document."""
     if bucket == "ref_not_in_books" and number in idx["drafts"]:
-        return "%s %s" % (number, DRAFT_WHY[0]), "%s: %s" % (number, DRAFT_WHY[1])
+        return "%s %s" % (number, DRAFT_WHY[0]), "%s: %s" % (number, DRAFT_WHY[1]), "draft"
     by_number = idx["by_number"]
     if bucket in REF_WHY:
         word, sentence = REF_WHY[bucket]
-        return "%s %s" % (number, word), "%s: %s" % (number, sentence)
+        return "%s %s" % (number, word), "%s: %s" % (number, sentence), bucket
     doc = (by_number.get(number) or [{}])[0]
     total, name, r = _money(doc.get("total_incl")), type_name(doc.get("doc_type")), role(doc.get("doc_type"))
     if r in LISTED_ROLES and total is not None and total < 0:
         # a negative sum, said as one - never as another type (A1 refuses a negative invoice-receipt as it refuses a
         # negative tax invoice); FR-4 names a negative tax invoice a cancellation
         return "%s %s בסכום שלילי" % (number, name), "%s: %s בסכום שלילי%s" % (
-            number, name, ", כלומר ביטול" if r == INVOICE else "")
+            number, name, ", כלומר ביטול" if r == INVOICE else ""), "negative"
     if role(doc.get("doc_type")) in LISTED_ROLES and total is None:
-        return "%s %s בלי סכום" % (number, name), "%s: %s בלי סכום" % (number, name)
-    return "%s %s" % (number, name), "%s: %s, ולא חשבונית מס או חשבונית מס/קבלה" % (number, name)
+        return "%s %s בלי סכום" % (number, name), "%s: %s בלי סכום" % (number, name), "no_total"
+    return "%s %s" % (number, name), "%s: %s, ולא חשבונית מס או חשבונית מס/קבלה" % (number, name), "other_type"
 
 
 def _docs_said(numbers: list, by_number: dict) -> str:
@@ -326,10 +338,11 @@ def _docs_said(numbers: list, by_number: dict) -> str:
 
 
 def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
-    """The mark A1's judgement of one row gives, or None: {"kind", "chip" (the chip's words, filled), "text" (the sentence
-    the row's details and the Excel file say), "documents" (the numbers it is about)}. `row` is the view's row (its
-    status's label, by index); `idx`, the copy (`index_copy`): a number just past the end of its series is not yet in the
-    copy, and no mark is given for it."""
+    """The mark A1's judgement of one row gives, or None: {"kind", "chip" (the page's short chip, filled: the legend's
+    term), "long" (the whole words, filled: the Excel file's "מה לבדוק"), "text" (the sentence the row's details say, and
+    the chip's title), "documents" (the numbers it is about)}. `row` is the view's row (its status's label, by index);
+    `idx`, the copy (`index_copy`): a number just past the end of its series is not yet in the copy, and no mark is given
+    for it."""
     by_number = idx["by_number"]
     kind = MARK_OF_BUCKET.get(entry["bucket"])
     if kind == "books_ref_invalid":
@@ -338,9 +351,12 @@ def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
         if not refused:
             return None
         why = [_ref_reason(n, b, idx) for n, b in refused]
-        chip = _flag_text(kind).replace("{why}", "; ".join(w for w, _s in why))
-        return {"kind": kind, "chip": chip, "documents": [n for n, _b in refused],
-                "text": "%s: %s." % (_flag_text(kind).split(":")[0], "; ".join(x for _w, x in why))}
+        keys = {k for _w, _s, k in why}
+        short = REF_SHORT[keys.pop() if len(keys) == 1 else "several"]
+        return {"kind": kind, "chip": _flag_text(kind).replace("{why}", short),
+                "long": MARK_WORDS[kind].replace("{why}", "; ".join(w for w, _s, _k in why)),
+                "documents": [n for n, _b in refused],
+                "text": "%s: %s." % (MARK_WORDS[kind].split(":")[0], "; ".join(x for _w, x, _k in why))}
     group = entry.get("group")
     if kind == "books_amount_differs" and group is not None:
         numbers = list(group["documents"])
@@ -351,13 +367,13 @@ def mark_of(entry: dict, row: dict, idx: dict) -> Optional[dict]:
         # label neither monday's nor the legend's)
         said_row = money_text(paid) if len(rows) == 1 else "%s(ב-%d השורות %s)" % (
             money_text(own) + " " if own is not None else "", len(rows), money_text(paid))
-        chip = _flag_text(kind).replace("{row}", said_row).replace("{books}", money_text(total))
+        long = MARK_WORDS[kind].replace("{row}", said_row).replace("{books}", money_text(total))
         text = "%s %s, ובחשבשבת %s כולל מע\"מ (%s): הפער גדול משקל למסמך ומ-0.1%%." % (
             "סכום ששולם בשורה" if len(rows) == 1 else "סכום ששולם ב-%d השורות שמפנות לאותם מסמכים, יחד," % len(rows),
             money_text(paid), money_text(total), _docs_said(numbers, by_number))
         if len(rows) > 1 and own is not None:
             text += " בשורה הזאת %s." % money_text(own)
-        return {"kind": kind, "chip": chip, "documents": numbers, "text": text}
+        return {"kind": kind, "chip": _flag_text(kind), "long": long, "documents": numbers, "text": text}
     if kind is None:
         return _receipt_unpaid(entry, row, idx)
     return None
@@ -405,12 +421,12 @@ def _receipt_unpaid(entry: dict, row: dict, idx: dict) -> Optional[dict]:
     if not receipts:
         return None
     status = status_word(row)
-    chip = _flag_text(kind).replace("{doc}", ", ".join(receipts)).replace("{status}", status)
+    long = MARK_WORDS[kind].replace("{doc}", ", ".join(receipts)).replace("{status}", status)
     days = sorted({str(_day(by_number[n][0].get("value_date")) or "") for n in receipts})
     text = "בחשבשבת חשבונית מס/קבלה %s מ-%s על %s כולל מע\"מ, כלומר הכסף התקבל, וסטטוס התשלום בשורה %s." % (
         ", ".join(receipts), ", ".join(_dmy(x) for x in days if x),
         money_text(sum((_money(by_number[n][0].get("total_incl")) or Decimal(0) for n in receipts), Decimal(0))), status)
-    return {"kind": kind, "chip": chip, "documents": receipts, "text": text}
+    return {"kind": kind, "chip": _flag_text(kind), "long": long, "documents": receipts, "text": text}
 
 
 def _dmy(iso: str) -> str:
@@ -659,7 +675,7 @@ def merge(view: dict, part: dict) -> dict:
             mine = marks.get(r["id"])
             if mine:
                 r = dict(r, flags=list(r["flags"]) + [m["kind"] for m in mine if m["kind"] not in r["flags"]],
-                         books=[{k: m[k] for k in ("kind", "chip", "text", "documents")} for m in mine],
+                         books=[{k: m[k] for k in ("kind", "chip", "long", "text", "documents") if k in m} for m in mine],
                          books_task=bool(r.get("date")) and r["date"] >= era)
             if notes.get(r["id"]):  # a number it cites is not yet in the copy: said in its details, no mark
                 r = dict(r, books_note=notes[r["id"]])

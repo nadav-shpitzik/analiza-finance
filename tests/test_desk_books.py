@@ -9,6 +9,7 @@ Fixtures are synthetic and shaped like the incidents (the rules' contract §0.2)
 records, names are invented, and no card carries an ID number."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -232,7 +233,8 @@ def run(sc_rows, docs, b2_rows=(), keys=None) -> tuple:
 
 
 def marks(part) -> dict:
-    return {i: [(m["kind"], m["chip"]) for m in ms] for i, ms in part["marks"].items()}
+    # (QA 26.11, D: a mark's whole words are its `long`, the Excel file's; the page's chip is short - test of D below)
+    return {i: [(m["kind"], m["long"]) for m in ms] for i, ms in part["marks"].items()}
 
 
 def facts_row(view: dict, reading: dict, item_id: str) -> dict:
@@ -287,7 +289,7 @@ def test_books_ref_invalid_names_each_number_and_why():
     part, _v, _r = run(rows, docs)
     head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
     got = {int(i) % 100: ms[0] for i, ms in part["marks"].items()}
-    assert {n: m["chip"] for n, m in got.items()} == {
+    assert {n: m["long"] for n, m in got.items()} == {
         1: head + "40000 לא נמצא", 2: head + "62600 בשני מסמכים", 3: head + "70100 חשבונית זיכוי",
         4: head + "80500 קבלה; 40505 חשבון עסקה", 5: head + "50400 חשבונית מס בסכום שלילי", 6: head + "62610 טיוטה"}
     assert part["notes"] == {}
@@ -296,6 +298,35 @@ def test_books_ref_invalid_names_each_number_and_why():
     assert "50400: חשבונית מס בסכום שלילי, כלומר ביטול" in got[5]["text"]
     assert got[6]["text"] == head + "62610: בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף."
     assert got[4]["documents"] == ["80500", "40505"]
+
+
+def test_a_marks_chip_is_short_its_whole_words_the_files_and_its_sentence_the_details():
+    """QA 26.11 (D): the red chip's whole words wrapped to four lines in the narrow "שיבוץ" column. The chip is short -
+    "חשבשבת: " and why in a word or two, the legend's term (view.LEGEND_FLAGS) - and its whole words are kept as before for
+    the Excel file's "מה לבדוק" (`long`), its sentence for the details and the chip's title (`text`). A row whose numbers
+    are refused for two reasons says "לא תקף"."""
+    docs = [doc(62600), doc(62600), doc(70100, doc_type=3), doc(80500, doc_type=31), doc(40505, doc_type=78),
+            doc(50400, doc_type=1, total="-4000"), doc(62610, status=0), doc(62611), doc(62502), doc(62509, total="3000")]
+    rows = [pay(1, "40000"), pay(2, "62600"), pay(3, "70100"), pay(4, "80500, 40505"), pay(5, "50400"), pay(6, "62610"),
+            pay(7, "40000, 70100"), pay(8, "62502", st="0", paid=""), pay(9, "62509", paid="4000")]
+    part, view, _r = run(rows, docs)
+    got = {int(i) % 100: ms[0] for i, ms in part["marks"].items()}
+    assert {n: m["chip"] for n, m in got.items()} == {
+        1: "חשבשבת: לא נמצא", 2: "חשבשבת: מספר כפול", 3: "חשבשבת: לא חשבונית", 4: "חשבשבת: לא חשבונית",
+        5: "חשבשבת: סכום שלילי", 6: "חשבשבת: טיוטה", 7: "חשבשבת: לא תקף", 8: "חשבשבת: שולם", 9: "חשבשבת: סכום שונה"}
+    # short: two words at most after "חשבשבת:", and each the legend's term (filled where it has a "{why}")
+    terms = {k: t for k, t, _x in fd.LEGEND_FLAGS["b2c"]}
+    for m in got.values():
+        assert len(m["chip"].split(": ", 1)[1].split()) <= 2 and m["long"] != m["chip"] and m["text"]
+        assert re.fullmatch(re.escape(terms[m["kind"]]).replace(re.escape("{why}"), ".+"), m["chip"]), m["chip"]
+    assert got[7]["long"].endswith("40000 לא נמצא; 70100 חשבונית זיכוי")
+    assert got[8]["long"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
+    assert got[9]["long"] == "בשורה 4,000.00 ₪, בחשבשבת 3,000.00 ₪"
+    # the Excel file's "מה לבדוק" says the whole words, as before; the page's row carries all three
+    merged = db.merge(view, dict(part, state="ok", reading_at=view["read_at"]))
+    row = {r["id"]: r for r in merged["b2c"]["rows"]}[str(int(next(iter(part["marks"]))) // 100 * 100 + 8)]
+    assert row["books"][0]["chip"] == "חשבשבת: שולם" and got[8]["long"] in fd.row_reasons("b2c", row)
+    assert "חשבשבת: שולם" not in fd.row_reasons("b2c", row)
 
 
 def test_a_negative_invoice_receipt_is_said_as_a_negative_sum_not_as_another_type():
@@ -309,9 +340,9 @@ def test_a_negative_invoice_receipt_is_said_as_a_negative_sum_not_as_another_typ
     (mark,) = part["marks"]["1"]
     assert mark["kind"] == "books_ref_invalid"
     assert "ולא חשבונית מס או חשבונית מס/קבלה" not in mark["text"], mark["text"]
-    assert mark["chip"].endswith(": 62500 חשבונית מס/קבלה בסכום שלילי")
+    assert mark["long"].endswith(": 62500 חשבונית מס/קבלה בסכום שלילי")
     assert mark["text"].endswith(": 62500: חשבונית מס/קבלה בסכום שלילי.")
-    assert part["marks"]["2"][0]["chip"].endswith(": 70100 חשבונית זיכוי")
+    assert part["marks"]["2"][0]["long"].endswith(": 70100 חשבונית זיכוי")
 
 
 def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
@@ -328,7 +359,7 @@ def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_get
     part, view, _r = run(rows, docs)
     assert db.series_ends(docs) == [(50400, 50400), (62500, 62503)] and db.NOT_YET_SPAN == 20
     head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
-    assert {i: ms[0]["chip"] for i, ms in part["marks"].items()} == {
+    assert {i: ms[0]["long"] for i, ms in part["marks"].items()} == {
         "2": head + "62502 לא נמצא", "4": head + "40000 לא נמצא", "5": head + "70100 חשבונית זיכוי",
         "9": head + "62524 לא נמצא", "11": head + "50421 לא נמצא"}
     assert part["notes"] == {"1": "62504: עוד לא בהעתק של הספרים", "3": "50401: עוד לא בהעתק של הספרים",
@@ -388,7 +419,7 @@ def test_a_number_the_copy_holds_as_a_draft_is_a_draft_not_missing_from_the_copy
     part, _v, _r = run([pay(1, "62504")], docs)
     assert "1" not in part["notes"], part["notes"]
     assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_ref_invalid"], part["marks"]
-    assert part["marks"]["1"][0]["chip"].endswith("62504 טיוטה")
+    assert part["marks"]["1"][0]["long"].endswith("62504 טיוטה")
 
 
 def test_amount_differs_says_the_groups_two_sums_and_the_rounding_band_is_no_mark():
@@ -444,7 +475,7 @@ def test_the_case_of_23_11_is_read_off_the_group_whatever_a1s_order_of_buckets()
     buckets = {int(i): e["bucket"] for i, e in a1.analyse(reading["student_charge"]["rows"], docs)["rows"].items()}
     assert buckets == {1: "dates_differ", 2: "dates_differ", 3: "amount_mismatch", 4: "rounding_band",
                        5: "invoice_needs_receipt", 6: "out_of_window"}
-    assert {int(i): [(m["kind"], m["chip"]) for m in ms] for i, ms in part["marks"].items()} == {
+    assert {int(i): [(m["kind"], m["long"]) for m in ms] for i, ms in part["marks"].items()} == {
         1: [("books_receipt_unpaid", 'בחשבשבת חשבונית מס/קבלה 62502, 62503, והסטטוס "לא שולם"')],
         3: [("books_amount_differs", "בשורה 8,100.00 ₪, בחשבשבת 8,000.00 ₪")]}
     assert part["marks"]["1"][0]["text"] == ('בחשבשבת חשבונית מס/קבלה 62502, 62503 מ-03.11.2026, 05.11.2026 על 8,000.00 ₪ '
@@ -494,7 +525,7 @@ def test_an_unpaid_row_with_no_amount_citing_an_invoice_receipt_is_marked():
     part, _v, _r = run([pay(1, "62502", st="0", paid="", receipt="0")], [doc(62502), doc(62503)])
     assert part["buckets"]["1"] == "amount_unreadable"                     # A1's bucket, unchanged by the desk
     assert [m["kind"] for m in part["marks"].get("1", [])] == ["books_receipt_unpaid"], part["marks"]
-    assert part["marks"]["1"][0]["chip"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
+    assert part["marks"]["1"][0]["long"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
 
 
 def test_and_its_document_is_shown_somewhere():
@@ -1226,7 +1257,7 @@ def test_a_member_of_both_boards_sees_the_marks_both_lists_and_the_unclear_docum
     v = body["view"]
     assert v["books"]["state"] == "ok" and v["books"]["reasons"] == [] and v["books"]["as_of"] == "2026-11-25T08:00:00+00:00"
     rows = {r["id"]: r for r in v["b2c"]["rows"]}
-    assert rows["101"]["books"][0]["chip"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
+    assert rows["101"]["books"][0]["long"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
     assert rows["101"]["books_task"] is True and "books_receipt_unpaid" in rows["101"]["flags"]
     assert rows["101"]["state"] == "no_money"                                 # in its own state, and in "לטיפול" too
     students = v["b2c"]["books"]["documents"]

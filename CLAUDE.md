@@ -150,7 +150,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
 - **What the books say in the desk (D3, 25.11), read only:** `app/desk/books.py`. A1's `analyse` (reused, never forked; it now
   also says `refused` and `group`) judges every Student Charge row of the desk's reading, and three buckets are marks on the row
   (`books_ref_invalid`, `books_amount_differs`, `books_receipt_unpaid`): a red chip with its words filled on the server, under
-  the row's state and in "מה לבדוק" (no column added: QA 4's widths), a sentence in the details, the chip in the files. A
+  the row's state and in "מה לבדוק" (no column added: QA 4's widths), a sentence in the details, the chip in the files.
+  Since the QA of 26.11 the chip is short ("חשבשבת: לא נמצא", "חשבשבת: סכום שונה", "חשבשבת: שולם": the legend's terms; two
+  lines at most at 1280, where its whole words took six), its sentence its title; the whole words (`long`) are the files'. A
   cited number just past the end of its series (`not_yet_read`: at most 20 past the last of the series nearest below, held by no
   document of the copy) is not yet in the copy (read hourly): no mark, a note in the details; one further on is "לא נמצא", and a
   number the copy holds as a draft is "טיוטה".

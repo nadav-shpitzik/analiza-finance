@@ -476,6 +476,8 @@ LEGEND = {
 # 3. "מה לבדוק": what each chip on a row says. The text is the chip's on the page (frontend/finance.js FLAG, held to this by
 #    tests/test_finance_js.py); "{status}" is the row's own "סטטוס תשלום", in quotes.
 _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
+# where every mark of the books says it all (QA of 26.11, D: the chip is short)
+_BOOKS_MARK_SAID = ("המשפט המלא: כשמצביעים על הסימון, בפרטים של התקבול, ובעמודה \"מה לבדוק\" של קובץ האקסל.")
 # what every mark of the books says of where its row is (D3; spec §6.1.1, §6.4.2)
 _BOOKS_MARK_ROW = ("לא משנה את השיבוץ. תקבול מ-%s ואילך שיש בו סימון כזה מופיע גם ב\"לטיפול\"; תקבול ישן יותר נשאר "
                    "במשבצת שלו עם הסימון." % BOOKS_ERA_SAID)
@@ -497,21 +499,24 @@ LEGEND_FLAGS = {
          "הוקלד תאריך החזר, וסטטוס התשלום אינו %s. אחד מהם לא נכון." % _REFUNDED_LABELS),
         ("receipt_no_money", "שליחת קבלה: %s, בסטטוס {status}" % RECEIPT[R_SENT],
          "%s: קבלה יצאה על כסף שלא נכנס. אחד מהם לא נכון." % _RECEIPT_NO_MONEY),
-        # D3 (app/desk/books.py): what the books contradict on the row, from A1's judgement of it. The chip's "{...}" is
-        # filled on the server from the row (its sums, its document, its status)
-        ("books_ref_invalid", "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
-         "באסמכתת חשבונית יש מספר שאין בחשבשבת מסמך תקף שנושא אותו (\"לא נמצא\"), ששני מסמכים תקפים נושאים אותו (\"בשני "
-         "מסמכים\"), או של מסמך שאינו חשבונית מס או חשבונית מס/קבלה (סוג המסמך: חשבונית זיכוי, קבלה, חשבון עסקה), או "
-         "של חשבונית מס או חשבונית מס/קבלה בסכום שלילי, או מספר של טיוטה בחשבשבת (\"טיוטה\"). בפרטים, במשפט. מספר "
-         "שבא מיד אחרי המספר האחרון שבעותק בסדרה שלו, עד 20 מספרים אחריו, לא מסומן: הוא עוד לא בהעתק של הספרים, שנקרא "
-         "פעם בשעה, והפרטים אומרים זאת. מספר רחוק יותר מסומן \"לא נמצא\". %s" % _BOOKS_MARK_ROW),
-        ("books_amount_differs", "בשורה {row}, בחשבשבת {books}",
+        # D3 (app/desk/books.py): what the books contradict on the row, from A1's judgement of it. The chip is short (QA of
+        # 26.11, D: its whole words wrapped to four lines in "שיבוץ"); its "{...}" is filled on the server, the whole
+        # words in its title and the Excel file's "מה לבדוק", the sentence in the details
+        ("books_ref_invalid", "חשבשבת: {why}",
+         "באסמכתת חשבונית יש מספר שאין בחשבשבת מסמך תקף שנושא אותו (\"לא נמצא\"), ששני מסמכים תקפים נושאים אותו (\"מספר "
+         "כפול\"), או של מסמך שאינו חשבונית מס או חשבונית מס/קבלה (\"לא חשבונית\": חשבונית זיכוי, קבלה, חשבון עסקה), "
+         "או של חשבונית מס או חשבונית מס/קבלה בסכום שלילי (\"סכום שלילי\") או בלי סכום (\"בלי סכום\"), או מספר של "
+         "טיוטה בחשבשבת (\"טיוטה\"); שני מספרים משתי סיבות: \"לא תקף\". %s מספר שבא מיד אחרי המספר האחרון שבעותק "
+         "בסדרה שלו, עד 20 מספרים אחריו, לא מסומן: הוא עוד לא בהעתק של הספרים, שנקרא פעם בשעה, והפרטים אומרים זאת. מספר "
+         "רחוק יותר מסומן \"לא נמצא\". %s" % (_BOOKS_MARK_SAID, _BOOKS_MARK_ROW)),
+        ("books_amount_differs", "חשבשבת: סכום שונה",
          "סכום ששולם בשורה, או בכל השורות שמפנות לאותם מסמכים יחד, שונה מהסכום של המסמכים בחשבשבת כולל מע\"מ, ביותר "
-         "משקל למסמך ויותר מ-0.1%%. כשכמה שורות מפנות לאותם מסמכים: הסכום של השורה, ובסוגריים כמה שורות והסכום שלהן "
-         "יחד. %s" % _BOOKS_MARK_ROW),
-        ("books_receipt_unpaid", "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+         "משקל למסמך ויותר מ-0.1%%. %s כשכמה שורות מפנות לאותם מסמכים, שם: הסכום של השורה, ובסוגריים כמה שורות והסכום "
+         "שלהן יחד. %s" % (_BOOKS_MARK_SAID, _BOOKS_MARK_ROW)),
+        ("books_receipt_unpaid", "חשבשבת: שולם",
          "בחשבשבת יש חשבונית מס/קבלה בכל מספר שבשורה, כלומר הכסף התקבל, וסטטוס התשלום בשורה %s, %s או ריק; סכום ששולם "
-         "ריק, או שווה לסכום החשבוניות. %s" % (_q(PAY[P_UNPAID]), _q(PAY[P_PROBLEM]), _BOOKS_MARK_ROW)),
+         "ריק, או שווה לסכום החשבוניות. %s %s" % (_q(PAY[P_UNPAID]), _q(PAY[P_PROBLEM]), _BOOKS_MARK_SAID,
+                                                  _BOOKS_MARK_ROW)),
         ("refund_last_day_passed", LAST_DAY_LABEL + " עבר", "היום האחרון להחזר לפי החוק עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_overdue", PLANNED_LABEL + " עבר", "מועד ההעברה שנקבע באישור עבר, %s." % _REFUND_NOT_MARKED),
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
@@ -646,7 +651,8 @@ def row_reasons(tab: str, row: dict) -> list[str]:
     on the server (the row's `books`). The page shows five and "ועוד N"; this is all of them, for the Excel files, which
     carry the column on every row (QA 24.11: a row in "חריג" said nothing there)."""
     texts = {k: t for k, t, _x in LEGEND_FLAGS[tab]}
-    filled = {m["kind"]: m["chip"] for m in row.get("books") or []}
+    # a mark of the books in its whole words, as before the page's chip was made short (QA of 26.11, D)
+    filled = {m["kind"]: m.get("long") or m["chip"] for m in row.get("books") or []}
     return [filled.get(k) or texts[k].replace("{status}", status_word(row))
             for k in FLAG_ORDER if k in row["flags"] and k in texts]
 
