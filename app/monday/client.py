@@ -33,11 +33,13 @@ id beside them - under the same eight rules; and `read_items(..., pack=True)` se
 aliased request (analiza-metrics `items_query`), so a refresh that changed two payments and a deal costs one request.
 `board_ids` pages the two charge boards' ids for the refresh too, the query a whole reading starts with (D2's review).
 
-Since D4 (26.11, Analiza-Monday backlog 0313) the desk asks one more thing on the requests it already sends: the ids of a
-board's items whose status column holds one of some label indexes (`status_rule`: monday's documented status filter,
-`items_page(query_params: {rules: [{column_id, compare_value: [indexes], operator: any_of}]})`), as alias `t0` beside the
-columns check of a reading (`require_columns(..., track=)`) and beside the windows of a refresh (`changed_items(..., track=)`)
-- the cohorts on the voucher track. No request of its own: one more only per page after the first (PAGE_LIMIT items).
+Since D4 (26.11, Analiza-Monday backlog 0313) the desk asks one more thing: the ids of a board's items whose status column
+holds one of some label indexes (`status_rule`: monday's documented status filter, `items_page(query_params: {rules:
+[{column_id, compare_value: [indexes], operator: any_of}]})`, answered live read only on 26.11) - the cohorts on the voucher
+track (`filtered_ids`). In a request of its own, never an alias of a request the desk cannot do without: monday refuses a
+request whole when one field of it is invalid, so a filter it refuses rode the columns check of every reading and the windows
+of every refresh to the ground with it (the review of D4, 26.11). One request, and one more per page after the first
+(PAGE_LIMIT items).
 """
 
 from __future__ import annotations
@@ -73,7 +75,9 @@ CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_colu
          "never_read",
          # D2's refresh (app/desk/reading.py): an answer of another shape than the one its request asked for, and a charge
          # board whose items_count disagrees with the rows a refresh holds (`DeltaMismatch`)
-         "delta_shape", "count_mismatch")
+         "delta_shape", "count_mismatch",
+         # D4: a status filter answered without its alias or its items (`filtered_ids`)
+         "filter_shape")
 DETAIL_MAX = 200
 
 # What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the Directory's, the vouchers board's, and Accounts' business
@@ -120,9 +124,10 @@ DELTA_RULE = ('{rules: [{column_id: "__last_updated__", compare_value: ["DAYS", 
               'compare_attribute: "UPDATED_AT"}]}')
 NEXT_WINDOW = ("query ($c: String!, $limit: Int!) { next_items_page(cursor: $c, limit: $limit) "
                "{ cursor items { id updated_at } } }")
-# D4: the items of a board whose status column holds one of some label indexes, by id only, as alias `t0` of a request that
-# goes out anyway; its later pages by ITEM_IDS_NEXT
+# D4: the items of a board whose status column holds one of some label indexes, by id only (`filtered_ids`), as alias `t0`
+# of a request of its own; its later pages by ITEM_IDS_NEXT
 TRACK_ALIAS = "t0: boards(ids: $t0) { items_page(limit: $limit, query_params: %s) { cursor items { id } } }"
+FILTERED_FIRST = "query ($t0: [ID!], $limit: Int!) { %s }" % TRACK_ALIAS
 _COLUMN_ID = re.compile(r"[a-z][a-z0-9_]{0,60}")
 
 
@@ -137,14 +142,14 @@ def status_rule(column: str, indexes: Iterable) -> str:
     return '{rules: [{column_id: "%s", compare_value: [%s], operator: any_of}]}' % (column, values)
 
 
-def window_query(windowed: int, checked: int, chunks: int, days: int, track: str = "") -> str:
+def window_query(windowed: int, checked: int, chunks: int, days: int) -> str:
     """One request (analiza-metrics `delta_query`): each board's columns check (b0, b1 ...); for the first `windowed`, its
     `items_count` and the first page of the items updated within the last `days` days - their ids and `updated_at` only;
     and items by id in `chunks` aliases (l0, l1 ...) under the one column list `$lc`, with the board each one answered
-    from (rule 7). D4: with `track` (a `status_rule`), the first page of a board's items it holds, alias `t0`."""
+    from (rule 7)."""
     rule = DELTA_RULE % int(days)
     n = windowed + checked
-    params = ["$b%d: [ID!], $c%d: [String!]" % (i, i) for i in range(n)] + (["$limit: Int!"] if windowed or track else [])
+    params = ["$b%d: [ID!], $c%d: [String!]" % (i, i) for i in range(n)] + (["$limit: Int!"] if windowed else [])
     body = ["b%d: boards(ids: $b%d) { columns(ids: $c%d) { id } items_count items_page(limit: $limit, query_params: %s) "
             "{ cursor items { id updated_at } } }" % (i, i, i, rule) for i in range(windowed)]
     body += ["b%d: boards(ids: $b%d) { columns(ids: $c%d) { id } }" % (i, i, i) for i in range(windowed, n)]
@@ -153,9 +158,6 @@ def window_query(windowed: int, checked: int, chunks: int, days: int, track: str
         params += ["$li%d: [ID!], $ln%d: Int!" % (k, k) for k in range(chunks)]
         body += ["l%d: items(ids: $li%d, limit: $ln%d) { id name state created_at board { id } column_values(ids: $lc) %s }"
                  % (k, k, k, CV_FRAGMENT) for k in range(chunks)]
-    if track:
-        params.append("$t0: [ID!]")
-        body.append(TRACK_ALIAS % track)
     return "query (%s) { %s }" % (", ".join(params), " ".join(body))
 
 
@@ -364,21 +366,15 @@ class MondayReader:
             return resp.status_code, None, b"".join(pieces)
 
     # ---- boards ----------------------------------------------------------
-    def require_columns(self, spec: Iterable[tuple], track: Optional[tuple] = None) -> Optional[list]:
+    def require_columns(self, spec: Iterable[tuple]) -> None:
         """Every board's columns in one request (an alias per board). A board not visible to the token is
-        `not_visible`; a column it lacks is `unknown_column`. D4: with `track` (board, status column, label indexes), the
-        ids of that board's items the column holds one of them by (`status_rule`), in the same request and paged to the
-        end - returned; None without it."""
+        `not_visible`; a column it lacks is `unknown_column`."""
         spec = [(str(b), list(cols)) for b, cols in spec]
         params = ", ".join("$b%d: [ID!], $c%d: [String!]" % (i, i) for i in range(len(spec)))
         body = " ".join("b%d: boards(ids: $b%d) { columns(ids: $c%d) { id } }" % (i, i, i) for i in range(len(spec)))
         variables: dict = {}
         for i, (board_id, cols) in enumerate(spec):
             variables["b%d" % i], variables["c%d" % i] = [board_id], cols
-        if track:
-            params += ", $t0: [ID!], $limit: Int!"
-            body += " " + TRACK_ALIAS % status_rule(track[1], track[2])
-            variables.update(t0=[str(track[0])], limit=PAGE_LIMIT)
         data = self.post("query (%s) { %s }" % (params, body), variables)
         for i, (board_id, cols) in enumerate(spec):
             boards = data.get("b%d" % i) or []
@@ -388,23 +384,30 @@ class MondayReader:
             missing = sorted(set(cols) - present)
             if missing:
                 raise MondayError("unknown_column", f"board {board_id} lacks {missing}")
-        return self._track(data, track, "graphql") if track else None
 
-    def _track(self, data: dict, track: tuple, shape: str) -> list:
-        """The ids alias `t0` answered, then its pages after the first, each id once in monday's order. A board not visible
-        is `not_visible`; an answer of another shape is `shape` (the refresh's `delta_shape`, which reads whole instead)."""
+    def filtered_ids(self, board: str, column: str, indexes: Iterable) -> list:
+        """D4: the ids of a board's items whose status column holds one of the label `indexes` (`status_rule`), each once in
+        monday's order, paged to the end - in a request of its own (FILTERED_FIRST), never an alias of another: monday
+        refuses a request whole when one field of it is invalid, so a filter it refused took the columns check and the
+        windows with it (the review of D4, 26.11). A refusal is monday's own code (`graphql` ...); a board monday does not
+        show, `not_visible`; an answer without the filter's alias, or a page without its items, `filter_shape` - each its
+        own word, so the caller can say which."""
+        board = str(board)
+        data = self.post(FILTERED_FIRST % status_rule(column, indexes), {"t0": [board], "limit": PAGE_LIMIT})
         got = data.get("t0")
-        if not isinstance(got, list) or not got or not isinstance(got[0], dict):
-            raise MondayError("not_visible", f"board {track[0]}")
-        page = got[0].get("items_page")
+        if not isinstance(got, list):
+            raise MondayError("filter_shape", f"board {board}: the answer carried no filter")
+        if not got:
+            raise MondayError("not_visible", f"board {board}")
+        page = got[0].get("items_page") if isinstance(got[0], dict) else None
         ids: list = []
         pages = 0
         while True:
             pages += 1
             if pages > MAX_PAGES:
-                raise MondayError("too_many_pages", f"board {track[0]}: a filter whose cursor never ends")
+                raise MondayError("too_many_pages", f"board {board}: a filter whose cursor never ends")
             if not isinstance(page, dict) or not isinstance(page.get("items"), list):
-                raise MondayError(shape, f"board {track[0]}: the filter came back without items")
+                raise MondayError("filter_shape", f"board {board}: the filter came back without items")
             ids += [str(x["id"]) for x in page["items"] if isinstance(x, dict) and x.get("id") is not None]
             if not page.get("cursor"):
                 return list(dict.fromkeys(ids))
@@ -485,8 +488,7 @@ class MondayReader:
                            if isinstance(x, dict) and x.get("state") != "deleted"]
         return out
 
-    def changed_items(self, windowed: list, checked: list, days: int, by_id: tuple = ((), ()),
-                      track: Optional[tuple] = None) -> dict:
+    def changed_items(self, windowed: list, checked: list, days: int, by_id: tuple = ((), ())) -> dict:
         """What changed lately, in one request (D2's refresh; analiza-metrics `FinanceReader._delta`): every board's
         columns checked; for each of `windowed` [(board, columns)], its items_count and the ids and update times of its
         items updated within the last `days` days, each window paged to its end; and `by_id` (ids, columns) read by id
@@ -494,9 +496,7 @@ class MondayReader:
         `unknown_column`, an answer of another shape `delta_shape`; a column of NEVER_READ asked by id is refused before
         anything is sent (rule 8), and a row keeps the board it answered from (rule 7): the caller tells a stranger.
         -> {"counts": [items_count per windowed board, as monday gave it], "windows": [[{"id", "updated_at"}] per
-        windowed board], "rows": the rows read by id, flattened, a deleted one dropped, "track": with `track` (D4: board,
-        status column, label indexes) the ids of that board's items it holds by, paged to the end (`require_columns`' own),
-        else None}."""
+        windowed board], "rows": the rows read by id, flattened, a deleted one dropped}."""
         ids, cols = [str(x) for x in by_id[0]], [str(c) for c in by_id[1]]
         if ids:
             if not cols:
@@ -512,10 +512,7 @@ class MondayReader:
             variables["lc"] = cols
             for k, piece in enumerate(chunks):
                 variables["li%d" % k], variables["ln%d" % k] = piece, len(piece)
-        if track:
-            variables.update(t0=[str(track[0])], limit=PAGE_LIMIT)
-        data = self.post(window_query(len(windowed), len(boards) - len(windowed), len(chunks), days,
-                                      status_rule(track[1], track[2]) if track else ""), variables)
+        data = self.post(window_query(len(windowed), len(boards) - len(windowed), len(chunks), days), variables)
         counts, windows, cursors = [], [], []
         for i, (board, cs) in enumerate(boards):
             got = data.get("b%d" % i)
@@ -554,8 +551,7 @@ class MondayReader:
                 if not isinstance(x, dict) or x.get("id") is None or "updated_at" not in x:
                     raise MondayError("delta_shape", f"board {board}: an item without its id or updated_at")
             out_windows.append([{"id": str(x["id"]), "updated_at": x.get("updated_at")} for x in items])
-        return {"counts": counts, "windows": out_windows, "rows": rows,
-                "track": self._track(data, track, "delta_shape") if track else None}
+        return {"counts": counts, "windows": out_windows, "rows": rows}
 
     def _window_rest(self, board: str, cursor: str) -> list:
         """A window's next pages, to its end."""

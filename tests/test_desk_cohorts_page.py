@@ -193,6 +193,22 @@ def test_every_label_the_view_draws_is_defined_in_the_students_legend_and_the_le
     assert set(ch.NOTES.values()) <= {x["term"] for x in v["b2c"]["cohorts"]["legend"]["items"]}
 
 
+def test_a_view_not_read_says_why_in_the_servers_words_and_the_list_is_as_it_is():
+    # the review of D4: a reading whose filter monday refused shows no cohort and no money, says why where the table would be,
+    # and offers no file; the switch stays, and the payments' list is drawn as it is
+    whole = real_view()
+    v = real_view(dict(cohort_snapshot(), cohorts_read={"ok": False, "reason": "track_refused", "code": "graphql"}))
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"]
+    cohorts, listed = render([case(), case("list")], v)
+    (whole_list,) = render([case("list")], whole)
+    part = v["b2c"]["cohorts"]
+    assert '<p class="fin-badtext">%s</p>' % part["said"].replace('"', "&quot;") in cohorts
+    assert ch.UNREAD_SAID["track_refused"].replace('"', "&quot;") in cohorts
+    assert "fin-cohorts-t" not in cohorts and "fin-figs" not in cohorts and 'data-export="b2c_cohorts"' not in cohorts
+    assert 'data-scview="list"' in cohorts and 'data-scview="cohorts"' in cohorts
+    assert listed == whole_list
+
+
 def test_a_view_without_the_cohorts_draws_the_list_without_the_switch():
     # an answer of a server before D4 (the hand-made view has no `cohorts`): the list as it was
     html = render([case()], hand_made_view())[0]

@@ -47,6 +47,11 @@ they paid, each part, the balance and what was paid over the price - and expecte
 agora (Decimal end to end). `checks["ties"]` says so, and the tests hold it. Waived and out students are listed with what
 they paid, in no sum of the cohort's line but their own (`waived_paid`, `out_paid`).
 
+WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
+`cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
+failed). The part then holds no cohort and no money, `state` "unread", and says why in its own words (UNREAD_SAID); the
+rest of the desk is read and shown as always. A part that is not "ok" is never exported as complete (`checks["ties"]`).
+
 WHAT IT IS NOT: a writer, or a second money rule. It reads the reading and the desk's own payment rows; nothing here asks
 monday, and the page adds no money up (frontend/finance.js draws these sums, and the totals of a filtered list come from
 GET /api/desk/totals).
@@ -157,6 +162,17 @@ NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במח�
               "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד."}
 # said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
 NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
+# said in place of the table when the reading could not read the cohorts (app/desk/reading.py COHORTS_UNREAD): what was not
+# read, why in its own words, and that nothing else is touched (the review of D4)
+_TRACK_LIST = "רשימת המחזורים במסלול %s" % _q(TRACK_LABEL)
+UNREAD_SAID = OrderedDict([
+    ("track_refused", "מאנדיי לא קיבל את הבקשה ל%s." % _TRACK_LIST),
+    ("track_shape", "התשובה של מאנדיי ל%s לא הגיעה בצורה שהמסך ביקש." % _TRACK_LIST),
+    ("track_not_visible", "מאנדיי לא הראה את לוח המחזורים בבקשה ל%s." % _TRACK_LIST),
+    ("track_failed", "הבקשה למאנדיי ל%s לא הצליחה." % _TRACK_LIST),
+])
+UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
+UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."
 OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
@@ -301,10 +317,45 @@ def _ties(line: dict) -> bool:
         and line["expected"] == line["price"] * line["students"]
 
 
+def _frame() -> dict:
+    """What the page and the file need to draw the view, whatever it holds: its parts, columns, words and legend."""
+    return {"parts": [{"key": k, "label": p["label"], "about": p["about"]} for k, p in PARTS.items()],
+            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when, "folded": k in FOLDED}
+                        for k, h, kind, when in COLUMNS],
+            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]
+                                       + [{"term": NOTES[k], "text": NOTES_SAID[k]} for k in NOTES_SAID]},
+            # the view's own words, which the page draws beside the server's numbers
+            "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
+                      "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
+                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
+            "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()]}
+
+
+def not_shown(state: str, reason: str) -> dict:
+    """The part when the view cannot be shown - `state` "unread": the reading could not read what it needs (UNREAD_SAID) -
+    with no cohort and no money, and why in its own words (`said`), which the page draws where the table would be.
+    `checks["ties"]` is false, so nothing of it is ever exported as complete."""
+    return dict(_frame(), state=state, reason=reason, said=UNREAD_HEAD + UNREAD_SAID[reason] + UNREAD_TAIL, cohorts=[],
+                unpriced=[], totals=cohort_totals([]), checks={"ties": False})
+
+
+def _unread(snapshot: dict) -> str:
+    """Why the reading could not read the students by cohort (its `cohorts_read`), "" when it could. A snapshot without one -
+    a reading of before it, a test's - said nothing against them; one of another shape is not trusted: "track_failed"."""
+    got = snapshot.get("cohorts_read")
+    if got is None or (isinstance(got, dict) and got.get("ok") is True):
+        return ""
+    reason = got.get("reason") if isinstance(got, dict) else None
+    return reason if reason in UNREAD_SAID else "track_failed"
+
+
 def build_cohorts(snapshot: dict, rows: list) -> dict:
     """The students by cohort of a reading (`snapshot`, app/desk/reading.py's shape) and the desk's payment rows built from
     it (`rows`, app/desk/view.py build_b2c): every cohort the reading holds, those with a price as lines and the rest listed
-    with why; and what the page and the file need to draw them."""
+    with why; and what the page and the file need to draw them. A reading that could not read them: `not_shown`."""
+    unread = _unread(snapshot)
+    if unread:
+        return not_shown("unread", unread)
     cohorts = snapshot.get("cohorts") or []
     enrollments = sorted((e for e in snapshot.get("enrollments") or [] if isinstance(e, dict)), key=_id_key)
     raw = (snapshot.get("student_charge") or {}).get("rows") or []
@@ -371,19 +422,8 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     lines.sort(key=lambda x: (-x["part_approved"], -x["balance"]))
     unpriced.sort(key=lambda x: (x["code"], x["id"]))
     unpriced.sort(key=lambda x: x["start"], reverse=True)
-    return {"cohorts": lines, "unpriced": unpriced, "totals": cohort_totals(lines),
-            "parts": [{"key": k, "label": p["label"], "about": p["about"]} for k, p in PARTS.items()],
-            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when, "folded": k in FOLDED}
-                        for k, h, kind, when in COLUMNS],
-            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]
-                                       + [{"term": NOTES[k], "text": NOTES_SAID[k]} for k in NOTES_SAID]},
-            # the view's own words, which the page draws beside the server's numbers
-            "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
-                      "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
-                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
-            "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()],
-            "checks": {"ties": all(_ties(x) for x in lines)
-                       and cohort_totals(lines) == _totals_by_student(lines)}}
+    return dict(_frame(), state="ok", reason="", said="", cohorts=lines, unpriced=unpriced, totals=cohort_totals(lines),
+                checks={"ties": all(_ties(x) for x in lines) and cohort_totals(lines) == _totals_by_student(lines)})
 
 
 # ---------------------------------------------------------------- the lists, as the page shows them

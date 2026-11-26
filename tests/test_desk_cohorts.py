@@ -22,6 +22,7 @@ from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import quote, urlencode
 
+import httpx
 import openpyxl
 import pytest
 
@@ -476,8 +477,9 @@ def test_the_reading_reads_the_enrollments_of_the_cohorts_with_a_price_with_the_
     w.extra_cells = {"203": {"lookup_mm2kg3gw": {"text": ID_NUMBER}}}
     r = rd.read_desk(reader_of(w))
     assert r["error"] is None and r["complete"] is True
-    # step 5: 203 and 204 by id, in one request more; 205 (no price) and 403's (cancelled) never
-    assert r["asked"]["enrollments"] == ["201", "202", "203", "204", "206"] and r["calls"] == 8
+    # step 5: 203 and 204 by id, in one request more; 205 (no price) and 403's (cancelled) never (nine: the cohorts on the
+    # voucher track are a request of their own since the review of D4)
+    assert r["asked"]["enrollments"] == ["201", "202", "203", "204", "206"] and r["calls"] == 9
     assert sorted(e["id"] for e in r["enrollments"]) == ["201", "202", "203", "204", "206"]
     assert r["checks"]["enrollments"]["asked"] == 5 and r["checks"]["enrollments"]["rows"] == 5
     assert ["203", "204"] in [ids for b, ids in w.by_id_reads() if b == rd.ENROLLMENTS_BOARD]
@@ -505,7 +507,7 @@ def test_a_reading_with_no_cohort_with_a_price_reads_what_it_read_before():
     w = cohort_world()
     w.set(401, price="", touch=False)
     r = rd.read_desk(reader_of(w))
-    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["calls"] == 7
+    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["calls"] == 8
 
 
 def test_the_body_schema_moved_so_a_reading_kept_before_d4_is_read_whole():
@@ -807,25 +809,33 @@ RULE = '{rules: [{column_id: "color_mm31k62f", compare_value: [3], operator: any
 ALIAS = "t0: boards(ids: $t0) { items_page(limit: $limit, query_params: %s) { cursor items { id } } }" % RULE
 
 
-def test_the_track_filter_is_mondays_documented_status_filter_and_rides_on_requests_already_sent():
+def test_the_track_filter_is_mondays_documented_status_filter_in_a_request_of_its_own():
+    """The review of D4 (HIGH): the filter rode the columns check of every reading and the windows of every refresh, and
+    monday refuses a request whole when one field of it is invalid - so a filter it refused took the whole desk down. It is
+    a request of its own now (changed deliberately: this test said it rode on requests already sent), right after the
+    columns check and right after the windows, its query text the one answered live on 26.11."""
     assert rd.VOUCHER_TRACK == "3" and rd.TRACK == (rd.COHORTS_BOARD, "color_mm31k62f", ("3",))
     assert monday.status_rule(rd.CO["flow"], rd.TRACK[2]) == RULE
     assert monday.status_rule("color_x", [1, "2"]) == '{rules: [{column_id: "color_x", compare_value: [1, 2], operator: any_of}]}'
     for bad in (('color_x"}] , {', [3]), ("color_x", []), ("color_x", ["3; drop"])):
         with pytest.raises((monday.MondayError, ValueError)):
             monday.status_rule(*bad)
-    # a full reading: beside its columns check, in its first request - no request of its own
+    # a full reading: the columns check alone, then the filter alone
     w = cohort_world()
     rd.read_desk(reader_of(w))
-    first_q, first_v = w.queries[0]
-    assert "columns(ids:" in first_q and ALIAS in first_q and first_v["t0"] == [rd.COHORTS_BOARD] and first_v["limit"] == 500
+    (first_q, _v), (second_q, second_v) = w.queries[0], w.queries[1]
+    assert "columns(ids:" in first_q and "any_of" not in first_q and "$t0" not in first_q
+    assert second_q == "query ($t0: [ID!], $limit: Int!) { %s }" % ALIAS
+    assert second_v == {"t0": [rd.COHORTS_BOARD], "limit": 500}
     assert sum(1 for q, _v in w.queries if "any_of" in q) == 1 and w.tracked == [(rd.COHORTS_BOARD, rd.CO["flow"], [3])]
-    # a refresh: beside its windows, in the request it already sends - a quiet one is still three requests
+    # a refresh: the windows alone, then the filter alone - a quiet one is five requests here (the windows, the filter, two
+    # pages of ids, and the cohorts with a price read again)
     reader, held = reader_of(w), rd.read_desk(reader_of(w))
     before = len(w.queries)
     got = rd.read_delta(reader, held)
-    windows = [q for q, _v in w.queries[before:] if "within_the_last" in q]
-    assert len(windows) == 1 and ALIAS in windows[0] and got["calls"] == len(w.queries) - before == 4
+    asked = [q for q, _v in w.queries[before:]]
+    assert "within_the_last" in asked[0] and "any_of" not in asked[0] and asked[1] == second_q
+    assert got["calls"] == len(asked) == 5 and got["cohorts_read"] == {"ok": True}
 
 
 def track_world() -> World:
@@ -933,20 +943,108 @@ def test_the_track_is_paged_to_its_end_in_a_full_reading_and_a_refresh(page):
     assert got["asked"]["cohorts"] == whole["asked"]["cohorts"] and cohorts_of(got) == cohorts_of(whole)
 
 
-def test_a_filter_answered_in_another_shape_fails_the_reading_and_a_refresh_reads_whole_instead():
-    w = track_world()
-    reader, held = reader_of(w), rd.read_desk(reader_of(w))
+def _filter_answers(w: World, how: str) -> None:
+    """The filter's own request answered another way: refused as monday refuses an invalid field (errors, no data), without
+    its items, without its alias, with no board, failing on the wire, or breaking in a way the reader does not know."""
     answer = w.answer_track
-    w.answer_track = lambda q, v: {k: [{"items_page": {"cursor": None}}] for k in answer(q, v)}   # no items in it
+    plain = w.handler
+
+    def handler(request):
+        if b"any_of" in request.content and how == "refused":
+            return httpx.Response(200, json={"errors": [{"message": "Invalid value for compare_value",
+                                                         "extensions": {"code": "INVALID_ARGUMENT"}}]})
+        if b"any_of" in request.content and how == "http":
+            return httpx.Response(500, text="no")
+        if b"any_of" in request.content and how == "crash":
+            raise RuntimeError("a transport that breaks in a way the reader does not know")
+        return plain(request)
+
+    w.handler = handler
+    w.answer_track = {"shape": lambda q, v: {k: [{"items_page": {"cursor": None}}] for k in answer(q, v)},
+                      "missing": lambda q, v: {}, "no_board": lambda q, v: {"t0": []}}.get(how, answer)
+
+
+UNREAD_HOW = {"refused": ("track_refused", "graphql"), "shape": ("track_shape", "filter_shape"),
+              "missing": ("track_shape", "filter_shape"), "no_board": ("track_not_visible", "not_visible"),
+              "http": ("track_failed", "http"), "crash": ("track_failed", "internal")}
+
+
+@pytest.mark.parametrize("how", sorted(UNREAD_HOW))
+def test_a_filter_refused_answered_in_another_shape_or_not_at_all_leaves_the_reading_and_the_refresh_whole(how):
+    """The review of D4 (HIGH), changed deliberately: this test said a filter answered in another shape FAILED the reading
+    and made a refresh read whole. Now neither: the payments, the companies and their counts are read as always, step 5 is
+    skipped, and the reading says why in `cohorts_read` - a closed reason in its own words, never "board not visible" for
+    an answer that did not carry the filter. A refresh says the same, and a full reading would agree with it."""
+    w = track_world()
+    held = rd.read_desk(reader_of(w))
+    whole = fd.build_view(held, TODAY)
+    _filter_answers(w, how)
+    reason, code = UNREAD_HOW[how]
     r = rd.read_desk(reader_of(w))
-    assert r["error"] == "graphql" and "filter" in r["detail"]
-    with pytest.raises(monday.MondayError) as err:
-        rd.read_delta(reader, held)
-    assert err.value.code == "delta_shape"
-    # and an answer without the filter at all, from a reader that did not ask for it: never a refresh short of the track
-    w.answer_track = answer
-    plain = reader.changed_items
-    reader.changed_items = lambda *a, **k: dict(plain(*a, **k), track=None)
-    with pytest.raises(monday.MondayError) as err:
-        rd.read_delta(reader, held)
-    assert err.value.code == "delta_shape" and "voucher track" in err.value.detail
+    assert r["error"] is None and r["complete"] is True and r["cohorts_read"] == {"ok": False, "reason": reason, "code": code}
+    # the payments' cohorts are still read (the list's cohort code), the track's alone are not; no enrollment of step 5
+    assert r["asked"]["cohorts"] == ["401", "402", "403", "404"] and r["asked"]["enrollments"] == ["201", "202", "206", "209"]
+    v = fd.build_view(r, TODAY)
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2b"] == whole["b2b"] and v["checks"]["ok"] is True
+    part = v["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["cohorts"], part["unpriced"]) == ("unread", reason, [], [])
+    assert part["said"] == ch.UNREAD_HEAD + ch.UNREAD_SAID[reason] + ch.UNREAD_TAIL and part["checks"]["ties"] is False
+    assert "גלוי" not in part["said"] or how == "no_board"
+    assert part["totals"]["count"] == 0 and part["legend"] == whole["b2c"]["cohorts"]["legend"]
+    # a refresh: never raised, so HeldReading never reads whole for it; it agrees with a full reading of the same moment
+    got = rd.read_delta(reader_of(w), held)
+    assert got["kind"] == "delta" and got["error"] is None and got["cohorts_read"] == r["cohorts_read"]
+    assert got["asked"] == r["asked"] and fd.build_view(got, TODAY)["b2c"]["cohorts"] == part
+    # and the next reading that reads the track shows the cohorts again, a refresh as a full one
+    del w.handler, w.answer_track
+    back = rd.read_delta(reader_of(w), got)
+    assert back["cohorts_read"] == {"ok": True} and back["asked"] == held["asked"]
+    assert cohorts_of(back) == cohorts_of(held) == whole["b2c"]["cohorts"]
+
+
+def test_a_refused_filter_never_makes_the_held_reading_fall_back_and_health_says_why():
+    w = track_world()
+    h = rd.HeldReading(lambda: reader_of(w), ttl_s=0)
+    h.get()
+    _filter_answers(w, "refused")
+    kept, last = h.get()
+    assert kept["kind"] == "delta" and last["error"] is None and h.health()["last_codes"] == ["delta", "store_not_configured"]
+    assert rd.health_part(last)["cohorts"] == "track_refused" and last["cohorts_read"]["code"] == "graphql"
+    full = rd.read_desk(reader_of(w))
+    assert rd.health_part(rd.summary(full))["cohorts"] == "track_refused"
+    assert rd.health_part(rd.summary(rd.read_desk(reader_of(track_world()))))["cohorts"] == "ok"
+    assert rd.health_part(rd.summary({"error": "graphql"}))["cohorts"] is None
+
+
+def test_a_reading_without_the_track_is_kept_so_and_a_cold_instance_shows_it_as_not_read():
+    from tests.test_desk_mirror import MemoryStore
+
+    w, store = track_world(), MemoryStore()
+    _filter_answers(w, "shape")
+    rd.HeldReading(lambda: reader_of(w), store=store).get()
+    cold = rd.HeldReading(lambda: reader_of(w), store=store)
+    shown, _last, refreshing = cold.answer(stale_ok=True)
+    assert refreshing is True and shown["cohorts_read"] == {"ok": False, "reason": "track_shape", "code": "filter_shape"}
+    assert fd.build_view(shown, TODAY)["b2c"]["cohorts"]["state"] == "unread"
+    # the next reading reads the track again: kept in the store's place, its students back
+    del w.handler, w.answer_track
+    fresh, _ = cold.get()
+    assert fresh["cohorts_read"] == {"ok": True} and store.load()["cohorts_read"] == {"ok": True}
+    assert fd.build_view(fresh, TODAY)["b2c"]["cohorts"]["state"] == "ok"
+
+
+def test_every_reason_the_reading_gives_has_its_words_and_the_part_of_another_shape_is_not_trusted():
+    assert set(ch.UNREAD_SAID) == set(rd.COHORTS_UNREAD)
+    for how, (reason, code) in UNREAD_HOW.items():
+        if code != "internal":
+            assert rd.cohorts_unread("track", monday.MondayError(code, "x"))["reason"] == reason, how
+    assert rd.cohorts_unread("track", KeyError("t0")) == {"ok": False, "reason": "track_failed", "code": "internal"}
+    s = cohort_snapshot()
+    ok = ch.build_cohorts(s, fd.build_view(s, TODAY)["b2c"]["rows"])
+    assert ok["state"] == "ok" and ok["reason"] == "" and ok["said"] == "" and ok["cohorts"]
+    for said, state in ((None, "ok"), ({"ok": True}, "ok"), ({"ok": False, "reason": "track_shape"}, "unread"),
+                        ({"ok": False, "reason": "no such reason"}, "unread"), ("broken", "unread"), ({}, "unread")):
+        part = fd.build_view(dict(s, cohorts_read=said), TODAY)["b2c"]["cohorts"]
+        assert part["state"] == state, said
+        if state == "unread":
+            assert part["reason"] in ch.UNREAD_SAID and not part["cohorts"]
