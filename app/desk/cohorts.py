@@ -4,7 +4,8 @@ is still to come, each student's balance in one of Chava's parts by the voucher 
 
 WHICH COHORTS: those on the voucher track only - Registration Flow (`color_mm31k62f`) "שוברים משרד העבודה", by index
 (app/desk/reading.py VOUCHER_TRACK). Chava's parts are voucher statuses, which mean something there only; a cohort on another
-track is not shown and is counted nowhere, priced or not.
+track is not shown and is counted nowhere, priced or not. The reading reads every cohort on the track, whether or not a
+payment links to it (`TRACK`), so a cohort whose students paid nothing yet is here, its students owing the whole price.
 
 WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-payment and the boards, read 26.11):
 1. THE PRICE: the cohort's "מחיר" (`text_mm5fhydb`), a TEXT column typed "10,000" or "12000": one clean number (`price_of`),

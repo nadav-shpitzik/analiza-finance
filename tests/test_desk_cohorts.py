@@ -182,22 +182,6 @@ def test_an_archived_enrollment_or_cohort_is_read_as_any_other_since_a_refresh_c
     assert [x["id"] for x in part["cohorts"]] == ["C1"] and rd.roster_cohort(dict(coh(), state="archived"))
 
 
-def test_a_priced_cohort_on_another_track_is_not_shown_and_counted_nowhere():
-    # priced, with students and payments, on חיימש or on no track - nowhere, not even without money; the legend says so
-    part = part_of([sc(1, paid="4000", enr=["E1"])], [coh(flow_="1", roster=["E1"]), coh("C2", "A702", flow_="", roster=[])],
-                   [enr("E1", voucher="1")])
-    assert part["cohorts"] == [] and part["unpriced"] == [] and part["totals"]["count"] == 0
-    assert part["totals"]["expected"] == 0 and ch.TRACK_SAID in part["about"]
-    assert any(ch.TRACK_SAID in x["text"] for x in part["legend"]["items"])          # the legend says so, in one sentence
-    # and the reading never reads its students
-    assert rd.VOUCHER_TRACK == "3" and not rd.roster_cohort(coh(flow_="1")) and rd.roster_cohort(coh())
-    w = cohort_world()
-    w.set(401, flow=status(FLOWS["1"], 1), touch=False)
-    r = rd.read_desk(reader_of(w))
-    assert not {"203", "204"} & set(r["asked"]["enrollments"])
-    assert "A401" not in {x["code"] for x in fd.build_view(r, TODAY)["b2c"]["cohorts"]["cohorts"]}
-
-
 def test_the_enrollment_statuses_in_the_count_are_the_helpers_in_set():
     assert list(ch.ENROLLMENT_IN) == ["1", "2", "3", "4"]
     assert list(ch.ENROLLMENT_IN.values()) == ["נרשם", "פעיל", "At Risk", "סיים"]
@@ -591,13 +575,15 @@ def test_a_student_who_moved_to_another_cohort_leaves_at_the_next_refresh():
 
 
 def roster_world(rng: random.Random) -> World:
-    """Payments, enrollments in four cohorts (two with a price), every voucher and Status, persons."""
+    """Payments, enrollments in six cohorts (four with a price; 405 on another track), every voucher and Status,
+    persons."""
     w = World()
-    for c in range(1, 5):
-        w.add(rd.COHORTS_BOARD, 400 + c, "מחזור-%d" % c, code="A40%d" % c, price=["10,000", "", "12000", ""][c - 1],
-              status=status("פעיל", 3), roster=rel(), flow=VOUCHER_FLOW)
+    for c in range(1, 7):
+        w.add(rd.COHORTS_BOARD, 400 + c, "מחזור-%d" % c, code="A40%d" % c,
+              price=["10,000", "", "12000", "", "9,000", "15,000"][c - 1], status=status("פעיל", 3), roster=rel(),
+              flow=status(FLOWS["1"], 1) if c == 5 else VOUCHER_FLOW)
     for e in range(1, 13):
-        c = 400 + rng.randint(1, 4)
+        c = 400 + rng.randint(1, 6)
         v = rng.choice(sorted(k for k in fd.VOUCHER if k))
         w.add(rd.ENROLLMENTS_BOARD, 200 + e, "הרשמה-%d" % e, cohort=rel(c), voucher=status(fd.VOUCHER[v], int(v)),
               status=status("נרשם", 1), person=rel(900 + rng.randint(1, 10)))
@@ -623,7 +609,7 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
     w = roster_world(rng)
     h = rd.HeldReading(lambda: reader_of(w), ttl_s=0)
     h.get()
-    cohorts = [400 + c for c in range(1, 5)]
+    cohorts = [400 + c for c in range(1, 7)]
 
     def enrollments():
         return sorted(int(i) for i, x in w.items.items() if x["board"] == rd.ENROLLMENTS_BOARD and x["state"] == "active")
@@ -665,8 +651,23 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
             if rng.random() < 0.5:
                 sync_rosters(w)
 
-    edits = [voucher, standing, moved, joined, price, cancelled, paid, archived]
-    students = 0
+    def track():
+        # a cohort joins the voucher track or leaves it (an edit of its column: its time moves)
+        w.set(rng.choice(cohorts), flow=rng.choice([VOUCHER_FLOW, status(FLOWS["1"], 1)]))
+
+    def new_cohort():
+        # a cohort no payment links to, on the track or not, priced or not, with a student
+        c, e = 1000 + len(w.items), 1001 + len(w.items)
+        w.add(rd.COHORTS_BOARD, c, "חדש-%d" % c, code="N%d" % c, price=rng.choice(["", "10,000"]), roster=rel(),
+              status=status("פעיל", 3), flow=rng.choice([VOUCHER_FLOW, status(FLOWS["2"], 2)]))
+        w.add(rd.ENROLLMENTS_BOARD, e, "חדש-%d" % e, cohort=rel(c), voucher=status("אושר - ממתין לתשלום", 1),
+              status=status("נרשם", 1), person=rel(900 + rng.randint(1, 10)))
+        w.touch(c, e)
+        cohorts.append(c)
+        sync_rosters(w)
+
+    edits = [voucher, standing, moved, joined, price, cancelled, paid, archived, track, new_cohort]
+    students, unpaid = 0, 0
     for _ in range(80):
         for edit in rng.sample(edits, rng.choice([1, 2, 3])):
             edit()
@@ -677,7 +678,10 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
         mine, theirs = cohorts_of(kept), cohorts_of(full)
         assert mine == theirs and mine["checks"]["ties"] is True
         students += sum(len(x["students_list"]) for x in mine["cohorts"])
-    assert students > 200
+        # a cohort on the track that no payment links to, shown with its students
+        unpaid += sum(1 for x in mine["cohorts"] if x["paid"] == 0 and x["students"])
+        assert all(c["id"] in kept["asked"]["cohorts"] for c in kept["cohorts"])
+    assert students > 200 and unpaid > 20
 
 
 # ---- the routes: the totals and the file of the view, gated as the students' list ------------------------------------
@@ -794,3 +798,135 @@ def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, mo
     info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
         io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
     assert "לא שלמה" in info["שימו לב"]
+
+
+# ---- the voucher track: only its cohorts, and every one of them, paid for or not ---------------------------------------
+from app.monday import client as monday  # noqa: E402
+
+RULE = '{rules: [{column_id: "color_mm31k62f", compare_value: [3], operator: any_of}]}'
+ALIAS = "t0: boards(ids: $t0) { items_page(limit: $limit, query_params: %s) { cursor items { id } } }" % RULE
+
+
+def test_the_track_filter_is_mondays_documented_status_filter_and_rides_on_requests_already_sent():
+    assert rd.VOUCHER_TRACK == "3" and rd.TRACK == (rd.COHORTS_BOARD, "color_mm31k62f", ("3",))
+    assert monday.status_rule(rd.CO["flow"], rd.TRACK[2]) == RULE
+    assert monday.status_rule("color_x", [1, "2"]) == '{rules: [{column_id: "color_x", compare_value: [1, 2], operator: any_of}]}'
+    for bad in (('color_x"}] , {', [3]), ("color_x", []), ("color_x", ["3; drop"])):
+        with pytest.raises((monday.MondayError, ValueError)):
+            monday.status_rule(*bad)
+    # a full reading: beside its columns check, in its first request - no request of its own
+    w = cohort_world()
+    rd.read_desk(reader_of(w))
+    first_q, first_v = w.queries[0]
+    assert "columns(ids:" in first_q and ALIAS in first_q and first_v["t0"] == [rd.COHORTS_BOARD] and first_v["limit"] == 500
+    assert sum(1 for q, _v in w.queries if "any_of" in q) == 1 and w.tracked == [(rd.COHORTS_BOARD, rd.CO["flow"], [3])]
+    # a refresh: beside its windows, in the request it already sends - a quiet one is still three requests
+    reader, held = reader_of(w), rd.read_desk(reader_of(w))
+    before = len(w.queries)
+    got = rd.read_delta(reader, held)
+    windows = [q for q, _v in w.queries[before:] if "within_the_last" in q]
+    assert len(windows) == 1 and ALIAS in windows[0] and got["calls"] == len(w.queries) - before == 4
+
+
+def track_world() -> World:
+    """cohort_world, and: 404 with a price on another track (חיימש), a payment linking to its enrollment 209; 405 with a
+    price on the voucher track and no payment at all (its students 207 and 208); 406 on the voucher track with no price and
+    no payment; 407 with a price on another track and no payment."""
+    w = cohort_world()
+    w.add(SC, 104, "תלמיד-דלת", status=status("שולם", 1), paid="4000", enrollment=rel(209), lead=rel())
+    w.add(rd.ENROLLMENTS_BOARD, 209, "הרשמה-209", cohort=rel(404), voucher=status("אושר - ממתין לתשלום", 1),
+          status=status("נרשם", 1), person=rel(909))
+    for e, v in ((207, 1), (208, 17)):
+        w.add(rd.ENROLLMENTS_BOARD, e, "הרשמה-%d" % e, cohort=rel(405), voucher=status(fd.VOUCHER[str(v)], v),
+              status=status("נרשם", 1), person=rel(900 + e))
+    w.add(rd.ENROLLMENTS_BOARD, 210, "הרשמה-210", cohort=rel(407), voucher=status("אושר - ממתין לתשלום", 1),
+          status=status("נרשם", 1), person=rel(910))
+    w.add(rd.COHORTS_BOARD, 404, "מחזור-חיימש", code="A404", price="9,000", roster=rel(209), status=status("פעיל", 3),
+          flow=status(FLOWS["1"], 1))
+    w.add(rd.COHORTS_BOARD, 405, "מחזור-בלי-תשלום", code="A405", price="12,000", roster=rel(207, 208),
+          status=status("פעיל", 3), flow=VOUCHER_FLOW)
+    w.add(rd.COHORTS_BOARD, 406, "מחזור-שוברים-בלי-מחיר", code="A406", price="", roster=rel(), status=status("פעיל", 3),
+          flow=VOUCHER_FLOW)
+    w.add(rd.COHORTS_BOARD, 407, "מחזור-אחר", code="A407", price="15,000", roster=rel(210), status=status("פעיל", 3),
+          flow=status(FLOWS["2"], 2))
+    return w
+
+
+def test_a_priced_cohort_on_another_track_is_not_shown_and_counted_nowhere():
+    # in the view: priced, with students and payments, on חיימש - nowhere, not even without money
+    part = part_of([sc(1, paid="4000", enr=["E1"])], [coh(flow_="1", roster=["E1"]), coh("C2", "A702", flow_="", roster=[])],
+                   [enr("E1", voucher="1")])
+    assert part["cohorts"] == [] and part["unpriced"] == [] and part["totals"]["count"] == 0
+    assert part["totals"]["expected"] == 0 and ch.TRACK_SAID in part["about"]
+    assert any(ch.TRACK_SAID in x["text"] for x in part["legend"]["items"])          # the legend says so, in one sentence
+    # in the reading: 404 is read for its payment's sake (the list's cohort code), never its students
+    r = rd.read_desk(reader_of(track_world()))
+    assert "404" in r["asked"]["cohorts"] and "209" in r["asked"]["enrollments"]
+    v = fd.build_view(r, TODAY)
+    assert next(x for x in v["b2c"]["rows"] if x["id"] == "104")["cohort_code"] == "A404"
+    shown = {x["code"] for x in v["b2c"]["cohorts"]["cohorts"]} | {x["code"] for x in v["b2c"]["cohorts"]["unpriced"]}
+    assert "A404" not in shown and "A407" not in shown and not rd.roster_cohort(next(c for c in r["cohorts"] if c["id"] == "404"))
+
+
+def test_a_priced_voucher_cohort_no_payment_links_to_is_shown_its_students_owing_the_whole_price():
+    w = track_world()
+    r = rd.read_desk(reader_of(w))
+    assert r["complete"] is True and "405" in r["asked"]["cohorts"]
+    assert {"207", "208"} <= set(r["asked"]["enrollments"])
+    ln = line(fd.build_view(r, TODAY)["b2c"]["cohorts"], "A405")
+    assert ln["students"] == 2 and ln["paid"] == 0 and ln["expected"] == D("24000") and ln["balance"] == D("24000")
+    assert (ln["part_approved"], ln["part_not_submitted"]) == (D("12000"), D("12000"))
+    assert all(s["payments"] == [] and s["balance"] == D("12000") for s in ln["students_list"])
+
+
+def test_the_cohorts_read_are_the_payments_and_every_one_on_the_voucher_track_together():
+    w = track_world()
+    r = rd.read_desk(reader_of(w))
+    # the payments' (401, 402, 403 by their enrollments; 404 though on another track) and the track's (401, 402, 403, 405,
+    # 406): one list, asked once each; 407, on another track and no payment's, never read
+    assert r["asked"]["cohorts"] == ["401", "402", "403", "404", "405", "406"]
+    assert sorted(c["id"] for c in r["cohorts"]) == r["asked"]["cohorts"] and "210" not in r["asked"]["enrollments"]
+    part = fd.build_view(r, TODAY)["b2c"]["cohorts"]
+    assert [x["code"] for x in part["cohorts"]] == ["A405", "A401"]                     # approved money first
+    assert [(x["code"], x["why"]) for x in part["unpriced"]] == [("A402", "empty"), ("A403", "cancelled"),
+                                                                ("A406", "empty")]
+
+
+def test_a_refresh_reads_the_same_cohorts_and_students_as_a_full_reading():
+    w = track_world()
+    reader, held = reader_of(w), rd.read_desk(reader_of(w))
+    # a new cohort on the track, no payment, with a student; 405 leaves the track; 406 gets a price and a student
+    w.add(rd.ENROLLMENTS_BOARD, 211, "הרשמה-211", cohort=rel(408), voucher=status("הוגש – ממתין להחלטה", 0),
+          status=status("נרשם", 1), person=rel(911))
+    w.add(rd.COHORTS_BOARD, 408, "מחזור-חדש", code="A408", price="10,000", roster=rel(211), status=status("פעיל", 3),
+          flow=VOUCHER_FLOW)
+    w.add(rd.ENROLLMENTS_BOARD, 212, "הרשמה-212", cohort=rel(406), voucher=status("טרם הוגש", 17),
+          status=status("נרשם", 1), person=rel(912))
+    w.touch(211, 408, 212)
+    w.set(405, flow=status(FLOWS["1"], 1))
+    w.set(406, price="11,000", roster=rel(212))
+    reads = len(w.by_id_reads())
+    got = rd.read_delta(reader, held)
+    full = rd.read_desk(reader_of(w))
+    assert got["asked"] == full["asked"] and cohorts_of(got) == cohorts_of(full)
+    assert "408" in got["asked"]["cohorts"] and "405" not in got["asked"]["cohorts"]
+    assert {"211", "212"} <= set(got["asked"]["enrollments"]) and not {"207", "208"} & set(got["asked"]["enrollments"])
+    assert any(b == rd.COHORTS_BOARD and "408" in ids for b, ids in w.by_id_reads()[reads:])
+    codes = [x["code"] for x in cohorts_of(got)["cohorts"]]
+    assert "A408" in codes and "A406" in codes and "A405" not in codes
+
+
+@pytest.mark.parametrize("page", [1, 2])
+def test_the_track_is_paged_to_its_end_in_a_full_reading_and_a_refresh(page):
+    w = track_world()
+    whole = rd.read_desk(reader_of(w))
+    w.track_page = page
+    reader = reader_of(w)
+    paged = rd.read_desk(reader)
+    assert paged["asked"]["cohorts"] == whole["asked"]["cohorts"] and cohorts_of(paged) == cohorts_of(whole)
+    # five cohorts on the track (the filter is on the flow alone: 403, cancelled, too) - its pages after the first, one
+    # request each
+    assert len(w.tracked_items(rd.COHORTS_BOARD, rd.CO["flow"], [3])) == 5
+    assert paged["calls"] == whole["calls"] + (-(-5 // page) - 1)
+    got = rd.read_delta(reader, paged)
+    assert got["asked"]["cohorts"] == whole["asked"]["cohorts"] and cohorts_of(got) == cohorts_of(whole)

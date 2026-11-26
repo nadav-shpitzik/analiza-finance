@@ -154,8 +154,11 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
   money), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
   17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out, listed and in no sum. A line is its students'
-  sums (`checks.ties`). The reading reads the enrollments of the cohorts with a price through `board_relation_mm1hetrb`
-  (step 5, `roster_ids`), and a refresh reads those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
+  sums (`checks.ties`). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
+  filter (`any_of` [3] on Registration Flow, `TRACK`, `app/monday/client.py status_rule`) rides on its columns check, and a
+  refresh's on its windows request - no request more but one per page of 500 after the first - and they join the payments'
+  cohorts. The enrollments of those with a price through `board_relation_mm1hetrb` (step 5, `roster_ids`); a refresh reads
+  those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
   file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
   cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
   "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first

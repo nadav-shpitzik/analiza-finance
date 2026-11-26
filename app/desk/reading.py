@@ -16,8 +16,14 @@ shared pool for their chunks; here the chains are staged together, so the cap ho
 5. (D4, backlog 0313: the students by cohort) the enrollments of the cohorts on the voucher track that have a price and
    are not cancelled, through each cohort's link to its enrollments (`roster_ids`), those step 3 did not read - none when
    no such cohort has one. They join the enrollments: one list of the board's rows, asked and counted as one
-   (`asked["enrollments"]` holds both), so a refresh lays them over the held reading like any other; a refresh reads those
-   cohorts again every time, and the enrollments newly linked to them by id.
+   (`asked["enrollments"]` holds both), so a refresh lays them over the held reading like any other.
+The cohorts on the voucher track (VOUCHER_TRACK: Registration Flow "שוברים משרד העבודה") are read whether or not a payment
+links to them, so a cohort whose students paid nothing yet is there too: their ids ride on the request of step 1, one
+filtered items_page beside the columns check (`TRACK`, app/monday/client.py `status_rule`), and join the cohorts of
+step 4 (`asked["cohorts"]` holds the union). The cost: no request more, but one per page of 500 cohorts after the first;
+those no payment links to by id in step 4 (in its chunks of 100) and their enrollments in step 5. A refresh asks the same
+filter beside its windows, in the request it already sends, reads by id the cohorts on the track it did not hold, and reads
+the voucher-track cohorts with a price again every time, and the enrollments newly linked to them by id.
 
 WHAT IS COUNTED (analiza-metrics' truth rules, and R0's):
 - a charge board is whole when its items_count, the rows read and the distinct ids agree, and every row is one of the
@@ -256,8 +262,9 @@ def keep_only(rows: list, ids: list) -> list:
 COHORT_CANCELLED = "2"  # Cohorts' Status "בוטל" (color_mkzh250v, by index; verified live 2026-08-09)
 # Cohorts' Registration Flow (color_mm31k62f) "שוברים משרד העבודה", by index (verified live 2026-08-09 and 2026-11-26: 0 נוהל
 # מלגות · 1 חיימש · 2 לשכת התעסוקה · 3 שוברים משרד העבודה): Chava's parts are voucher statuses, which mean something on this
-# track only, so the students by cohort are its cohorts'
+# track only, so the students by cohort are its cohorts', and the reading asks monday for every one of them (`TRACK`)
 VOUCHER_TRACK = "3"
+TRACK = (COHORTS_BOARD, CO["flow"], (VOUCHER_TRACK,))
 
 
 def on_track(row: dict) -> bool:
@@ -426,7 +433,8 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
     out: dict = {"read_at": read_at, "full_read_at": read_at, "kind": "full", "complete": False, "error": None,
                  "detail": None, "checks": {}, "calls": 0, "seconds": 0.0}
     try:
-        reader.require_columns([(BOARDS[key], CHECKED_COLUMNS[key]) for key in BOARDS])
+        # D4: and every cohort on the voucher track, in the same request (`TRACK`)
+        track = reader.require_columns([(BOARDS[key], CHECKED_COLUMNS[key]) for key in BOARDS], track=TRACK)
         (n_sc, sc_asked, sc_read), (n_b2, b2_asked, b2_read) = reader.read_boards(
             [(STUDENT_CHARGE, ROW_COLUMNS["student_charge"]), (B2B_CHARGE, ROW_COLUMNS["b2b_charge"])])
         checks: dict = {}
@@ -445,7 +453,7 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
 
         deciding = leads_deciding(sc_rows, enrollments)
         kept_leads = keep_only(leads, deciding)
-        coh_ids = cohort_ids(enrollments, kept_leads)
+        coh_ids = sorted(_uniq(cohort_ids(enrollments, kept_leads) + track))
         acct_ids = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
                                 + [a for d in deals for a in d.get(DL["payer"]) or []]))
         coh_read, acct_read = reader.read_items([(coh_ids, ROW_COLUMNS["cohorts"]), (acct_ids, ROW_COLUMNS["accounts"])])
@@ -655,7 +663,11 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     held_deciding = asked["leads"]
     got = reader.changed_items([(BOARDS[k], CHECKED_COLUMNS[k]) for k in DELTA_KEYS],
                                [(BOARDS[k], CHECKED_COLUMNS[k]) for k in CHECK_ONLY_KEYS], days,
-                               (held_deciding, ROW_COLUMNS["leads"]))
+                               (held_deciding, ROW_COLUMNS["leads"]), track=TRACK)
+    # D4: every cohort on the voucher track now, asked beside the windows as a full reading asks it beside its columns check
+    track = got.get("track")
+    if not isinstance(track, list):
+        raise MondayError("delta_shape", "no cohorts on the voucher track")
     counts = dict(zip(DELTA_KEYS, got["counts"]))
     windows = dict(zip(DELTA_KEYS, got["windows"]))
     for k in CHARGE_KEYS:
@@ -724,7 +736,7 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
         "deals": [i for i in need["deals"] if i not in asked_set["deals"]]})
     enrollments, deals = keep_only(lists["enrollments"], need["enrollments"]), keep_only(lists["deals"], need["deals"])
     need["leads"] = leads_deciding(sc_rows, enrollments)
-    need["cohorts"] = cohort_ids(enrollments, keep_only(lists["leads"], need["leads"]))
+    need["cohorts"] = sorted(_uniq(cohort_ids(enrollments, keep_only(lists["leads"], need["leads"])) + track))
     need["accounts"] = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
                                     + [a for d in deals for a in d.get(DL["payer"]) or []]))
     _read_new(reader, lists, ids_read, names, reps, strangers,
