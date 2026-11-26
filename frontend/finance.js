@@ -203,6 +203,9 @@
  * 8  "אפשר לרענן שוב בעוד 2 שניות." stayed five seconds and more, its number never moving. The wait is counted down a
  *      second at a time and the flash goes when it ends (flashWait); with no wait from the server, the page's own 5 seconds
  *      are said without a number.
+ * 9  A document in the books' list with a candidate by name and no proposal said nothing of why. Under such a candidate,
+ *      the server's reason (app/desk/books.py `candidate_why`: FR-C2's bucket for the row, in the proposals' own
+ *      computation): "לשורה כבר יש אסמכתה 62555", a sum or a date apart, another row on the same invoice, and so on.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1267,8 +1270,10 @@
     var c = e.candidates || [];
     if (!c.length) { return NOT_SET + proposalHtml(e); }
     return c.map(function (x) {
+      /* QA 26.11 (9): why the books propose nothing here for this row, in the server's words (FR-C2's bucket for it) */
       return "<div class=\"fin-cand\">" + nameLink({ board: "sc", id: x.id }, esc(x.name)) + " " + stateChip(x.state) +
-        " <span class=\"fin-subtle\">" + esc(x.status || "ריק") + "</span></div>";
+        " <span class=\"fin-subtle\">" + esc(x.status || "ריק") + "</span>" +
+        (x.why ? "<span class=\"fin-cand-why\">" + esc(x.why) + "</span>" : "") + "</div>";
     }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "") +
       proposalHtml(e);
   }

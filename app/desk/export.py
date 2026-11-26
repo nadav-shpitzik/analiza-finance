@@ -204,9 +204,11 @@ _SUM_INCL, _SUM_EXCL = BOOKS_SUM_WORD + " (כולל מע\"מ)", BOOKS_SUM_WORD +
 
 
 def _candidates(e: dict) -> str:
-    """A document's candidates by name: each row's name, its state and its "סטטוס תשלום", and how many more."""
-    out = ["%s (%s, %s)" % (c.get("name") or "", B2C_STATES.get(c.get("state"), {}).get("label", c.get("state") or ""),
-                            c.get("status") or "ריק") for c in e.get("candidates") or []]
+    """A document's candidates by name: each row's name, its state and its "סטטוס תשלום", why the books propose nothing
+    for it when they do not (D4, QA 26.11), and how many more."""
+    out = ["%s (%s, %s%s)" % (c.get("name") or "", B2C_STATES.get(c.get("state"), {}).get("label", c.get("state") or ""),
+                              c.get("status") or "ריק", "; " + c["why"] if c.get("why") else "")
+           for c in e.get("candidates") or []]
     if e.get("candidates_more"):
         out.append("ועוד %d" % e["candidates_more"])
     return " · ".join(out)

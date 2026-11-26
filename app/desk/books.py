@@ -56,7 +56,9 @@ proposal here (spec §6.4.2). A proposal and a mark never meet on one row: every
 and FR-C2 proposes only to an empty cell; a date comes only from A1's `fill`, which is no bucket a mark comes from, and
 only to a row whose status says the money came in, where `books_receipt_unpaid` is only of one whose status says it did
 not. A proposal is laid on the view (`merge`) only from a part that is current (`ok`) and computed on the very reading
-shown, never from a held one: the page writes what it shows.
+shown, never from a held one: the page writes what it shows. And a candidate by name that the books propose nothing to
+says why (the QA of 26.11, 9; `candidate_why`): FR-C2's bucket for the row, from the very analysis the proposals use, or
+that the row is proposed another document, or that it is before the era - in closed words (CANDIDATE_WHY), never a name.
 
 EVERY DOCUMENT OF THE ERA LANDS IN ONE PLACE (spec §6.3.1), the first that fits in PLACES: outside (another status or
 type, a cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row, answered
@@ -194,6 +196,27 @@ REF_WHY = {
 # a number the copy holds only as a draft (spec §4.1: a draft carries its series' next number): no valid document (FR-2)
 DRAFT_WHY = ("טיוטה", "בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף")
 CANDIDATES_MAX = 10  # a common name shows its first ten rows, and how many more there are
+# D4 (QA of 26.11, 9): why the books propose nothing for a listed document on a candidate row: FR-C2's bucket for the row
+# (app/recon/ref_fill.py BUCKETS, the very analysis the proposals come from), in a few words the page draws beside the
+# candidate - never a name or an ID number. "other_document": the row is proposed another document; "era": the row is
+# before the desk's era, so the desk proposes nothing to it (`proposals`)
+CANDIDATE_WHY = {
+    "not_active": "השורה בארכיון או שנמחקה",
+    "not_money_in": "סטטוס התשלום של השורה לא אומר שהכסף נכנס",
+    "has_ref": "לשורה כבר יש אסמכתה %s",
+    "ref_unreadable": "באסמכתת החשבונית של השורה יש טקסט שאינו רשימת מספרים",
+    "amount_unreadable": "סכום ששולם בשורה ריק או אינו מספר",
+    "out_of_window": "השורה אינה מתוארכת ב-%d" % STUDENT_WINDOW_YEAR,
+    "no_candidate": "אין בחשבשבת מסמך פנוי בשם של השורה",
+    "amount_differs": "אין בחשבשבת מסמך בשם של השורה ובסכום ששולם בה",
+    "date_far": "המסמכים בשם ובסכום של השורה רחוקים יותר מ-%d יום מהתאריך שלה" % fr_c2.FILL_WINDOW_DAYS,
+    "tax_invoice_waits": "בשם ובסכום של השורה יש בחשבשבת חשבונית מס, שאינה הוכחה שהכסף נכנס",
+    "two_candidates": "בשם ובסכום של השורה יש בחשבשבת יותר מחשבונית מס/קבלה אחת",
+    "number_ambiguous": "מספר החשבונית שמתאימה לשורה לא מזהה אותה לבדה בחשבשבת",
+    "document_wanted_twice": "גם שורה אחרת מתאימה לאותה חשבונית",
+    "other_document": "לשורה מתאימה חשבונית אחרת: %s",
+    "era": "השורה מלפני %s, ולכן אין כאן הצעה" % ERA_FROM.strftime("%d.%m.%Y"),
+}
 REF_BUCKETS = ("ref_not_in_books", "ref_ambiguous", "ref_not_an_invoice")
 # what a row's details say of a number it cites that is just past the end of its series (`not_yet_read`)
 NOT_YET_SAID = "עוד לא בהעתק של הספרים"
@@ -412,16 +435,19 @@ def marks_of(analysis: dict, rows_by_id: dict, idx: dict) -> tuple:
 
 
 # ---- what the books propose to fill (D4) ----------------------------------------------------------------------------------
-def proposals(sc_raw: list, b2_raw: list, documents: list, keys: dict, rows_by_id: dict) -> dict:
+def proposals(sc_raw: list, b2_raw: list, documents: list, keys: dict, rows_by_id: dict,
+              c2: Optional[dict] = None) -> dict:
     """{item id: {"number"?, "date"?}} for every row of the desk's era that the books propose a fill to - FR-C2's number
     (ref_fill.analyse, its `fill` bucket, on the desk's own reading: Student Charge's rows, B2B Charge's and the Accounts'
     keys) and A1's date (receipt_dates.analyse, its `fill` bucket, on the rows as they would be with every proposed number
     written: a proposed number stands alone in its group, cited by no other row, so no other row's judgement moves). The
     era: the row's date as the desk dates it (`rows_by_id`, the view's rows: "תאריך תקבול", else the day it was made) and
     the document's, both from ERA_FROM on; an older one is a session's cleanup (backlog 0301 C1), and a row whose number is
-    not proposed for its document's age is proposed no date of that document either."""
+    not proposed for its document's age is proposed no date of that document either. `c2`: FR-C2's rows of this very
+    reading and copy when the caller holds them (`compute`, which says from them why a candidate has none)."""
     era = ERA_FROM.isoformat()
-    c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]
+    if c2 is None:
+        c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]
     numbers = {i: e["proposed"] for i, e in c2.items() if e["bucket"] == "fill"}
     after = [dict(r, **{a1.REF_COLUMN: numbers[str(r.get("id"))]}) if str(r.get("id")) in numbers else r for r in sc_raw]
     dated = a1.analyse(after, documents)["rows"]
@@ -463,6 +489,24 @@ def fill_mark(fill: dict, idx: dict) -> dict:
     return {"kind": kind, "chip": chip, "text": text, "documents": list(numbers)}
 
 
+def candidate_why(item_id: str, number: str, c2: dict, fills: dict) -> Optional[dict]:
+    """Why the books propose nothing for this document (`number`) on a candidate row (QA of 26.11, 9): FR-C2's bucket for
+    the row (`c2`, ref_fill.analyse's rows, the analysis the proposals come from), or that the row is proposed another
+    document, or that it is before the desk's era - {"key", "text"}; None when the row is proposed this very document (the
+    proposal line says it) or is not in the analysis. Never a rule of its own, never a name or an ID number: a number the
+    row cites is said as A1 reads the cell, numbers only."""
+    entry = c2.get(item_id)
+    if entry is None or ((fills.get(item_id) or {}).get("values") or {}).get("number") == number:
+        return None
+    key, arg = entry["bucket"], None
+    if key == "fill":
+        key, arg = ("era", None) if entry["proposed"] == number else ("other_document", entry["proposed"])
+    elif key == "has_ref":
+        arg = ", ".join(a1.parse_refs(entry["current"]) or [])
+    text = CANDIDATE_WHY[key]
+    return {"key": key, "text": text % arg if arg is not None else text}
+
+
 # ---- the documents with no charge ----------------------------------------------------------------------------------------
 # `place_of` (where a held document lands, the first of PLACES that fits) is app/recon/cards.py's: the desk asks it from
 # ERA_FROM, FR-C2 from the first day of Student Charge's window
@@ -485,6 +529,10 @@ def _candidate(row: dict) -> dict:
             "date": row.get("date", ""), "invoice": row.get("invoice", "")}
 
 
+def _with_why(candidate: dict, why: Optional[dict]) -> dict:
+    return dict(candidate, why=why["text"], why_key=why["key"]) if why else candidate
+
+
 def _newest(entries: list) -> list:
     return sorted(entries, key=lambda e: (e["date"], int(e["number"]) if e["number"].isdigit() else 0), reverse=True)
 
@@ -505,7 +553,8 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     analysis = a1.analyse(sc_raw, documents)
     idx = index_copy(documents)
     marks, notes = marks_of(analysis, rows_by_id, idx)
-    fills = proposals(sc_raw, b2_raw, documents, keys, rows_by_id)
+    c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]       # FR-C2, once: the proposals and why none (QA 9)
+    fills = proposals(sc_raw, b2_raw, documents, keys, rows_by_id, c2)
     for fill in fills.values():
         fill["mark"] = fill_mark(fill, idx)
     # the document each proposed number names (FR-3: one status-1 document carries it), and the row it is proposed to
@@ -530,7 +579,8 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
         elif place == "students":
             e = _entry(d)
             found = candidates_of(e["card"], by_words)
-            e.update(candidates=[_candidate(r) for r in found[:CANDIDATES_MAX]],
+            e.update(candidates=[_with_why(_candidate(r), candidate_why(r["id"], e["number"], c2, fills))
+                                 for r in found[:CANDIDATES_MAX]],
                      candidates_more=max(0, len(found) - CANDIDATES_MAX))
             if d["stock_id"] in proposed:  # D4: the row the books propose to write its number in
                 item_id, number = proposed[d["stock_id"]]

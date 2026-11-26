@@ -700,8 +700,11 @@ def test_a_name_is_only_ever_a_candidate():
     assert [c["id"] for c in listed["62406"]["candidates"]] == ["3", "1"]       # in the list's order, newest first
     assert [c["id"] for c in listed["62407"]["candidates"]] == ["4"]         # "לוי-כהן" is two words
     assert [c["id"] for c in listed["62408"]["candidates"]] == ["5"]         # "#" and "2" are no words
+    # (QA 26.11, 9: and why the books propose nothing here - FR-C2's bucket for the row: two rows of the name and amount)
     assert listed["62406"]["candidates"][1] == {"id": "1", "name": "דנה לוי", "state": "done", "status": "שולם",
-                                                "date": "2026-11-03", "invoice": ""}
+                                                "date": "2026-11-03", "invoice": "",
+                                                "why": db.CANDIDATE_WHY["document_wanted_twice"],
+                                                "why_key": "document_wanted_twice"}
     assert part["marks"] == {}                                               # no row is marked by a name
     assert db.name_words("דנה לוי") == db.name_words("לוי   דנה") != db.name_words("דנה לוין")
     assert db.name_words("a 12 b3 #") == frozenset()

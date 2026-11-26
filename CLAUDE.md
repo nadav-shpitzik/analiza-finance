@@ -176,7 +176,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   The chips `books_ref_fill` / `books_date_fill` are the legend's. The action `books_fill` (DESK_ACTIONS) writes them as the
   person: one step, the number (text) and the date (date), each only the value proposed and only into an empty cell
   (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. `merge` lays on the row its chip (a flag, never
-  `books_task`), `books_fill` {number?, date?} and the action; on the document `proposal`. The page (finance.js D4): the
+  `books_task`), `books_fill` {number?, date?} and the action; on the document `proposal`, and on each candidate the
+  proposal is not for, why (`candidate_why`, QA 26.11): FR-C2's bucket for the row from the same analysis (`c2`, passed
+  into `proposals`), "other_document" or "era", in closed words (`CANDIDATE_WHY`), never a name. The page (finance.js D4): the
   chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
   ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
   whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was

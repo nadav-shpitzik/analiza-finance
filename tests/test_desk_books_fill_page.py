@@ -183,6 +183,26 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
     assert not re.search("התאמה|מותאם|קושר", h.unescape(part[part.index("<tbody>"):]))
 
 
+def test_a_candidate_with_no_proposal_says_why_under_it_and_the_proposed_one_does_not():
+    """QA 26.11 (9): under a candidate the books propose nothing to, the server's reason, quietly - FR-C2's bucket for the
+    row in its words (tests/test_desk_books_fill.py holds them to FR-C2); under the row a document is proposed to, none,
+    its proposal line saying it. The Excel file's candidates say the same."""
+    from app.desk.export import _candidates
+    from tests.test_desk_books_fill import WHY_DOCS, WHY_ROWS
+
+    view, _m = fill_view(WHY_ROWS, WHY_DOCS, ())
+    part = books_part(draw(view, [TASKS])[0])
+    rows = {m.group(1): m.group(0) for m in re.finditer(r'<tr><td class="b-number"><bdi dir="ltr">(\d+)</bdi>.*?</tr>', part,
+                                                         flags=re.S)}
+    why = lambda text: '<span class="fin-cand-why">%s</span>' % h.escape(text)
+    assert why("לשורה כבר יש אסמכתה 62555") in rows["62701"] and why(db.CANDIDATE_WHY["amount_differs"]) in rows["62702"]
+    assert why("לשורה מתאימה חשבונית אחרת: 62708") in rows["62709"]
+    assert "fin-cand-why" not in rows["62708"] and 'data-books-at="sc:28"' in rows["62708"]
+    assert rows["62705"].count("fin-cand-why") == 2                       # each of the two rows on the one invoice
+    entry = next(e for e in view["b2c"]["books"]["documents"] if e["number"] == "62701")
+    assert _candidates(entry).endswith("; לשורה כבר יש אסמכתה 62555)")
+
+
 def test_a_proposed_row_carries_its_chip_its_sentence_and_its_button_and_never_joins_tasks():
     """On the row, under its state and among its chips: "בחשבשבת: 62601", or "תאריך מחשבשבת: 03.11.2026" for the date
     alone - not red, a proposal is no contradiction; in its details the server's sentence and "רישום מחשבשבת". A proposal
@@ -776,13 +796,14 @@ def test_in_a_browser_the_report_of_a_write_floats_beside_the_line_pressed_and_s
     assert got["errors"] == [], got["errors"]
     for size in ("1280x748", "1400x748"):
         plan, done, landed = (got["steps"][size][k] for k in ("plan", "done", "landed"))
-        assert plan["inView"] and plan["clear"] and plan["gap"] == 6, (size, plan)
+        assert plan["inView"] and plan["clear"] and abs(plan["gap"] - 6) <= 1, (size, plan)       # 6 px, rounded
         # the report: beside the line - which says "נכתב, מתעדכן" now - as the confirmation was, in the view, said once
         assert done["done"] and done["line"] and done["written"], (size, done)
-        assert done["inView"] and done["clear"] and done["gap"] == 6 and done["toasts"] == [], (size, done)
+        assert done["inView"] and done["clear"] and abs(done["gap"] - 6) <= 1 and done["toasts"] == [], (size, done)
         # a row's details opened above it: the line moved down the page, and the box beside it
         moved = got["steps"][size]["moved"]
-        assert moved["line"] and moved["page"] > done["page"] + 50 and moved["gap"] == 6 and moved["clear"], (size, moved)
+        assert moved["line"] and moved["page"] > done["page"] + 50 and abs(moved["gap"] - 6) <= 1 and moved["clear"], \
+            (size, moved)
         # the document left the list with the next reading: the box stays where it was on the page, in the view
         assert landed["done"] and not landed["line"] and landed["inView"] and landed["toasts"] == [], (size, landed)
         assert abs(landed["page"] - moved["page"]) <= 1, (size, moved, landed)

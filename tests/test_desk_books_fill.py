@@ -13,6 +13,7 @@ records, names are invented, and no card carries an ID number."""
 from __future__ import annotations
 
 import json
+import re
 
 from app.desk import books as db
 from app.desk import reading as rd
@@ -326,3 +327,54 @@ def test_a_proposal_reaches_a_member_of_student_charge_and_never_a_member_of_b2b
     assert v["b2c"] is None and v["books_unclear"] is None and v["b2b"]["books"]["documents"]
     for word in ("books_fill", "proposal", "books_ref_fill", "62503", "תלמיד-גימל", "בחשבשבת: 62503"):
         assert word not in text, word
+
+
+# ---- QA 26.11 (9): why a candidate has no proposal -------------------------------------------------------------------------
+# Each row named like a document of the list, and the reason FR-C2 gives it, none proposed this document but one
+WHY_ROWS = [pay(21, "מיכל דגן", ref="62555"),                               # cites another number: has_ref
+            pay(22, "יונתן ברק", paid="5000"),                              # another amount: amount_differs
+            pay(23, "שקד לוין"),                                           # its document 40 days on: date_far
+            pay(24, "נגה שחר", paid="", st="0"),                            # "לא שולם": not_money_in
+            pay(25, "עומר טל"), pay(26, "עומר טל"),                          # two rows on one invoice: document_wanted_twice
+            pay(27, "רון גל", made="2026-10-20T08:00:00Z"),                 # FR-C2's, before the desk's era: era
+            pay(28, "דפנה רוז"),                                           # proposed 62708, a candidate of 62709 too
+            pay(29, "אלה כץ"),                                             # a tax invoice of its name and sum
+            pay(30, "עידן פרץ")]                                           # two invoice-receipts: two_candidates
+WHY_DOCS = [doc(62701, name="מיכל דגן", card="20101"), doc(62702, name="יונתן ברק", card="20102"),
+            doc(62703, name="שקד לוין", card="20103", day="2026-12-20"), doc(62704, name="נגה שחר", card="20104"),
+            doc(62705, name="עומר טל", card="20105"), doc(62707, name="רון גל", card="20107", day="2026-10-26"),
+            doc(62708, name="דפנה רוז", card="20108"), doc(62709, name="דפנה רוז", card="20109", total="5000"),
+            doc(62710, name="אלה כץ", card="20110", doc_type=1), doc(62711, name="אלה כץ", card="20110", total="5000"),
+            doc(62712, name="עידן פרץ", card="20112"), doc(62713, name="עידן פרץ", card="20113")]
+WHY_WANT = {"62701": [("21", "has_ref")], "62702": [("22", "amount_differs")], "62703": [("23", "date_far")],
+            "62704": [("24", "not_money_in")], "62705": [("26", "document_wanted_twice"), ("25", "document_wanted_twice")],
+            "62707": [("27", "era")], "62708": [("28", None)], "62709": [("28", "other_document")],
+            "62710": [("29", "tax_invoice_waits")], "62711": [("29", "tax_invoice_waits")],
+            "62712": [("30", "two_candidates")], "62713": [("30", "two_candidates")]}
+
+
+def test_a_candidate_with_no_proposal_says_why_in_fr_c2s_words_for_the_row():
+    """QA 26.11 (9): a document with a candidate by name and no proposal said nothing of why (the candidate row already
+    cited another number, so FR-C2 proposed nothing). Each candidate carries the reason now, computed with the proposals,
+    from FR-C2's own analysis of this reading: the row's bucket in a few words - or that it is proposed another document, or
+    that it is before the desk's era. The row the document is proposed to carries none (its proposal says it)."""
+    part, view, _r = part_of(WHY_ROWS, WHY_DOCS, (), {})
+    listed = {e["number"]: e for e in part["students"]}
+    assert {n: [(c["id"], c.get("why_key")) for c in e["candidates"]] for n, e in listed.items()} == WHY_WANT
+    assert values(part) == {"28": {"number": "62708", "date": "2026-11-12"}}
+    whys = {(n, c["id"]): c["why"] for n, e in listed.items() for c in e["candidates"] if "why" in c}
+    assert whys[("62701", "21")] == "לשורה כבר יש אסמכתה 62555"
+    assert whys[("62709", "28")] == "לשורה מתאימה חשבונית אחרת: 62708"
+    assert whys[("62707", "27")] == "השורה מלפני 25.10.2026, ולכן אין כאן הצעה"
+    assert whys[("62703", "23")] == db.CANDIDATE_WHY["date_far"] and "30 יום" in whys[("62703", "23")]
+    # never a rule of its own: the key is FR-C2's bucket for the row, on the same rows and copy ("fill" is said as another
+    # document, or the era)
+    c2 = rf.analyse(WHY_ROWS, WHY_DOCS, (), {})["rows"]
+    for (number, item_id), _text in whys.items():
+        key = next(c["why_key"] for c in listed[number]["candidates"] if c["id"] == item_id)
+        assert key == c2[item_id]["bucket"] or (key in ("era", "other_document") and c2[item_id]["bucket"] == "fill")
+    # every word of it is closed, and none is a name or an ID number
+    names = {r["name"] for r in WHY_ROWS} | {d["account_name"] for d in WHY_DOCS}
+    assert set(db.CANDIDATE_WHY) == set(rf.BUCKETS) - {"fill"} | {"other_document", "era"}
+    for text in whys.values():
+        assert not any(n in text for n in names) and not re.search(r"\d{8,}", text), text
