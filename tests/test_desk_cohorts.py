@@ -859,6 +859,7 @@ def test_a_priced_cohort_on_another_track_is_not_shown_and_counted_nowhere():
     assert part["cohorts"] == [] and part["unpriced"] == [] and part["totals"]["count"] == 0
     assert part["totals"]["expected"] == 0 and ch.TRACK_SAID in part["about"]
     assert any(ch.TRACK_SAID in x["text"] for x in part["legend"]["items"])          # the legend says so, in one sentence
+    assert 'רק מחזורים שנוהל ההרשמה שלהם "שוברים משרד העבודה"' in ch.TRACK_SAID and "לא מוצג ולא נספר" in ch.TRACK_SAID
     # in the reading: 404 is read for its payment's sake (the list's cohort code), never its students
     r = rd.read_desk(reader_of(track_world()))
     assert "404" in r["asked"]["cohorts"] and "209" in r["asked"]["enrollments"]
@@ -930,3 +931,22 @@ def test_the_track_is_paged_to_its_end_in_a_full_reading_and_a_refresh(page):
     assert paged["calls"] == whole["calls"] + (-(-5 // page) - 1)
     got = rd.read_delta(reader, paged)
     assert got["asked"]["cohorts"] == whole["asked"]["cohorts"] and cohorts_of(got) == cohorts_of(whole)
+
+
+def test_a_filter_answered_in_another_shape_fails_the_reading_and_a_refresh_reads_whole_instead():
+    w = track_world()
+    reader, held = reader_of(w), rd.read_desk(reader_of(w))
+    answer = w.answer_track
+    w.answer_track = lambda q, v: {k: [{"items_page": {"cursor": None}}] for k in answer(q, v)}   # no items in it
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] == "graphql" and "filter" in r["detail"]
+    with pytest.raises(monday.MondayError) as err:
+        rd.read_delta(reader, held)
+    assert err.value.code == "delta_shape"
+    # and an answer without the filter at all, from a reader that did not ask for it: never a refresh short of the track
+    w.answer_track = answer
+    plain = reader.changed_items
+    reader.changed_items = lambda *a, **k: dict(plain(*a, **k), track=None)
+    with pytest.raises(monday.MondayError) as err:
+        rd.read_delta(reader, held)
+    assert err.value.code == "delta_shape" and "voucher track" in err.value.detail
