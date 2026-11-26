@@ -151,6 +151,13 @@
  *      planAction), and a row whose cells are not what the desk read is skipped and said, never written over (fillMoved).
  *      WRITABLE gained "תאריך תקבול" as a date, as the server's desk_writes did. A written date is shown on the row at once
  *      (applyWritten), and the document leaves the list with the next reading.
+ * From the hostile review of D4 (26.11), by its numbers:
+ * 1  A newer reading that landed while a confirmation of the books' proposals was open (a refresh, or askAgain when the view
+ *      takes the focus back from monday's item card) left the batch on the rows it was pressed on, and "כתיבה" wrote a
+ *      proposal the reading on the screen had withdrawn. A proposal is now always the reading's on the screen: taken off the
+ *      current rows when the confirmation is made (settleFills), held to each newer reading while it is open (recheckBatch:
+ *      one withdrawn or changed leaves for "לא ייכתב" with why, the count follows, and with none left the confirmation
+ *      closes, said), and checked again right before each row's write (confirmBatch).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -2173,19 +2180,59 @@
     });
     return why;
   }
+  /* The hostile review of D4 (26.11): a batch kept the rows of the reading it was pressed on, so a newer reading that landed
+     while its confirmation was open - a refresh, or the view taking the focus back from monday's item card (askAgain) -
+     withdrew a proposal on the screen and "כתיבה" still wrote it. A proposal is now always the reading's on the screen: read
+     off the current rows by id when the confirmation is made (settleFills), checked again when a newer reading lands while
+     it is open (recheckBatch), and once more right before each row's write (confirmBatch). A row whose proposal left or
+     changed is not written, and the confirmation and the report say so in one of these closed words */
+  var FILL_GONE = "בקריאה החדשה של הלוחות כבר אין הצעה לשורה הזאת";
+  var FILL_CHANGED = "ההצעה השתנתה מאז שנפתח האישור, בקריאה החדשה של הלוחות";
+  var FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לכתוב מההצעות שבו. האישור נסגר.";
+  /* the row on the screen now offers a proposal: the server's values, and the action that writes them */
+  function offersFill(r) { return !!r && !!r.books_fill && !!rowFill(r); }
+  /* why a row's confirmed proposal may no longer be written ("" when it may): the reading on the screen holds none for it,
+     or another one */
+  function proposalMoved(a, it) {
+    var r = rowByKey(it.key);
+    if (!offersFill(r)) { return FILL_GONE; }
+    return JSON.stringify(proposalOf(r, a)) === JSON.stringify(it.typed || {}) ? "" : FILL_CHANGED;
+  }
   function settleFills(batch, got) {
     batch.items.forEach(function (it) {
       var live = got[String(it.row.id)];
       it.live = live || null;
       if (!live) { it.verdict = "skip"; it.why = WRITE_ERRORS.not_found; return; }
       it.name = live.name || it.name;
-      it.typed = proposalOf(it.row, batch.a);
+      /* the row as the reading on the screen holds it now: a newer one may have landed while the rows were read */
+      var r = rowByKey(it.key);
+      if (!offersFill(r)) { it.verdict = "skip"; it.why = FILL_GONE; return; }
+      it.row = r;
+      it.typed = proposalOf(r, batch.a);
       var why = fillMoved(batch.a, it.row, live, it.typed), plan = planAction(batch.a, live, it.typed, israelToday(), {});
       if (why) { it.verdict = "skip"; it.why = why; return; }
       if (!plan.steps.length) { it.verdict = "skip"; it.why = "כבר כך במאנדיי"; return; }
       it.verdict = "write";
       it.plan = plan;
     });
+  }
+  /* a newer reading landed (index) while a confirmation of the books' proposals is open: each row it would write is held
+     to the reading now on the screen. A proposal that left or changed moves to "לא ייכתב" with why, the count follows, and
+     what waits for the next press is counted again; with nothing left to write, the confirmation closes and says why */
+  function recheckBatch() {
+    var b = BATCH;
+    if (!b || b.phase !== "confirm" || !fillAction(b.a)) { return; }
+    b.items.forEach(function (it) {
+      if (it.verdict !== "write") { return; }
+      var why = proposalMoved(b.a, it);
+      if (why) { it.verdict = "skip"; it.why = why; it.plan = null; } else { it.row = rowByKey(it.key); }
+    });
+    if (b.from === "all") {
+      var held = {};
+      b.items.forEach(function (it) { held[it.key] = true; });
+      b.left = allFills().filter(function (r) { return !held[rowKey(r)]; }).length;
+    }
+    if (!b.items.some(function (it) { return it.verdict === "write"; })) { b.phase = "nothing"; b.notice = FILL_CLOSED; }
   }
   /* the rows "לרשום את כל ההצעות" takes: each document's of the books' list in its order, then the dates alone, newest first */
   function allFills() {
@@ -2311,6 +2358,10 @@
               shownCell(x.kind, live.cells[x.column] || { index: null, text: "" });
             return null;
           }
+          /* D4's review: what the books propose is the reading's on the screen, right before the write - a newer reading
+             may have landed since the confirmation was shown, or while the rows before this one were written */
+          var moved = fillAction(batch.a) ? proposalMoved(batch.a, it) : "";
+          if (moved) { it.result = "skipped"; it.why = moved; return null; }
           return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
             noteWritten(it.key, cells, it.live);
             it.result = "written";
@@ -2384,7 +2435,9 @@
     var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
     var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
     if (b.phase === "nothing") {
+      /* D4's review: a confirmation a newer reading left with nothing to write says so first (recheckBatch) */
       return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        (b.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.notice) + "</p>" : "") +
         "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
         "<div class=\"fin-act-go\">" + close + "</div></div>";
     }
@@ -3270,6 +3323,8 @@
     if (v && v.b2c) { ROWS.sc = v.b2c.rows; }
     if (v && v.b2b) { ROWS.b2 = v.b2b.rows; }
     applyWritten();
+    /* D4's review: a confirmation of the books' proposals on the screen is held to this reading */
+    recheckBatch();
   }
   function errorText(e) {
     var key = e && e.error;

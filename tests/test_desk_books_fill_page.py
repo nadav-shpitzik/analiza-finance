@@ -87,6 +87,7 @@ import re  # noqa: E402
 from app.desk import usage  # noqa: E402
 from app.desk.view import json_safe  # noqa: E402
 from tests.test_desk_books_fill import B2B, DOCS, ROWS, part_of  # noqa: E402
+from tests.test_recon_ref_fill import doc  # noqa: E402
 from tests.test_desk_books_page import cell  # noqa: E402
 from tests.test_desk_page import drive  # noqa: E402
 from tests.test_desk_parity_js import CONTROLS, MONDAY_TITLES, _labels, _words_of  # noqa: E402
@@ -383,6 +384,97 @@ def test_the_fills_usage_kind_is_one_closed_word_of_the_vocabulary_and_the_page(
                 ev("books_fill", **{"from": "נועה ברק"}), ev("books_fill", item="5093448677"),
                 ev("books_fill", **{"from": "all", "number": "62601"})):
         assert usage.clean_batch(batch(bad), 7) == ([], 1), bad
+
+
+# ---- the hostile review of D4 (26.11): a proposal is always the reading's on the screen ----------------------------------
+# A batch kept the rows of the reading it was pressed on, so a newer reading (a refresh, or askAgain when the view takes the
+# focus back from monday's item card) that withdrew a proposal left the confirmation open, and "כתיבה" wrote it
+# (tests/test_review_d4_fill_stale.py). The proposal is now read off the rows on the screen when the confirmation is made, held
+# to each newer reading while it is open, and checked again right before each row's write.
+FILL_GONE = "בקריאה החדשה של הלוחות כבר אין הצעה לשורה הזאת"
+FILL_CHANGED = "ההצעה השתנתה מאז שנפתח האישור, בקריאה החדשה של הלוחות"
+FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לכתוב מההצעות שבו. האישור נסגר."
+
+
+def corrected(*ids: str, paid: str = "3600") -> list:
+    """The rows as a newer reading holds them after "סכום ששולם" of these was corrected: FR-C2 proposes none of their
+    documents any more (`amount_differs`)."""
+    return [dict(r, **{fd.SC["paid"]: paid}) if r["id"] in ids else r for r in ROWS]
+
+
+def items_of(step: dict) -> list:
+    return [(i["key"], i["verdict"], i["why"]) for i in step["batch"]["items"]]
+
+
+def test_a_newer_reading_while_the_confirmation_is_open_moves_a_changed_proposal_out_and_counts_again():
+    """The confirmation of every proposal is open (four rows); a newer reading lands in which the books date row 1's document
+    a day later (its proposal changed) and a fifth row gained a proposal. Row 1 moves to "לא ייכתב" with why, the count says
+    three rows, the new proposal waits for the next press - and "כתיבה" writes the three, never row 1, never the new row."""
+    rows = ROWS + [dict(ROWS[0], id="14", name="רז כהן")]
+    docs = [doc(62601, name="נועה ברק", card="20001", day="2026-11-13") if e["doc_number"] == "62601" else e for e in DOCS]
+    docs.append(doc(62616, name="רז כהן", card="20016", day="2026-11-12"))
+    newer, merged = fill_view(rows, docs)
+    proposed = {r["id"]: r.get("books_fill") for r in merged["b2c"]["rows"]}
+    assert proposed["1"] == {"number": "62601", "date": "2026-11-13"} and proposed["14"] == {"number": "62616",
+                                                                                              "date": "2026-11-12"}
+    monday = monday_of()
+    monday["boards"][SC_BOARD]["14"] = {"__name": "רז כהן", NUMBER_COL: "", DATE_COL: ""}
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"refresh": "1"}]}, {"click": [{"batchGo": "1"}]}],
+              monday=monday, refreshed=newer)
+    shown, landed, done = got["steps"][1], got["steps"][2], got["steps"][3]
+    assert [i[1] for i in items_of(shown)] == ["write"] * 4
+    assert items_of(landed) == [("sc:4", "write", ""), ("sc:2", "write", ""), ("sc:1", "skip", FILL_CHANGED),
+                                ("sc:3", "write", "")] and landed["batch"]["phase"] == "confirm"
+    page = h.unescape(landed["html"])
+    assert "ייכתב במאנדיי בשמך, ב-3 שורות:" in page and "<p>לא ייכתב:</p><ul><li><b>נועה ברק</b> · %s</li>" % FILL_CHANGED in page
+    assert "ועוד הצעה אחת: בלחיצה נוספת אחרי הכתיבה, עד 25 שורות בכתיבה אחת." in page
+    assert [w[1] for w in writes_of(got)] == ["4", "2", "3"]
+    assert [(i["key"], i["result"]) for i in done["batch"]["items"]] == [
+        ("sc:4", "written"), ("sc:2", "written"), ("sc:1", None), ("sc:3", "written")]
+
+
+def test_a_newer_reading_that_withdraws_every_proposal_of_the_confirmation_closes_it_with_a_sentence():
+    """One row's proposal from its document's line; a newer reading withdraws it (its amount corrected). The confirmation
+    closes: no "כתיבה" is left on the screen, the box says why in one sentence and the row's own reason, and nothing is
+    written."""
+    newer, _m = fill_view(corrected("1"))
+    got = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}, {"click": [{"refresh": "1"}]},
+               {"click": [{"batchGo": "1"}]}], refreshed=newer)
+    landed = got["steps"][2]
+    assert landed["batch"]["phase"] == "nothing" and items_of(landed) == [("sc:1", "skip", FILL_GONE)]
+    page = h.unescape(landed["html"])
+    assert '<p class="fin-act-msg bad" role="alert">%s</p><p>אין מה לכתוב במאנדיי:</p>' % FILL_CLOSED in page
+    assert "<li><b>נועה ברק</b> · %s</li>" % FILL_GONE in page and "data-batch-go" not in page
+    assert writes_of(got) == []
+
+
+def test_a_newer_reading_that_lands_while_the_rows_are_read_is_the_one_the_confirmation_is_made_of():
+    """"לרשום את כל ההצעות" pressed; while monday reads the four rows, a newer reading lands that withdrew row 2's proposal.
+    The confirmation is made of the reading on the screen: row 2 is said, not offered."""
+    monday = monday_of()
+    monday["answers"] = [{"park": "rows"}]
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"refresh": "1"}]}, {"unpark": "rows"},
+               {"click": [{"batchGo": "1"}]}], monday=monday, refreshed=fill_view(corrected("2"))[0])
+    assert got["steps"][1]["batch"]["phase"] == "reading"
+    assert items_of(got["steps"][3]) == [("sc:4", "write", ""), ("sc:2", "skip", FILL_GONE), ("sc:1", "write", ""),
+                                         ("sc:3", "write", "")]
+    assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
+
+
+def test_a_newer_reading_that_lands_between_two_rows_writes_is_held_to_right_before_the_next_write():
+    """"כתיבה" pressed on four rows; while the first is read again before its write, a newer reading lands that withdrew row
+    2's proposal - the confirmation is no longer on the screen to be checked. Each row's proposal is checked against the
+    reading on the screen right before its own write: row 2 is not written, and the report says why."""
+    monday = monday_of()
+    monday["answers"] = [{}, {"park": "row4"}]
+    got = run([{"show": TASKS}, {"click": [{"booksAll": "1"}]}, {"click": [{"batchGo": "1"}]}, {"click": [{"refresh": "1"}]},
+               {"unpark": "row4"}], monday=monday, refreshed=fill_view(corrected("2"))[0])
+    assert got["steps"][2]["batch"]["phase"] == "writing"
+    done = got["steps"][4]["batch"]
+    assert [(i["key"], i["result"], i["why"]) for i in done["items"]] == [
+        ("sc:4", "written", ""), ("sc:2", "skipped", FILL_GONE), ("sc:1", "written", ""), ("sc:3", "written", "")]
+    assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
+    assert "<li><b>יואב שטרן</b> · %s</li>" % FILL_GONE in h.unescape(got["steps"][4]["html"])
 
 
 # ---- in a browser (Chromium through Playwright, as tests/test_desk_browser.py; skipped without it) -------------------------

@@ -174,7 +174,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
   ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
   whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
-  pressed. Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
+  pressed. A proposal is always the reading's on the screen (D4's review): taken off the current rows when the confirmation
+  is made, held to a newer reading that lands while it is open (`recheckBatch`: one withdrawn or changed leaves with its closed
+  reason, `FILL_GONE` / `FILL_CHANGED`; with none left it closes, said) and checked again right before each row's write. Usage
+  kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
   `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
 - **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
   `b2c.cohorts` (Student Charge's members only). Only cohorts on the voucher track (Registration Flow `color_mm31k62f` index

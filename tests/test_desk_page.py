@@ -74,6 +74,9 @@ function cv(item, c) {
   if (x && typeof x === "object") { return { id: c, text: x.text || "", value: null, index: x.index, label: x.label }; }
   return { id: c, text: x == null ? "" : String(x), value: null };
 }
+/* a request whose answer is marked `park` waits, unanswered, until a step lets it go ({"unpark": "<its name>"}); it is then
+   answered from the boards as they are at that moment */
+const parked = {};
 const monday = M.absent ? null : {
   get: (what) => what !== "context" ? Promise.resolve({ data: "" }) : input.context === "never" ? new Promise(() => {})
     : Promise.resolve({ data: input.context || {} }),
@@ -82,35 +85,39 @@ const monday = M.absent ? null : {
     const v = (opts || {}).variables || {};
     sent.push({ kind: query.trim().split(" ")[0], query: query, variables: v, apiVersion: (opts || {}).apiVersion });
     const a = queue.shift() || {};
-    if (a.reject) { return Promise.reject(a.reject); }
-    if (a.hold) { return new Promise(() => {}); }
-    if (a.answer) { return Promise.resolve(a.answer); }
-    if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
-      updates.push(v);
-      return Promise.resolve({ data: { create_update: { id: "9001" } } });
-    }
-    if (query.trim().startsWith("mutation")) {
-      const item = boards[v.b][v.i], vals = JSON.parse(v.v);
-      Object.keys(vals).forEach((c) => {
-        if ((M.keep || []).indexOf(c) !== -1) { return; }                     // monday took the write and kept its value
-        const val = vals[c];
-        if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
-        else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
-        else if (val && typeof val === "object" && "ids" in val) {           // a dropdown: its label's name, by id
-          const l = (labels[v.b][c] || []).filter((x) => x.id === val.ids[0])[0]; item[c] = l ? l.name : "";
-        }
-        else { item[c] = String(val); }
-      });
-      return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
-    }
-    const b = String((v.b || [])[0]), cells = boards[b] || {};
-    const items = a.noItems ? [] : (v.i || []).filter((id) => has(cells, id)).map((id) => ({ id: id, name: cells[id].__name || "",
-      board: { id: cells[id].__board || b }, column_values: (v.c || []).map((c) => cv(cells[id], c)) }));
-    const columns = a.noColumn ? [] : (v.c || []).map((c) => ({ id: c, type: "x",
-      settings_str: JSON.stringify({ labels: (labels[b] || {})[c] || {} }) }));
-    return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
+    if (a.park) { return new Promise((go) => { parked[a.park] = go; }).then(() => reply(query, v, a)); }
+    return reply(query, v, a);
   }
 };
+function reply(query, v, a) {
+  if (a.reject) { return Promise.reject(a.reject); }
+  if (a.hold) { return new Promise(() => {}); }
+  if (a.answer) { return Promise.resolve(a.answer); }
+  if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
+    updates.push(v);
+    return Promise.resolve({ data: { create_update: { id: "9001" } } });
+  }
+  if (query.trim().startsWith("mutation")) {
+    const item = boards[v.b][v.i], vals = JSON.parse(v.v);
+    Object.keys(vals).forEach((c) => {
+      if ((M.keep || []).indexOf(c) !== -1) { return; }                     // monday took the write and kept its value
+      const val = vals[c];
+      if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
+      else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
+      else if (val && typeof val === "object" && "ids" in val) {           // a dropdown: its label's name, by id
+        const l = (labels[v.b][c] || []).filter((x) => x.id === val.ids[0])[0]; item[c] = l ? l.name : "";
+      }
+      else { item[c] = String(val); }
+    });
+    return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
+  }
+  const b = String((v.b || [])[0]), cells = boards[b] || {};
+  const items = a.noItems ? [] : (v.i || []).filter((id) => has(cells, id)).map((id) => ({ id: id, name: cells[id].__name || "",
+    board: { id: cells[id].__board || b }, column_values: (v.c || []).map((c) => cv(cells[id], c)) }));
+  const columns = a.noColumn ? [] : (v.c || []).map((c) => ({ id: c, type: "x",
+    settings_str: JSON.stringify({ labels: (labels[b] || {})[c] || {} }) }));
+  return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
+}
 /* an answer marked `hold` lands only when a step says so ({"land": "<request>"}) */
 const held = {};
 function answer(key) {
@@ -162,6 +169,12 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
       const next = (held[step.land] || []).shift();
       if (!next) { throw new Error("nothing held for " + step.land); }
       next();
+    }
+    if (step.unpark) {
+      const go = parked[step.unpark];
+      if (!go) { throw new Error("no monday request parked as " + step.unpark); }
+      delete parked[step.unpark];
+      go();
     }
     if (step.hide) { document.visibilityState = "hidden"; (listeners.visibilitychange || []).forEach((f) => f()); }
     if (step.back) {
