@@ -177,7 +177,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
   ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
   whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
-  pressed. A proposal is always the reading's on the screen (D4's review): taken off the current rows when the confirmation
+  pressed - its report too: beside the document's line (`data-books-at`, kept once written), and where it was on the page
+  once a reading took the document off (`POP_AT`); a batch's box is its one report, a flash only while the students' list
+  is off the screen (QA 26.11). A proposal is always the reading's on the screen (D4's review): taken off the current rows when the confirmation
   is made, held to a newer reading that lands while it is open (`recheckBatch`: one withdrawn or changed leaves with its closed
   reason, `FILL_GONE` / `FILL_CHANGED`; with none left it closes, said) and checked again right before each row's write. Both
   reads take what the proposal rests on too (the action's `rests_on`: "סטטוס תשלום" by index, "סכום ששולם"), held to the

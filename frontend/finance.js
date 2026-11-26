@@ -177,6 +177,13 @@
  *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
  * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נכתב במאנדיי..." and the note
  *      on monday's card of the row just written). One shows at a time: a new one takes the place of the one on the screen.
+ * From the QA of 26.11 on real data (Claude in Chrome on the live desk at 33bd24a), by its numbers:
+ * 1  After "כתיבה" from the books' list, the report "נכתב במאנדיי בשמך..." opened high up, cut off at the top of the view and
+ *      over the next document's candidates - the line's button had given way to "נכתב, מתעדכן", and the box went beside the
+ *      list's head - while a flash at the bottom said the same. The line keeps its place (`data-books-at`) and the report
+ *      floats beside it, as the confirmation did; once what was pressed has left the page (the next reading takes the
+ *      document off the list), the box stays where it was on the page (POP_AT), never cut off at the view's edge. The box
+ *      is a batch's one report: a flash says it only while the students' list, where the box is drawn, is off the screen.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1221,7 +1228,9 @@
   function proposalHtml(e) {
     var p = e.proposal, r = p ? rowByKey("sc:" + p.item_id) : null, a = r ? rowFill(r) : null;
     if (!p) { return ""; }
-    return "<div class=\"fin-fill\">" + esc(PROPOSAL_SAID + p.name) + (r && r.written ? writtenMark(r)
+    /* the line keeps its place (`data-books-at`) when its button gives way to "נכתב, מתעדכן": the report of the write
+       floats beside it, where the confirmation was (QA 26.11, 1) */
+    return "<div class=\"fin-fill\" data-books-at=\"" + esc("sc:" + p.item_id) + "\">" + esc(PROPOSAL_SAID + p.name) + (r && r.written ? writtenMark(r)
       : a && fillable(r) ? " <button type=\"button\" class=\"fin-btn fin-fill-btn\" data-books-fill=\"" + esc(rowKey(r)) +
         "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" : "") + "</div>";
   }
@@ -2415,6 +2424,10 @@
       if (box && box.focus) { box.focus({ preventScroll: true }); }
     });
   }
+  /* QA 26.11 (1): the batch's box is the one report of it - the box said "נכתב במאנדיי בשמך..." and a flash at the bottom
+     said it again. The box is drawn with the students' list (batchHtml, booksPanel), so a flash says it only while that
+     list is not on the screen (the companies' tab, "לפי מחזור") */
+  function batchShown() { return state.tab === "b2c" && !(state.sc.view === "cohorts" && cohortsPart()); }
   function failBatch(batch, e) {
     if (e && e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; }
     use("act", { action: batch.action, phase: "batch_failed", code: useWord(e && e.code) || "monday" });
@@ -2422,7 +2435,7 @@
     batch.error = errorWords(e);
     batch.detail = (e && e.text) || "";
     landed();
-    flash(batch.error);
+    if (!batchShown()) { flash(batch.error); }
   }
   function confirmBatch() {
     var batch = BATCH;
@@ -2486,8 +2499,10 @@
       use("act", { action: batch.action, phase: "batch_done",
         code: written === todo.length ? "" : written ? "partial" : "none" });
       landed();
-      flash(written ? "נכתב במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
-        (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". המסך מתעדכן." : "לא נכתב כלום: הפירוט ברשימה.");
+      if (!batchShown()) {
+        flash(written ? "נכתב במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
+          (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". המסך מתעדכן." : "לא נכתב כלום: הפירוט ברשימה.");
+      }
       /* one refresh after the batch, as after one action (refreshAfterWrite asks again at most twice while a written row
          is not shown yet) */
       if (written || maybe) { refreshAfterWrite(0); }
@@ -3331,7 +3346,12 @@
       /* D4: the button pressed - in the row's details, on its document's line in the books' list (beside which the
          document's row is never covered), or above that list */
       h = panel.querySelector(b.from === "all" ? "[data-books-all]" : "[data-books-fill=\"" + quote(b.items[0].key) + "\"]");
+      /* QA 26.11 (1): once written, the line's button gives way to "נכתב, מתעדכן" and the line stays; the report of the
+         write floats beside it. A line or a button that left the page (a newer reading took the document off the list)
+         is where placePop last put the box, never the list's head, which may be far above the view */
+      if (!h && b.from === "list") { h = panel.querySelector("[data-books-at=\"" + quote(b.items[0].key) + "\"]"); }
       v = h && b.from === "list" && h.closest ? h.closest("tr") : h;
+      if (!v && b.from !== "all") { return null; }
     }
     if (!v) {
       v = panel.querySelector(".fin-batchbar");
@@ -3340,18 +3360,35 @@
     v = v || panel.querySelector(".fin-listhead");
     return v ? { v: v, h: h || v } : null;
   }
+  /* QA 26.11 (1): where the box was last put beside what was pressed, in the page's own coordinates, and whose box it was
+     (the batch or the action on the screen): when what was pressed has left the page - a newer reading took a written
+     document off the books' list - the box stays beside where it was, following the page's scroll */
+  var POP_AT = null;
+  function onPage(r) {
+    return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width };
+  }
+  function inView(p) {
+    return { top: p.top - window.scrollY, bottom: p.bottom - window.scrollY, left: p.left - window.scrollX, width: p.width };
+  }
   function placePop() {
     var pop = root && root.querySelector ? root.querySelector(".fin-pop") : null;
     if (!pop || !pop.getBoundingClientRect) { return; }
     var at = popAnchor(pop), vh = window.innerHeight, vw = document.documentElement.clientWidth;
+    var owner = pop.classList && pop.classList.contains("fin-act-box") ? ACT : BATCH;
     pop.style.maxHeight = "";
-    var h = pop.offsetHeight, w = pop.offsetWidth;
-    if (!at) { pop.style.top = POP_EDGE + "px"; pop.style.left = Math.round((vw - w) / 2) + "px"; return; }
-    var a = at.v.getBoundingClientRect(), x = at.h.getBoundingClientRect();
+    var h = pop.offsetHeight, w = pop.offsetWidth, a, x;
+    if (at) {
+      a = at.v.getBoundingClientRect(); x = at.h.getBoundingClientRect();
+      POP_AT = { owner: owner, v: onPage(a), h: onPage(x) };
+    } else if (POP_AT && POP_AT.owner === owner) {
+      a = inView(POP_AT.v); x = inView(POP_AT.h);
+    } else { pop.style.top = POP_EDGE + "px"; pop.style.left = Math.round((vw - w) / 2) + "px"; return; }
     var above = a.top - POP_GAP - POP_EDGE, below = vh - POP_EDGE - a.bottom - POP_GAP;
     var up = h <= above || (h > below && above >= below);
     if (h > (up ? above : below)) { h = Math.max(up ? above : below, 60); pop.style.maxHeight = h + "px"; }
-    pop.style.top = Math.round(up ? a.top - POP_GAP - h : a.bottom + POP_GAP) + "px";
+    /* never cut off at the view's edge: what it floats beside may have been scrolled out of the view */
+    var top = Math.min(Math.max(up ? a.top - POP_GAP - h : a.bottom + POP_GAP, POP_EDGE), Math.max(POP_EDGE, vh - POP_EDGE - h));
+    pop.style.top = Math.round(top) + "px";
     pop.style.left = Math.round(Math.min(Math.max(POP_EDGE, x.left + x.width / 2 - w / 2), vw - w - POP_EDGE)) + "px";
   }
   var follow = false;

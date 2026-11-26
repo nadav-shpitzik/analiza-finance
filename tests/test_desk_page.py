@@ -1036,7 +1036,8 @@ def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_
         ("query", ["3102"]), ("mutation", "3102"), ("query", ["3106"]), ("mutation", "3106")]
     assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
     assert done["batch"]["phase"] == "done" and [i["result"] for i in done["batch"]["items"]] == ["written", "written"]
-    assert "נכתב במאנדיי בשמך ב-2 שורות. המסך מתעדכן." in got["toasts"]
+    # QA 26.11 (1), changed deliberately: the batch's box is its one report - it says so, and no flash says it again
+    assert "נכתב במאנדיי בשמך ב-2 שורות." in h.unescape(done["html"]) and got["toasts"] == []
     # one refresh, as after one action; the picks are the batch's and are cleared
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
     assert done["picked"] == [] and "data-row=\"3102\"" not in done["html"]          # the reading placed them in "הושלם"
@@ -1105,7 +1106,8 @@ def test_a_row_that_fails_is_said_with_why_and_the_others_are_written():
     done = got["steps"][4]
     assert [(i["key"], i["result"], i["why"]) for i in done["batch"]["items"]] == [
         ("sc:3102", "failed", "מאנדיי לא מרשה לך לכתוב בשורה הזאת. לא נכתב כלום."), ("sc:3106", "written", "")]
-    assert "נכתב במאנדיי בשמך בשורה אחת, ובשאר לא: הפירוט ברשימה. המסך מתעדכן." in got["toasts"]
+    # QA 26.11 (1), changed deliberately: the box says it - the row written, the one that failed and why - and no flash
+    assert "נכתב במאנדיי בשמך בשורה אחת." in done["html"] and got["toasts"] == []
     assert 'class="fin-act-msg bad" role="alert"' in done["html"] and "<p>נכשל:</p>" in done["html"]
     assert len([p for p in got["posts"] if p[0] == "/api/desk/refresh"]) == 1
 
@@ -1119,7 +1121,9 @@ def test_a_missing_permission_stops_the_batch_at_its_first_write_and_nothing_els
     assert [(i["result"], i["why"]) for i in done["batch"]["items"]] == [
         ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נכתב כלום."), ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נשלח.")]
     assert [s["kind"] for s in got["sent"]] == ["query", "query", "mutation"] and done["can"]["state"] == "no"
-    assert "לא נכתב כלום: הפירוט ברשימה." in got["toasts"] and not [p for p in got["posts"] if p[0] == "/api/desk/refresh"]
+    # QA 26.11 (1), changed deliberately: said by the box alone
+    assert "לא נכתב כלום." in done["html"] and got["toasts"] == []
+    assert not [p for p in got["posts"] if p[0] == "/api/desk/refresh"]
     assert "data-row-act" not in done["html"] and "data-pick" not in done["html"]   # no button left where it cannot write
 
 
@@ -1129,8 +1133,16 @@ def test_a_label_renamed_in_monday_stops_the_whole_batch_before_anything_is_writ
     got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]}],
                 monday=monday, context=WRITES, answers=batch_answers(receipts_view()))
     failed = got["steps"][2]["batch"]
-    assert failed["phase"] == "failed" and failed["error"] == "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+    said = "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+    assert failed["phase"] == "failed" and failed["error"] == said
     assert writes_of(got) == [] and "data-batch-go" not in got["steps"][2]["html"]
+    # QA 26.11 (1): said by the batch's box alone - no flash says it again
+    assert said in got["steps"][2]["html"] and got["toasts"] == []
+    # with the students' list off the screen (the companies' tab), no box is drawn: a flash says it
+    got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"show": {"tab": "b2b"}},
+                       {"click": [{"batch": "receipt_sent"}]}],
+                monday=monday, context=WRITES, answers=batch_answers(receipts_view()))
+    assert got["steps"][3]["batch"]["phase"] == "failed" and said not in got["steps"][3]["html"] and got["toasts"] == [said]
 
 
 @pytest.mark.parametrize("context, monday", [
@@ -1250,8 +1262,8 @@ def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_
                 monday=receipts_world(), context=WRITES, answers=answers)
     assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
     assert [e["args"]["itemId"] for e in got["executed"] if e["what"] == "openItemCard"] == [3106, 3102, 3102, 3106]
-    assert got["toasts"] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן.", CARD_NOTE,
-                             "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן.", CARD_NOTE]
+    # (QA 26.11, 1: the batch's write is said by its box alone, no flash)
+    assert got["toasts"] == [CARD_NOTE, "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן.", CARD_NOTE]
     # outside monday a row's link opens its page in a new tab, which shows the value at once: nothing to say
     source = code_of(PAGE)
     assert source.index("cardNote(el.dataset.open)") > source.index("if (deps.monday) {", source.index("if (el.dataset.open) {"))
@@ -1263,14 +1275,16 @@ def test_one_flash_shows_at_a_time_and_the_newest_takes_the_place_of_the_one_on_
     time: the newest takes the place of the one on the screen."""
     answers = {"GET /api/desk": [{"body": answer(receipts_view())}],
                "POST /api/desk/refresh": [{"body": answer(receipts_done(), taken_at="2026-11-24T08:00:09+00:00")}]}
-    got = drive(steps=[{"show": TASKS}, {"click": [{"rowAct": "sc:3102:receipt_sent"}]}, {"click": [{"batchGo": "1"}]},
+    # (QA 26.11, 1: a batch's write is said by its box alone, so the write here is a row's action in its details)
+    wrote = "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן."
+    got = drive(steps=[{"show": TASKS}, {"act": ["sc:3102", "receipt_sent"]}, {"confirm": True},
                        {"click": [{"open": "3102"}, ["fin-name"]]}, {"click": [{"pick": "sc:3106"}]},
                        {"click": [{"pick": "sc:3106"}]}],
                 monday=receipts_world(), context=WRITES, answers=answers)
     shown = [s["showing"] for s in got["steps"]]
-    assert shown[2] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן."]
+    assert shown[2] == [wrote]
     assert shown[3] == [CARD_NOTE]                                  # the write's flash gave way to the card's note
-    assert all(len(x) <= 1 for x in shown) and got["toasts"] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן.", CARD_NOTE]
+    assert all(len(x) <= 1 for x in shown) and got["toasts"] == [wrote, CARD_NOTE]
 
 
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------

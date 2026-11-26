@@ -170,8 +170,10 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
     assert set(rows) == {"62601", "62602", "62604", "62606", "62613"}
     for number, (rid, name) in {"62601": ("1", "נועה ברק"), "62602": ("2", "יואב שטרן"),
                                 "62604": ("4", "עידו רז | השלמת תשלום")}.items():
-        assert ('<div class="fin-fill">הצעה: לרשום בשורה של %s <button type="button" class="fin-btn fin-fill-btn" '
-                'data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button></div>' % (h.escape(name), rid)) in rows[number]
+        # (QA 26.11, 1: the line carries the row it proposes, `data-books-at`, where the report of its write floats)
+        assert ('<div class="fin-fill" data-books-at="sc:%s">הצעה: לרשום בשורה של %s <button type="button" '
+                'class="fin-btn fin-fill-btn" data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button></div>'
+                % (rid, h.escape(name), rid)) in rows[number]
     assert "fin-fill" not in rows["62606"] + rows["62613"]
     assert 'data-books-all="1">לרשום את כל ההצעות <span class="fin-subtle">(4)</span></button>' in part
     assert part.index('data-books-all="1"') < part.index("<table")                     # above the list
@@ -242,7 +244,8 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
     assert writes_of(got) == [(SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
     assert done["batch"]["phase"] == "done" and done["batch"]["items"][0]["result"] == "written"
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
-    assert "נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן." in got["toasts"]
+    # QA 26.11 (1), changed deliberately: the box beside the line pressed is the one report, and no flash says it again
+    assert "נכתב במאנדיי בשמך בשורה אחת." in h.unescape(books_part(done["html"])) and got["toasts"] == []
     # the reading after it: the document left the list, and the row cites it
     after = books_part(done["html"])
     table = after[after.index("<tbody>"):after.index("</tbody>")]
@@ -250,6 +253,37 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
 
 
 DESK_AFTER = fd.DESK_ACTIONS["books_fill"]["after"]
+WROTE_ONE = "נכתב במאנדיי בשמך בשורה אחת"
+
+
+@pytest.mark.parametrize("where", ["list", "cohorts", "b2b"])
+def test_the_report_of_a_write_is_its_box_alone_and_a_flash_says_it_only_where_the_box_is_not_on_the_screen(where):
+    """QA 26.11 (1): after "כתיבה" from "מסמכים בחשבשבת בלי חיוב במאנדיי", the box said "נכתב במאנדיי בשמך..." and a flash at
+    the bottom said it again. The box is the one report. Its line in the books' list stays, "נכתב, מתעדכן" in place of the
+    button (`data-books-at`: the box floats beside it), until the reading that takes the document off the list - and the
+    box stays after it. Only while the students' list is not on the screen (the companies' tab, "לפי מחזור"), where no box
+    is drawn, does a flash say it."""
+    away = {"list": [], "cohorts": [{"show": {"sc": {"view": "cohorts"}}}], "b2b": [{"show": {"tab": "b2b"}}]}[where]
+    got = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}] + away +
+              [{"click": [{"batchGo": "1"}]}, {"land": "POST /api/desk/refresh"},
+               {"show": {"tab": "b2c", "sc": {"view": "list", "state": "tasks"}}}],
+              refreshed=after_view({"1": {NUMBER_COL: "62601", DATE_COL: "2026-11-12"}}), hold=True)
+    written, landed, back = got["steps"][-3:]
+    assert written["batch"]["phase"] == "done" and writes_of(got) == [
+        (SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
+    said = [t for t in got["toasts"] if t.startswith(WROTE_ONE)]
+    if where != "list":
+        assert "fin-batch-done" not in written["html"] and said == [WROTE_ONE + ". המסך מתעדכן."]
+        assert WROTE_ONE in books_part(back["html"])          # the box, back on the list: the batch's report is on it
+        return
+    assert said == [] and got["toasts"] == []
+    part = h.unescape(books_part(written["html"]))
+    line = re.search(r'<div class="fin-fill" data-books-at="sc:1">(.*?)</div>', part, flags=re.S)
+    assert line and "נכתב, מתעדכן" in line.group(1) and "data-books-fill" not in line.group(1)
+    assert "fin-batch-done" in part and WROTE_ONE in part
+    # the reading after it took the document off the list; the box stays, its report as it was
+    after = h.unescape(books_part(landed["html"]))
+    assert 'data-books-at="sc:1"' not in after and "fin-batch-done" in after and WROTE_ONE in after
 
 
 def test_every_proposal_at_once_writes_exactly_the_proposals_each_its_own():
@@ -605,7 +639,7 @@ def test_a_row_whose_check_could_not_be_made_is_not_written(answer, why, then):
 
 
 # ---- in a browser (Chromium through Playwright, as tests/test_desk_browser.py; skipped without it) -------------------------
-from tests.test_desk_browser import FAKE_SDK, PW_ROOT, qa_visit, serve  # noqa: E402,F401 - `serve` is the fixture
+from tests.test_desk_browser import FAKE_SDK, HOLD, PW_ROOT, qa_visit, serve  # noqa: E402,F401 - `serve` is the fixture
 
 # the repo's fake SDK answers reads; here it also takes a write as monday would (change_multiple_column_values), keeping it
 WRITE_BRANCH = r"""
@@ -689,6 +723,69 @@ def test_in_a_browser_a_proposals_confirmation_floats_beside_what_was_pressed_an
                                    ["1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}}],
                                    ["3", {DATE_COL: {"date": "2026-11-03"}}]], size
         assert "נכתב במאנדיי בשמך ב-4 שורות." in steps["report"]
+
+
+@pytest.mark.skipif(PW_ROOT is None, reason="node with playwright is not installed")
+def test_in_a_browser_the_report_of_a_write_floats_beside_the_line_pressed_and_stays_there_when_the_document_leaves(serve):  # noqa: F811
+    """QA 26.11 (1): after "כתיבה" from a document's line in "מסמכים בחשבשבת בלי חיוב במאנדיי", the box "נכתב במאנדיי
+    בשמך..." opened high up, cut off at the top of the view and over the next document's candidates: the line's button had
+    given way to "נכתב, מתעדכן", and the box went beside the list's head. It floats beside the line, where the confirmation
+    was, in the view and clear of it; when the reading after the write takes the document off the list, it stays where it
+    was on the page (never the list's head, never cut off); and no flash says it again."""
+    view = fill_view()[0]
+    base, _log = serve(view, after_view({"1": {NUMBER_COL: "62601", DATE_COL: "2026-11-12"}}))
+    store = {SC_BOARD: monday_of()["boards"][SC_BOARD]}
+    got = qa_visit(r"""
+  await page.waitForSelector('.fin-books [data-books-all="1"]');
+  const button = '[data-books-fill="sc:1"][data-books-from="list"]';
+  /* the document's line in the books' list, by its number */
+  const line = () => page.evaluateHandle(() => [...document.querySelectorAll(".fin-books-t tbody tr")]
+    .filter((r) => (r.querySelector(".b-number") || {}).innerText === "62601")[0] || null);
+  const box = () => page.evaluate(() => {
+    const pop = document.querySelector(".fin-batch.fin-pop"), p = pop.getBoundingClientRect();
+    const l = [...document.querySelectorAll(".fin-books-t tbody tr")]
+      .filter((x) => (x.querySelector(".b-number") || {}).innerText === "62601")[0], r = l && l.getBoundingClientRect();
+    const head = document.querySelector('.fin-books[data-books="b2c"] .fin-listhead').getBoundingClientRect();
+    return { page: Math.round(p.top + window.scrollY), inView: p.top >= 0 && p.bottom <= window.innerHeight,
+      gap: r ? Math.round(p.bottom <= r.top ? r.top - p.bottom : p.top - r.bottom) : null,
+      clear: !r || p.bottom <= r.top || p.top >= r.bottom, line: !!l, written: !!(l && l.querySelector(".fin-written")),
+      head: Math.round(head.bottom), done: pop.classList.contains("fin-batch-done"),
+      toasts: [...document.querySelectorAll(".fin-toast")].map((t) => t.innerText) };
+  });
+  await page.$eval(button, (el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(100);
+  await page.click(button);
+  await page.waitForSelector(".fin-batch-plan [data-batch-go]");
+  out.steps[at] = { plan: await box() };
+  await page.click('.fin-batch-plan [data-batch-go="1"]');
+  await page.waitForSelector(".fin-batch-done");
+  await holding.refresh.came;
+  out.steps[at].done = await box();
+  /* a row's details opened in the list above: the line moves down the page, and the box with it */
+  await page.$eval('tr[data-row="7"] > td:nth-child(2)', (td) => td.click());
+  await page.waitForSelector(".fin-detail");
+  await (await line()).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  out.steps[at].moved = await box();
+  await release("refresh", "/api/desk/refresh");
+  await page.waitForFunction(() => ![...document.querySelectorAll(".fin-books-t tbody tr .b-number")]
+    .some((n) => n.innerText === "62601"), null, { timeout: 15000 });
+  await page.waitForTimeout(300);
+  out.steps[at].landed = await box();
+""", base, writing_sdk(store), sizes=((1280, 748), (1400, 748)), setup=HOLD)
+    assert got["errors"] == [], got["errors"]
+    for size in ("1280x748", "1400x748"):
+        plan, done, landed = (got["steps"][size][k] for k in ("plan", "done", "landed"))
+        assert plan["inView"] and plan["clear"] and plan["gap"] == 6, (size, plan)
+        # the report: beside the line - which says "נכתב, מתעדכן" now - as the confirmation was, in the view, said once
+        assert done["done"] and done["line"] and done["written"], (size, done)
+        assert done["inView"] and done["clear"] and done["gap"] == 6 and done["toasts"] == [], (size, done)
+        # a row's details opened above it: the line moved down the page, and the box beside it
+        moved = got["steps"][size]["moved"]
+        assert moved["line"] and moved["page"] > done["page"] + 50 and moved["gap"] == 6 and moved["clear"], (size, moved)
+        # the document left the list with the next reading: the box stays where it was on the page, in the view
+        assert landed["done"] and not landed["line"] and landed["inView"] and landed["toasts"] == [], (size, landed)
+        assert abs(landed["page"] - moved["page"]) <= 1, (size, moved, landed)
 
 
 def test_a_proposals_batch_takes_no_pick_and_leaves_the_rows_picked_for_the_others():
