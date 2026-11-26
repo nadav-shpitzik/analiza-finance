@@ -208,7 +208,7 @@ def test_a_page_on_its_way_holds_the_next_and_a_second_press_starts_nothing():
     assert len(got["sent"]) == 1 and len(got["posts"]) == 1 and got["saved"] == []
     reading = got["steps"][-1]
     assert reading["idx"]["phase"] == "reading" and reading["idx"]["total"] == 253
-    assert "קורא ממאנדיי, בשמך, ת.ז של 253 לידים..." in reading["html"]
+    assert "טוען ממאנדיי, בשמך, ת.ז של 253 לידים..." in reading["html"]
     assert re.search(r'<button class="fin-btn" type="button" data-export-ids="1" disabled[^>]*>מכין קובץ עם ת\.ז\.\.\.</button>',
                      reading["html"])
 
@@ -263,9 +263,9 @@ RATE = {"errors": [{"message": "Complexity budget exhausted, query cost 30001 bu
 
 
 @pytest.mark.parametrize("plan, extra, code, words", [
-    ([{}, RATE], {}, "rate_limited", "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),          # cut on its second page
+    ([{}, RATE], {}, "rate_limited", "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה"),          # cut on its second page
     ([{"noBoard": True}], {}, "denied", "אין לך גישה ללוח הלידים במאנדיי"),
-    ([{"noColumn": True}], {}, "columns_changed", "העמודה ת.ז לא נמצאה בלוח הלידים; נדב צריך לבדוק"),
+    ([{"noColumn": True}], {}, "columns_changed", "העמודה ת.ז לא נמצאה בלוח הלידים. יש לפנות לנדב"),
     ([{"errors": [{"message": "Missing required permission scope: boards:read"}]}], {}, "no_scope",
      "לאפליקציה אין הרשאה לקרוא את לוח הלידים"),
     ([{"hold": True}], {"mondayWaitMs": 40, "wait": 120}, "timeout", "מאנדיי לא ענתה בזמן"),
@@ -282,7 +282,7 @@ def test_a_read_that_fails_or_is_cut_makes_no_file_and_offers_the_file_without_i
     note = re.search(r'<div class="fin-idsnote" role="alert">(.*?)</div>', failed["html"]).group(1)
     assert "קובץ עם ת.ז לא נוצר: %s." % words in note
     assert '<button type="button" class="fin-linkbtn" data-export="b2c">ייצוא לאקסל בלי ת.ז</button>' in note
-    assert 'data-export-ids="1">לנסות שוב</button>' in note
+    assert 'data-export-ids="1">ניסיון חוזר</button>' in note
     assert [e["d"] for e in export_events(got)] == [{"code": code}]
     # the file without the ID number, one press away: the list's own link, its own filter, and the note goes
     link = [p for p in got["posts"] if p[0] == "/api/desk/export-link"]
@@ -291,11 +291,11 @@ def test_a_read_that_fails_or_is_cut_makes_no_file_and_offers_the_file_without_i
 
 @pytest.mark.parametrize("table, code, said", [
     ({"reject": {"error": "finance_unavailable", "status": 503}}, "finance_unavailable",
-     "לא הצלחנו לקרוא עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות"),
-    ({"reject": {"error": "rate_limited", "retryAfter": 30, "status": 429}}, "rate_limited", "השולחן ביקש להאט; לנסות שוב בעוד דקה"),
+     "לא הצלחנו לטעון עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות"),
+    ({"reject": {"error": "rate_limited", "retryAfter": 30, "status": 429}}, "rate_limited", "יותר מדי בקשות. אפשר לנסות שוב בעוד דקה"),
     ({"reject": {"error": "not_a_board_member", "status": 403}}, "not_a_board_member",
      "התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם"),
-    ({"name": NAME, "sheets": [{"title": "תקבולים"}]}, "table", "השרת לא החזיר את רשימת התקבולים כפי שהקובץ צריך"),
+    ({"name": NAME, "sheets": [{"title": "תקבולים"}]}, "table", "רשימת התקבולים שהתקבלה אינה תקינה לייצוא"),
 ])
 def test_a_table_the_server_refuses_or_answers_in_another_shape_reads_nothing_from_monday(table, code, said):
     s, leads = many()
@@ -337,7 +337,7 @@ def test_the_button_is_on_the_students_list_only_beside_its_export_and_follows_i
         {"show": {"tab": "b2b", "sc": {"view": "list"}}}])
     plain, odd, cohorts, companies = (x["html"] for x in got["steps"])
     assert re.search(r'data-export="b2c"[^>]*>ייצוא לאקסל</button><button class="fin-btn" type="button" data-export-ids="1" '
-                     r'title="מספרי ת\.ז נקראים ממאנדיי בשמך, כאן בדפדפן, ולא נשלחים לשום מקום">ייצוא לאקסל עם ת\.ז</button>',
+                     r'title="מספרי ת\.ז נטענים ממאנדיי בדפדפן, בשמך, ואינם נשלחים לשרת של שולחן הכספים">ייצוא לאקסל עם ת\.ז</button>',
                      plain)
     # a search outside the exportable alphabet: no file of the list, and none with the ID number
     assert re.search(r'data-export-ids="1" disabled title="בחיפוש יש תו מיוחד', odd)
@@ -350,7 +350,7 @@ def test_an_incomplete_reading_offers_no_file_with_the_id_number_either():
     body, table = built(s)
     body["view"]["checks"]["b2c_ok"] = False
     got = run(body, table, leads=leads, steps=[ALL])
-    assert re.search(r'data-export-ids="1" disabled title="הקריאה לא שלמה', got["steps"][0]["html"])
+    assert re.search(r'data-export-ids="1" disabled title="הנתונים חלקיים', got["steps"][0]["html"])
 
 
 # --- the numbers go nowhere but into the file ---------------------------------------------------------------------------
@@ -489,7 +489,7 @@ def test_in_a_browser_the_file_holds_the_screens_rows_with_their_numbers_and_the
     steps = got["steps"]
     assert got["errors"] == [], got["errors"]
     assert steps["button"] == {"text": "ייצוא לאקסל עם ת.ז", "disabled": False,
-                               "title": "מספרי ת.ז נקראים ממאנדיי בשמך, כאן בדפדפן, ולא נשלחים לשום מקום"}
+                               "title": "מספרי ת.ז נטענים ממאנדיי בדפדפן, בשמך, ואינם נשלחים לשרת של שולחן הכספים"}
     # the file: the screen's rows in the screen's order, each with its number
     wb = openpyxl.load_workbook(file)
     ws = wb["תקבולים"]

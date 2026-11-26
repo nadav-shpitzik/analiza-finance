@@ -169,7 +169,7 @@ def books_part(html: str) -> str:
 
 
 def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_it():
-    """"מסמכים בחשבשבת בלי חיוב במאנדיי": under a proposed document's candidates, "הצעה: לרשום בשורה של <the row's name>"
+    """"מסמכי חשבשבת ללא התאמה במאנדיי": under a proposed document's candidates, "הצעה: לרשום בשורה של <the row's name>"
     and the button "רישום מחשבשבת"; a document with no proposal, none; above the list, "לרשום את כל ההצעות (N)" with every
     proposal - the documents' three and the date alone of a row that cites its number, said under the list."""
     view, _m = fill_view()
@@ -191,7 +191,7 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
     assert part.index('data-books-all="1"') < part.index("<table")                     # above the list
     # and beside it, before the list, what a date alone is
     said = ('<p class="fin-listnote">הצעה אחת היא תאריך תקבול בלבד: שורה שכבר מפנה לחשבונית שלה, וחסר בה רק תאריך תקבול. '
-            'היא ליד השורה שלה ברשימת התקבולים ולא כאן, ו&quot;לרשום את כל ההצעות&quot; כותב גם אותה.</p>')
+            'היא ליד השורה שלה ברשימת התקבולים ולא כאן, ו&quot;לרשום את כל ההצעות&quot; מעדכן גם אותה.</p>')
     assert said in part and part.index(said) < part.index("<table")
     # a proposal is a candidate's, never called a match
     assert not re.search("התאמה|מותאם|קושר", h.unescape(part[part.index("<tbody>"):]))
@@ -265,7 +265,7 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
     assert shown["sent"] == 0 and plan["batch"]["phase"] == "confirm"
     assert plan["batch"]["items"] == [{"key": "sc:1", "verdict": "write", "why": "", "result": None}]
     page = h.unescape(plan["html"])
-    assert 'ייכתב במאנדיי בשורה "נועה ברק", בשמך:' in page
+    assert 'יעודכן במאנדיי בשורה "נועה ברק", בשמך:' in page
     assert ('<li><b>נועה ברק</b> · אסמכתת חשבונית: עכשיו ריק, ייכתב "62601" · תאריך תקבול: עכשיו ריק, ייכתב 12.11.26</li>'
             in page)
     assert DESK_AFTER in page and page.index('data-books="b2c"') < page.index("fin-pop")   # in the books' list
@@ -281,7 +281,7 @@ def test_a_proposal_from_the_list_is_one_confirmation_one_write_of_exactly_what_
     assert done["batch"]["phase"] == "done" and done["batch"]["items"][0]["result"] == "written"
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
     # QA 26.11 (1), changed deliberately: the box beside the line pressed is the one report, and no flash says it again
-    assert "נכתב במאנדיי בשמך בשורה אחת." in h.unescape(books_part(done["html"])) and got["toasts"] == []
+    assert "נשמר במאנדיי בשמך בשורה אחת." in h.unescape(books_part(done["html"])) and got["toasts"] == []
     # the reading after it: the document left the list, and the row cites it
     after = books_part(done["html"])
     table = after[after.index("<tbody>"):after.index("</tbody>")]
@@ -293,13 +293,13 @@ DESK_AFTER = fd.DESK_ACTIONS["books_fill"]["after"]
 # 1 and 4 a number and a date, 2 a number, 3 a date), and those left once row 1 is written
 ALL_SAID = "6 רישומים ב-4 שורות: 3 מספרים, 3 תאריכים"
 LEFT_SAID = "4 רישומים ב-3 שורות: 2 מספרים, 2 תאריכים"
-WROTE_ONE = "נכתב במאנדיי בשמך בשורה אחת"
+WROTE_ONE = "נשמר במאנדיי בשמך בשורה אחת"
 
 
 @pytest.mark.parametrize("where", ["list", "cohorts", "b2b"])
 def test_the_report_of_a_write_is_its_box_alone_and_a_flash_says_it_only_where_the_box_is_not_on_the_screen(where):
-    """QA 26.11 (1): after "כתיבה" from "מסמכים בחשבשבת בלי חיוב במאנדיי", the box said "נכתב במאנדיי בשמך..." and a flash at
-    the bottom said it again. The box is the one report. Its line in the books' list stays, "נכתב, מתעדכן" in place of the
+    """QA 26.11 (1): after "שמירה" from "מסמכי חשבשבת ללא התאמה במאנדיי", the box said "נשמר במאנדיי בשמך..." and a flash at
+    the bottom said it again. The box is the one report. Its line in the books' list stays, "נשמר, מתעדכן" in place of the
     button (`data-books-at`: the box floats beside it), until the reading that takes the document off the list - and the
     box stays after it. Only while the students' list is not on the screen (the companies' tab, "לפי מחזור"), where no box
     is drawn, does a flash say it."""
@@ -313,13 +313,13 @@ def test_the_report_of_a_write_is_its_box_alone_and_a_flash_says_it_only_where_t
         (SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}})]
     said = [t for t in got["toasts"] if t.startswith(WROTE_ONE)]
     if where != "list":
-        assert "fin-batch-done" not in written["html"] and said == [WROTE_ONE + ". המסך מתעדכן."]
+        assert "fin-batch-done" not in written["html"] and said == [WROTE_ONE + ". התצוגה מתעדכנת."]
         assert WROTE_ONE in books_part(back["html"])          # the box, back on the list: the batch's report is on it
         return
     assert said == [] and got["toasts"] == []
     part = h.unescape(books_part(written["html"]))
     line = re.search(r'<div class="fin-fill" data-books-at="sc:1">(.*?)</div>', part, flags=re.S)
-    assert line and "נכתב, מתעדכן" in line.group(1) and "data-books-fill" not in line.group(1)
+    assert line and "נשמר, מתעדכן" in line.group(1) and "data-books-fill" not in line.group(1)
     assert "fin-batch-done" in part and WROTE_ONE in part
     # the reading after it took the document off the list; the box stays, its report as it was
     after = h.unescape(books_part(landed["html"]))
@@ -337,7 +337,7 @@ def test_every_proposal_at_once_writes_exactly_the_proposals_each_its_own():
     assert got["sent"][0]["variables"] == {"i": ["4", "2", "1", "3"], "c": [NUMBER_COL, DATE_COL, STATUS_COL, PAID_COL],
                                            "b": [SC_BOARD]}
     page = h.unescape(plan["html"])
-    assert "ייכתב במאנדיי בשמך, %s." % ALL_SAID in page                  # the button's words (QA 26.11, C)
+    assert "יעודכן במאנדיי בשמך, %s." % ALL_SAID in page                  # the button's words (QA 26.11, C)
     assert '<li><b>יואב שטרן</b> · אסמכתת חשבונית: עכשיו ריק, ייכתב "62602"</li>' in page
     assert '<li><b>מאיה גולן</b> · תאריך תקבול: עכשיו ריק, ייכתב 03.11.26</li>' in page
     assert writes_of(got) == [(SC_BOARD, "4", {NUMBER_COL: "62604", DATE_COL: {"date": "2026-11-18"}}),
@@ -345,7 +345,7 @@ def test_every_proposal_at_once_writes_exactly_the_proposals_each_its_own():
                               (SC_BOARD, "1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}}),
                               (SC_BOARD, "3", {DATE_COL: {"date": "2026-11-03"}})]
     report = h.unescape(done["html"])
-    assert "נכתב במאנדיי בשמך ב-4 שורות. המסך מתעדכן." in report and "יעברו לשיבוץ" not in report
+    assert "נשמר במאנדיי בשמך ב-4 שורות. התצוגה מתעדכנת." in report and "יעברו לשיבוץ" not in report
     assert '<li><b>מאיה גולן</b> · תאריך תקבול 03.11.26</li>' in report
     assert '<li><b>עידו רז | השלמת תשלום</b> · אסמכתת חשבונית "62604", תאריך תקבול 18.11.26</li>' in report
     # its usage: the press and its batch's life, closed words and counts only, each passing the server's check
@@ -375,7 +375,7 @@ def test_a_row_not_as_the_desk_read_it_is_skipped_and_said_and_never_written_ove
     assert not [w for w in writes_of(got) if "sc:" + w[1] in verdicts]
     assert len(writes_of(got)) == 3
     page = h.unescape(plan["html"])
-    assert "<p>לא ייכתב:</p>" in page and list(verdicts.values())[0] in page
+    assert "<p>לא יעודכן:</p>" in page and list(verdicts.values())[0] in page
 
 
 @pytest.mark.parametrize("cells, written, said", [
@@ -412,7 +412,7 @@ def test_a_row_changed_after_the_confirmation_was_shown_is_not_written_and_the_r
     done = got["steps"][3]["batch"]
     assert [(i["key"], i["result"]) for i in done["items"]] == [
         ("sc:4", "written"), ("sc:2", "skipped"), ("sc:1", "written"), ("sc:3", "written")]
-    assert done["items"][1]["why"] == 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו אסמכתת חשבונית "70000"'
+    assert done["items"][1]["why"] == 'השתנתה במאנדיי מאז הצגת האישור, ועכשיו אסמכתת חשבונית "70000"'
     assert [w[1] for w in writes_of(got)] == ["4", "1", "3"]
 
 
@@ -424,13 +424,13 @@ def test_the_rows_details_write_its_proposal_and_show_it_at_once():
     got = run([{"show": opened}, {"click": [{"booksFill": "sc:3", "booksFrom": "detail"}]}, {"click": [{"batchGo": "1"}]}],
               hold=True)
     before, plan, done = got["steps"]
-    assert "(לפי יום היצירה)" in cell(before["html"], "3", "date")
+    assert "(לפי תאריך יצירה)" in cell(before["html"], "3", "date")
     assert writes_of(got) == [(SC_BOARD, "3", {DATE_COL: {"date": "2026-11-03"}})]
     # in the list's own panel, the one that holds the button pressed (placePop anchors it there)
     panel_of = lambda x: plan["html"].rindex('<div class="fin-panel', 0, plan["html"].index(x))  # noqa: E731
     assert panel_of("fin-pop") == panel_of('data-books-fill="sc:3" data-books-from="detail"')
     html = done["html"]
-    assert cell(html, "3", "date") == "03.11.26" and "נכתב, מתעדכן" in cell(html, "3", "student")
+    assert cell(html, "3", "date") == "03.11.26" and "נשמר, מתעדכן" in cell(html, "3", "student")
     assert 'data-books-fill="sc:3" data-books-from="detail" disabled' in html
     tasks = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}, {"click": [{"batchGo": "1"}]}],
                 hold=True)["steps"][2]["html"]
@@ -443,7 +443,7 @@ def test_a_date_written_here_files_the_row_under_its_new_month_at_once():
     """D4's review (3): applyWritten laid the written "תאריך תקבול" on the row as the day it is shown by, but not its month,
     so until the next reading the row stayed under its old period and was missing from the new one. Row 15 was made on 30.10
     and the books date its invoice-receipt 02.11: written from its details under "2026-10", it is listed at once under
-    "2026-11" by that date, marked "נכתב, מתעדכן", and no longer under "2026-10"."""
+    "2026-11" by that date, marked "נשמר, מתעדכן", and no longer under "2026-10"."""
     rows = ROWS + [pay(15, "טל אור", ref="62617", made="2026-10-30T08:00:00Z")]
     view = fill_view(rows, DOCS + [doc(62617, name="טל אור", card="20017", day="2026-11-02")])[0]
     assert {r["id"]: r for r in view["b2c"]["rows"]}["15"]["books_fill"] == {"date": "2026-11-02"}
@@ -454,7 +454,7 @@ def test_a_date_written_here_files_the_row_under_its_new_month_at_once():
               view=view, monday=monday_of(rows), hold=True)
     before, _plan, _done, nov, octo = got["steps"]
     assert 'data-row="15"' in before["html"] and writes_of(got) == [(SC_BOARD, "15", {DATE_COL: {"date": "2026-11-02"}})]
-    assert cell(nov["html"], "15", "date") == "02.11.26" and "נכתב, מתעדכן" in cell(nov["html"], "15", "student")
+    assert cell(nov["html"], "15", "date") == "02.11.26" and "נשמר, מתעדכן" in cell(nov["html"], "15", "student")
     assert 'data-row="15"' not in octo["html"]
 
 
@@ -477,7 +477,7 @@ def test_past_one_batchs_worth_the_rest_waits_for_the_next_press():
     assert ('לרשום את כל ההצעות <span class="fin-subtle">(30 רישומים ב-29 שורות: 28 מספרים, 2 תאריכים)</span>'
             in got["steps"][0]["html"])
     assert len(got["sent"][0]["variables"]["i"]) == 25 and len(got["steps"][1]["batch"]["items"]) == 25
-    assert "ועוד 4 הצעות: בלחיצה נוספת אחרי הכתיבה, עד 25 שורות בכתיבה אחת." in h.unescape(got["steps"][1]["html"])
+    assert "ועוד 4 הצעות: בלחיצה נוספת אחרי השמירה, עד 25 שורות בשמירה אחת." in h.unescape(got["steps"][1]["html"])
 
 
 def test_every_proposal_at_once_says_on_its_button_and_in_its_confirmation_what_it_writes_in_the_same_words():
@@ -500,7 +500,7 @@ def test_every_proposal_at_once_says_on_its_button_and_in_its_confirmation_what_
     shown, plan = h.unescape(got["steps"][0]["html"]), h.unescape(got["steps"][1]["html"])
     assert "לרשום את כל ההצעות (%s)" % said in re.sub(r"<[^>]+>", "", shown)
     assert [i["verdict"] for i in got["steps"][1]["batch"]["items"]] == ["write"] * 20
-    assert "ייכתב במאנדיי בשמך, %s." % said in plan
+    assert "יעודכן במאנדיי בשמך, %s." % said in plan
     assert ("18 הצעות הן תאריך תקבול בלבד: שורות שכבר מפנות לחשבונית שלהן, וחסר בהן רק תאריך תקבול. הן ליד השורות שלהן "
             "ברשימת התקבולים ולא כאן") in books_part(shown)
 
@@ -527,12 +527,12 @@ def test_the_fills_usage_kind_is_one_closed_word_of_the_vocabulary_and_the_page(
 
 # ---- the hostile review of D4 (26.11): a proposal is always the reading's on the screen ----------------------------------
 # A batch kept the rows of the reading it was pressed on, so a newer reading (a refresh, or askAgain when the view takes the
-# focus back from monday's item card) that withdrew a proposal left the confirmation open, and "כתיבה" wrote it
+# focus back from monday's item card) that withdrew a proposal left the confirmation open, and "שמירה" wrote it
 # (tests/test_review_d4_fill_stale.py). The proposal is now read off the rows on the screen when the confirmation is made, held
 # to each newer reading while it is open, and checked again right before each row's write.
 FILL_GONE = "בקריאה החדשה של הלוחות כבר אין הצעה לשורה הזאת"
 FILL_CHANGED = "ההצעה השתנתה מאז שנפתח האישור, בקריאה החדשה של הלוחות"
-FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לכתוב מההצעות שבו. האישור נסגר."
+FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לעדכן מההצעות שבו. האישור נסגר."
 
 
 def corrected(*ids: str, paid: str = "3600") -> list:
@@ -548,7 +548,7 @@ def items_of(step: dict) -> list:
 def test_a_newer_reading_while_the_confirmation_is_open_moves_a_changed_proposal_out_and_counts_again():
     """The confirmation of every proposal is open (four rows); a newer reading lands in which the books date row 1's document
     a day later (its proposal changed) and a fifth row gained a proposal. Row 1 moves to "לא ייכתב" with why, the count says
-    three rows, the new proposal waits for the next press - and "כתיבה" writes the three, never row 1, never the new row."""
+    three rows, the new proposal waits for the next press - and "שמירה" writes the three, never row 1, never the new row."""
     rows = ROWS + [dict(ROWS[0], id="14", name="רז כהן")]
     docs = [doc(62601, name="נועה ברק", card="20001", day="2026-11-13") if e["doc_number"] == "62601" else e for e in DOCS]
     docs.append(doc(62616, name="רז כהן", card="20016", day="2026-11-12"))
@@ -565,8 +565,8 @@ def test_a_newer_reading_while_the_confirmation_is_open_moves_a_changed_proposal
     assert items_of(landed) == [("sc:4", "write", ""), ("sc:2", "write", ""), ("sc:1", "skip", FILL_CHANGED),
                                 ("sc:3", "write", "")] and landed["batch"]["phase"] == "confirm"
     page = h.unescape(landed["html"])
-    assert "ייכתב במאנדיי בשמך, %s." % LEFT_SAID in page and "<p>לא ייכתב:</p><ul><li><b>נועה ברק</b> · %s</li>" % FILL_CHANGED in page
-    assert "ועוד הצעה אחת: בלחיצה נוספת אחרי הכתיבה, עד 25 שורות בכתיבה אחת." in page
+    assert "יעודכן במאנדיי בשמך, %s." % LEFT_SAID in page and "<p>לא יעודכן:</p><ul><li><b>נועה ברק</b> · %s</li>" % FILL_CHANGED in page
+    assert "ועוד הצעה אחת: בלחיצה נוספת אחרי השמירה, עד 25 שורות בשמירה אחת." in page
     assert [w[1] for w in writes_of(got)] == ["4", "2", "3"]
     assert [(i["key"], i["result"]) for i in done["batch"]["items"]] == [
         ("sc:4", "written"), ("sc:2", "written"), ("sc:1", None), ("sc:3", "written")]
@@ -574,7 +574,7 @@ def test_a_newer_reading_while_the_confirmation_is_open_moves_a_changed_proposal
 
 def test_a_newer_reading_that_withdraws_every_proposal_of_the_confirmation_closes_it_with_a_sentence():
     """One row's proposal from its document's line; a newer reading withdraws it (its amount corrected). The confirmation
-    closes: no "כתיבה" is left on the screen, the box says why in one sentence and the row's own reason, and nothing is
+    closes: no "שמירה" is left on the screen, the box says why in one sentence and the row's own reason, and nothing is
     written."""
     newer, _m = fill_view(corrected("1"))
     got = run([{"show": TASKS}, {"click": [{"booksFill": "sc:1", "booksFrom": "list"}]}, {"click": [{"refresh": "1"}]},
@@ -582,7 +582,7 @@ def test_a_newer_reading_that_withdraws_every_proposal_of_the_confirmation_close
     landed = got["steps"][2]
     assert landed["batch"]["phase"] == "nothing" and items_of(landed) == [("sc:1", "skip", FILL_GONE)]
     page = h.unescape(landed["html"])
-    assert '<p class="fin-act-msg bad" role="alert">%s</p><p>אין מה לכתוב במאנדיי:</p>' % FILL_CLOSED in page
+    assert '<p class="fin-act-msg bad" role="alert">%s</p><p>אין מה לעדכן במאנדיי:</p>' % FILL_CLOSED in page
     assert "<li><b>נועה ברק</b> · %s</li>" % FILL_GONE in page and "data-batch-go" not in page
     assert writes_of(got) == []
 
@@ -601,7 +601,7 @@ def test_a_newer_reading_that_lands_while_the_rows_are_read_is_the_one_the_confi
 
 
 def test_a_newer_reading_that_lands_between_two_rows_writes_is_held_to_right_before_the_next_write():
-    """"כתיבה" pressed on four rows; while the first is read again before its write, a newer reading lands that withdrew row
+    """"שמירה" pressed on four rows; while the first is read again before its write, a newer reading lands that withdrew row
     2's proposal - the confirmation is no longer on the screen to be checked. Each row's proposal is checked against the
     reading on the screen right before its own write: row 2 is not written, and the report says why."""
     monday = monday_of()
@@ -641,8 +641,8 @@ def test_a_row_whose_status_or_amount_moved_since_the_reading_is_said_in_the_con
 
 
 @pytest.mark.parametrize("cells, why", [
-    ({"2": {STATUS_COL: PROBLEM}}, 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו סטטוס תשלום "יש בעיה"'),
-    ({"2": {PAID_COL: "4000"}}, "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו סכום ששולם 4,000.00 ₪"),
+    ({"2": {STATUS_COL: PROBLEM}}, 'השתנתה במאנדיי מאז הצגת האישור, ועכשיו סטטוס תשלום "יש בעיה"'),
+    ({"2": {PAID_COL: "4000"}}, "השתנתה במאנדיי מאז הצגת האישור, ועכשיו סכום ששולם 4,000.00 ₪"),
 ])
 def test_a_row_whose_status_or_amount_moved_after_the_confirmation_was_shown_is_not_written(cells, why):
     """Read again right before its write, with what its proposal rests on: the payment bounced ("יש בעיה") or its amount
@@ -690,11 +690,11 @@ def test_the_row_itself_in_monday_s_answer_is_not_another_row():
 
 @pytest.mark.parametrize("answer, why, then", [
     # another shape: never taken as "none"
-    ({"answer": {"data": {"items": []}}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
-    ({"answer": {"data": {"items_page_by_column_values": {"cursor": None}}}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
-    ({"reject": {"message": "Internal server error"}}, CITED_UNCHECKED + ". לא נכתב כלום.", "written"),
+    ({"answer": {"data": {"items": []}}}, CITED_UNCHECKED + ". לא נשמרו שינויים.", "written"),
+    ({"answer": {"data": {"items_page_by_column_values": {"cursor": None}}}}, CITED_UNCHECKED + ". לא נשמרו שינויים.", "written"),
+    ({"reject": {"message": "Internal server error"}}, CITED_UNCHECKED + ". לא נשמרו שינויים.", "written"),
     # monday asking to slow down: said, and it stops the rest as a write's would
-    ({"reject": {"message": "Rate limit exceeded"}}, CITED_UNCHECKED + " (מאנדיי ביקשה להאט; לנסות שוב בעוד דקה). לא נכתב כלום.",
+    ({"reject": {"message": "Rate limit exceeded"}}, CITED_UNCHECKED + " (יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה). לא נשמרו שינויים.",
      "failed"),
 ])
 def test_a_row_whose_check_could_not_be_made_is_not_written(answer, why, then):
@@ -730,8 +730,8 @@ def writing_sdk(store: dict) -> str:
 @pytest.mark.skipif(PW_ROOT is None, reason="node with playwright is not installed")
 def test_in_a_browser_a_proposals_confirmation_floats_beside_what_was_pressed_and_writes_exactly_the_proposals(serve):  # noqa: F811
     """The books' list under "לטיפול", at monday's view widths: a document's button, and "לרשום את כל ההצעות" above the
-    list, each open their one confirmation beside what was pressed - in the view, clear of it, the pointer not on "כתיבה",
-    the focus on the box - and no row of either list moves, open or closed, nor the page. "כתיבה" then writes in monday
+    list, each open their one confirmation beside what was pressed - in the view, clear of it, the pointer not on "שמירה",
+    the focus on the box - and no row of either list moves, open or closed, nor the page. "שמירה" then writes in monday
     exactly the proposals, each row its own, and the page logs no console error and throws nothing."""
     view = fill_view()[0]
     base, _log = serve(view, after_view({"1": {NUMBER_COL: "62601", DATE_COL: "2026-11-12"},
@@ -786,19 +786,19 @@ def test_in_a_browser_a_proposals_confirmation_floats_beside_what_was_pressed_an
             assert step["open"] == step["before"] and box["y"] == step["y"], (size, name)
             assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"] and box["inBooks"], (size, name, box)
         assert steps["one"]["closed"] == steps["one"]["before"]
-        assert 'ייכתב במאנדיי בשורה "נועה ברק", בשמך:' in steps["one"]["box"]["text"]
-        assert "ייכתב במאנדיי בשמך, %s." % ALL_SAID in steps["all"]["box"]["text"]
+        assert 'יעודכן במאנדיי בשורה "נועה ברק", בשמך:' in steps["one"]["box"]["text"]
+        assert "יעודכן במאנדיי בשמך, %s." % ALL_SAID in steps["all"]["box"]["text"]
         assert steps["writes"] == [["4", {NUMBER_COL: "62604", DATE_COL: {"date": "2026-11-18"}}], ["2", {NUMBER_COL: "62602"}],
                                    ["1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}}],
                                    ["3", {DATE_COL: {"date": "2026-11-03"}}]], size
-        assert "נכתב במאנדיי בשמך ב-4 שורות." in steps["report"]
+        assert "נשמר במאנדיי בשמך ב-4 שורות." in steps["report"]
 
 
 @pytest.mark.skipif(PW_ROOT is None, reason="node with playwright is not installed")
 def test_in_a_browser_the_report_of_a_write_floats_beside_the_line_pressed_and_stays_there_when_the_document_leaves(serve):  # noqa: F811
-    """QA 26.11 (1): after "כתיבה" from a document's line in "מסמכים בחשבשבת בלי חיוב במאנדיי", the box "נכתב במאנדיי
+    """QA 26.11 (1): after "שמירה" from a document's line in "מסמכי חשבשבת ללא התאמה במאנדיי", the box "נכתב במאנדיי
     בשמך..." opened high up, cut off at the top of the view and over the next document's candidates: the line's button had
-    given way to "נכתב, מתעדכן", and the box went beside the list's head. It floats beside the line, where the confirmation
+    given way to "נשמר, מתעדכן", and the box went beside the list's head. It floats beside the line, where the confirmation
     was, in the view and clear of it; when the reading after the write takes the document off the list, it stays where it
     was on the page (never the list's head, never cut off); and no flash says it again."""
     view = fill_view()[0]
@@ -846,7 +846,7 @@ def test_in_a_browser_the_report_of_a_write_floats_beside_the_line_pressed_and_s
     for size in ("1280x748", "1400x748"):
         plan, done, landed = (got["steps"][size][k] for k in ("plan", "done", "landed"))
         assert plan["inView"] and plan["clear"] and abs(plan["gap"] - 6) <= 1, (size, plan)       # 6 px, rounded
-        # the report: beside the line - which says "נכתב, מתעדכן" now - as the confirmation was, in the view, said once
+        # the report: beside the line - which says "נשמר, מתעדכן" now - as the confirmation was, in the view, said once
         assert done["done"] and done["line"] and done["written"], (size, done)
         assert done["inView"] and done["clear"] and abs(done["gap"] - 6) <= 1 and done["toasts"] == [], (size, done)
         # a row's details opened above it: the line moved down the page, and the box beside it

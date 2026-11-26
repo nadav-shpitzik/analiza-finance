@@ -1,4 +1,4 @@
-"""The queue "שולם, שליחת קבלה: טרם" split by what the books say (Nadav 26.11: receipts go out slowly). app/desk/books.py
+"""The queue "שולם, קבלה לטיפול" split by what the books say (Nadav 26.11: receipts go out slowly). app/desk/books.py
 `receipt_in_books` judges each payment of the queue, `merge` lays it on its row (`receipt_books`, `receipt_laid`) from a
 current part of this very reading only, and GET /api/desk/totals counts the split (`receipts`, `receipts_split`).
 
@@ -126,8 +126,8 @@ def test_the_split_is_counted_once_on_the_rows_of_the_list():
 def test_the_legend_says_what_each_means_and_that_none_identified_is_not_none_issued():
     words = dict(fd.LEGEND["b2c"])
     said = next(t for k, t in words.items() if fd.RECEIPT_UNSEEN_SAID in k)
-    assert fd.RECEIPT_ISSUED_SAID in said and "נשאר לסמן במאנדיי" in said and "מתחת לשיבוץ" in said
-    assert "לא אומר בוודאות" in said and "30 יום" in said
+    assert fd.RECEIPT_ISSUED_SAID in said and "יש לעדכן במאנדיי" in said and "מתחת לשיבוץ" in said
+    assert "ייתכן שהקבלה הופקה בשם או בסכום אחר" in said and "30 יום" in said
 
 
 # ---- the route: GET /api/desk/totals counts the split of the list the page shows ---------------------------------------------

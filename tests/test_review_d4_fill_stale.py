@@ -29,7 +29,7 @@ LATER = "2026-11-26T10:05:00+00:00"
 
 def test_a_proposal_a_newer_reading_withdrew_is_still_written_by_the_open_confirmation():
     """HIGH (a wrong write). Chava presses "לרשום את כל ההצעות"; the confirmation lists row 1 (62601 and 12.11.26). Before
-    she presses "כתיבה" a newer reading lands - here the refresh button; in life `askAgain` when monday's item card closes
+    she presses "שמירה" a newer reading lands - here the refresh button; in life `askAgain` when monday's item card closes
     over the view - in which row 1's "סכום ששולם" was corrected (3517 -> 3600), so FR-C2 no longer proposes 62601 for it
     (`amount_differs`): the newer view on her screen has no proposal on row 1. The open confirmation still writes 62601
     and its date into row 1: its two cells are as they were, and nothing else is read again."""
@@ -48,7 +48,7 @@ def test_a_proposal_a_newer_reading_withdrew_is_still_written_by_the_open_confir
 def test_the_same_when_the_newer_reading_lands_because_monday_s_item_card_closed_over_the_view():
     """The everyday path of the same HIGH: Chava opens the confirmation, opens row 1 in monday's item card (and fixes its
     amount there), closes the card; the view takes the focus back and `askAgain` reads the boards again - no click of hers.
-    The confirmation survives the newer reading and "כתיבה" writes the proposal that reading withdrew."""
+    The confirmation survives the newer reading and "שמירה" writes the proposal that reading withdrew."""
     from tests.test_desk_books_fill_page import WRITES
     from tests.test_desk_page import drive
 

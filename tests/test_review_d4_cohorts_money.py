@@ -58,7 +58,7 @@ def test_the_cohorts_paid_is_not_everything_that_came_in():
 def test_a_price_typed_with_a_right_to_left_mark_is_one_clean_number():
     """LOW. A price typed by hand in monday's Hebrew interface may carry a bidi mark (U+200F, U+200E, U+202B ...): A1's own
     `_clean` (app/recon/receipt_dates.py) reads such a mark as a space, for the same board family. `price_of` strips only
-    "₪"/"ש"ח" and whitespace, so "‏12,000" - which the page shows as 12,000 - lists the whole cohort under "מחזורים בלי מחיר"
+    "₪"/"ש"ח" and whitespace, so "‏12,000" - which the page shows as 12,000 - lists the whole cohort under "מחזורים ללא חישוב"
     as "המחיר אינו מספר אחד", and every student's balance leaves the view."""
     for typed in ("‏12,000", "12,000‏", "‫12,000‬", "‎12,000 ₪"):
         assert ch.price_of(typed) == (D("12000"), ""), "%r -> %s" % (typed, ch.price_of(typed))

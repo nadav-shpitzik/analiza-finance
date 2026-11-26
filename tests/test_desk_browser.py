@@ -470,7 +470,7 @@ def two_receipts() -> dict:
 
 
 def test_ticking_a_rows_box_never_moves_the_rows_and_the_next_click_ticks_the_next_row(serve):
-    """QA 1 (24.11): in "שולם, שליחת קבלה: טרם", ticking the first row's box inserted a bar above the table and pushed the
+    """QA 1 (24.11): in "שולם, קבלה לטיפול", ticking the first row's box inserted a bar above the table and pushed the
     rows ~58px down; the click aimed at the second row's box then landed on the first row's and unticked it. Each click
     here is aimed where the box was BEFORE the first click, as hers was; every row stays where it was."""
     base, _log = serve(two_receipts())
@@ -620,7 +620,7 @@ def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):
     """QA 4 (24.11): at full width (a 1707-pixel window with monday's sidebar open) "לטיפול" and "הכל" ran about 40 pixels
     past their frame: "פתיחה במאנדיי" showed only "פר" and was reached only by scrolling sideways. At monday's view widths of
     1280 and 1400, with rows as long as real ones, every column of those lists - on both tabs - is inside its frame. And
-    the date that was not typed reads "(לפי יום היצירה)" in its cell (QA 10: finance.css draws the words around the term)."""
+    the date that was not typed reads "(לפי תאריך יצירה)" in its cell (QA 10: finance.css draws the words around the term)."""
     base, _log = serve(long_view())
     got = qa_visit(r"""
   const fit = (tile) => page.evaluate((tile) => {
@@ -647,7 +647,7 @@ def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):
         for x in got["steps"][size]:
             # the table no wider than its frame, nothing to scroll sideways, "פתיחה במאנדיי" wholly inside it
             assert x["table"] <= x["frame"] and x["sideways"] <= 0 and min(x["open"]) >= 0, (size, x)
-        assert got["steps"][size + " created"] == ["none", "(לפי יום היצירה)", "none", "block"]
+        assert got["steps"][size + " created"] == ["none", "(לפי תאריך יצירה)", "none", "block"]
 
 
 def test_a_row_says_it_opens_its_details_by_its_pointer_its_hover_and_a_chevron_that_turns(serve):
@@ -767,7 +767,7 @@ def test_the_page_logs_no_console_error_and_throws_nothing_while_it_loads_opens_
     # every step was reached: the list, the details' plan, the row's own confirmation, a newer reading - and nothing written
     assert steps["loaded"] > 0 and steps["mutations"] == 0
     assert 'סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"' in steps["details"]
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in steps["row"] and steps["refreshed"].startswith("נכון ל-")
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה 3", בשמך:' in steps["row"] and steps["refreshed"].startswith("נכון ל-")
 
 
 # --- the QA of 24.11, its second pass ------------------------------------------------------------------------------------
@@ -874,7 +874,7 @@ def test_what_is_typed_into_the_search_stays_when_an_answer_lands_before_it_sett
 
 
 def many_receipts(n: int = 16) -> dict:
-    """The hand-made view with n more payments waiting for their receipt: the list "שולם, שליחת קבלה: טרם" longer than the
+    """The hand-made view with n more payments waiting for their receipt: the list "שולם, קבלה לטיפול" longer than the
     view, as Chava's 21 were."""
     v = view()
     for i in range(n):
@@ -889,7 +889,7 @@ def test_a_details_plan_floats_beside_its_button_and_no_row_moves_when_it_opens_
     every action that has a box to type in) opened inside the details, under its button, and pushed every row below it
     down. It floats now beside its button, as a batch does beside what was pressed: no row moves - nor the details' own
     facts, nor the page - while it reads, while it is shown and after it closes; it is in the view, never over the button,
-    so the pointer is not on "כתיבה"; the focus is on it. At monday's view widths, at the list's top and scrolled down."""
+    so the pointer is not on "שמירה"; the focus is on it. At monday's view widths, at the list's top and scrolled down."""
     from app.desk import view as fd
 
     v = long_view()
@@ -955,7 +955,7 @@ def test_a_details_plan_floats_beside_its_button_and_no_row_moves_when_it_opens_
             # every row and every fact of the details where it was, while the plan is open and after it closed; the page too
             assert step["open"] == step["before"] and step["closed"] == step["before"], (size, name, step["before"], step["open"])
             assert box["y"] == step["y"] == step["after"], (size, name, box["y"], step["y"], step["after"])
-            # in the view, clear of the button, the pointer not on "כתיבה", the focus on it - and still the details' own
+            # in the view, clear of the button, the pointer not on "שמירה", the focus on it - and still the details' own
             assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"] and box["inDetails"], (size, name, box)
             assert box["beside"] and box["followed"] and box["ctlClear"], (size, name, box)
         assert 'סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"' in got["steps"][size]["top"]["box"]["text"]
@@ -964,7 +964,7 @@ def test_a_details_plan_floats_beside_its_button_and_no_row_moves_when_it_opens_
 
 
 def test_a_box_near_the_top_stays_below_the_tables_sticky_header_and_whole_in_the_view(serve):
-    """QA 26.11 (A): with the row near the top of the view, the confirmation's first line ("ייכתב במאנדיי בשורה...") was cut
+    """QA 26.11 (A): with the row near the top of the view, the confirmation's first line ("יעודכן במאנדיי בשורה...") was cut
     under the table's header, which sticks at the top as the page scrolls - seen in "הוחזר חלקי" and in "חויב": a row's
     action floats inside its details, which paint under that header, and a box placed above the row reached up to the view's
     edge. The whole box stays below a header stuck at the top, and in the view: a details' action, and a row's own button.
@@ -1030,7 +1030,7 @@ def test_a_box_near_the_top_stays_below_the_tables_sticky_header_and_whole_in_th
             box = steps[name]
             assert box["head"] is not None, (size, name, box)              # the table's header is stuck at the view's top
             assert box["top"] >= box["head"] and box["inView"] and box["firstSeen"], (size, name, box)
-            assert box["text"].startswith("ייכתב במאנדיי בשורה"), (size, name, box)
+            assert box["text"].startswith("יעודכן במאנדיי בשורה"), (size, name, box)
 
 
 def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_closes(serve):
@@ -1038,7 +1038,7 @@ def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_
     took the bar's place above the table, taller than it - every row 69 pixels lower - and with the list scrolled down the
     focus on it scrolled the page up to it, about 550 pixels. It floats now beside what was pressed: no row moves when it
     opens or closes, at the list's top or scrolled down, for a row's own button or the bar's; the page does not scroll;
-    the box is in the view and never over what was pressed, so the pointer is not on "כתיבה"; the focus is on the box."""
+    the box is in the view and never over what was pressed, so the pointer is not on "שמירה"; the focus is on the box."""
     base, _log = serve(many_receipts())
     store = {"5093448677": {str(5000 + i): {"__name": "תלמיד/ה לדוגמה %d" % i,
                                             "color_mm4cq1hw": {"text": "טרם", "index": 0, "label": "טרם"}} for i in range(16)}}
@@ -1095,8 +1095,8 @@ def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_
         # every row where it was, while the confirmation is open and after it closed; the page where it was
         assert step["open"] == step["before"] and step["closed"] == step["before"], (name, step["before"][:3], step["open"][:3])
         assert box["y"] == y and step["y"] == y, (name, box["y"], step["y"])
-        # the box in the view, clear of what was pressed, not under the pointer's "כתיבה", and the focus on it
+        # the box in the view, clear of what was pressed, not under the pointer's "שמירה", and the focus on it
         assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"], (name, box)
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה לדוגמה 1", בשמך:' in steps["top"]["box"]["text"]
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה לדוגמה 10", בשמך:' in steps["scrolled"]["box"]["text"]
-    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in steps["bar"]["box"]["text"]
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה לדוגמה 1", בשמך:' in steps["top"]["box"]["text"]
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה לדוגמה 10", בשמך:' in steps["scrolled"]["box"]["text"]
+    assert "יעודכן במאנדיי בשמך, ב-2 שורות:" in steps["bar"]["box"]["text"]

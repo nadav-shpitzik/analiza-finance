@@ -215,7 +215,7 @@ def test_refund_done_reads_shows_the_plan_writes_the_index_and_asks_the_server_a
     out = run([{"act": ["sc:1", "refund_done"]}, {"confirm": True}], first, {"1": sc_item("1")},
               answers={"POST /api/desk/refresh": [after]})
     plan, wrote = out["steps"]
-    # before "כתיבה": the plan, from the row read live, and nothing sent but that read
+    # before "שמירה": the plan, from the row read live, and nothing sent but that read
     assert plan["phase"] == "confirm" and plan["plan"] == [["סטטוס תשלום", False, False, "תשלום הוחזר"]]
     # the row read as the plan is made, and again right before the write: only then the mutation
     assert [m["kind"] for m in out["sent"]] == ["query", "query", "mutation"]
@@ -223,7 +223,7 @@ def test_refund_done_reads_shows_the_plan_writes_the_index_and_asks_the_server_a
     assert read["variables"] == {"i": ["1"], "c": [fd.SC["status"]], "b": [SC_BOARD]} and read["apiVersion"] == "2026-07"
     assert mutations(out) == [(SC_BOARD, "1", {fd.SC["status"]: {"index": 4}})]      # by index, never by text
     assert wrote["phase"] == "done" and out["posts"][-1] == ["/api/desk/refresh", None]
-    assert any("נכתב במאנדיי בשמך: סטטוס תשלום \"תשלום הוחזר\"" in t for t in out["toasts"])
+    assert any("נשמר במאנדיי בשמך: סטטוס תשלום \"תשלום הוחזר\"" in t for t in out["toasts"])
 
 
 def test_a_partial_refund_types_its_amount_first_then_its_status_in_two_writes():
@@ -242,10 +242,10 @@ def test_a_second_step_that_fails_says_what_landed_and_the_row_keeps_it():
               body_of([refund_row()]), {"1": sc_item("1")}, fail={"write": {"at": 2, **denied}})
     failed = out["steps"][1]
     assert failed["phase"] == "failed"
-    assert failed["error"] == "נכתב רק סכום החזר, ושאר הפעולה לא: מאנדיי לא מרשה לך לכתוב בשורה הזאת."
+    assert failed["error"] == "נכתב רק סכום החזר, ושאר הפעולה לא: אין לך הרשאה לעדכן את השורה במאנדיי."
     assert len(mutations(out)) == 2
     html = out["steps"][2]["html"]
-    assert "נכתב, מתעדכן" in html and "User unauthorized to perform action" in html     # monday's own words, under it
+    assert "נשמר, מתעדכן" in html and "User unauthorized to perform action" in html     # monday's own words, under it
     assert ["/api/desk/refresh", None] in out["posts"]                                 # what landed is read again
 
 
@@ -325,13 +325,13 @@ def test_the_written_row_is_shown_written_until_a_reading_shows_it_and_the_serve
     # monday's filter behind the write: the first reading after it still has the old row - asked again, and it lands
     out = run(steps, first, {"1": sc_item("1")}, answers={"POST /api/desk/refresh": [still, landed]})
     assert [p[0] for p in out["posts"]] == ["/api/desk/refresh", "/api/desk/refresh"]
-    assert "נכתב, מתעדכן" not in out["steps"][2]["html"]
+    assert "נשמר, מתעדכן" not in out["steps"][2]["html"]
     assert fd.B2C_STATES["refunded"]["label"] in out["steps"][2]["html"]                 # placed by the server's reading
     # it never lands: asked three times in all, and the row still says it was written, with its new status
     out = run(steps, first, {"1": sc_item("1")}, answers={"POST /api/desk/refresh": [still, still, still, still]})
     assert len(out["posts"]) == 3
     html = out["steps"][2]["html"]
-    assert "נכתב, מתעדכן" in html and "<td class=\"k-state\">" in html
+    assert "נשמר, מתעדכן" in html and "<td class=\"k-state\">" in html
 
 
 def test_a_refresh_refused_for_the_gap_is_asked_again_after_it():
@@ -373,19 +373,19 @@ def test_a_missing_scope_monday_answers_with_is_said_and_turns_every_button_off(
     out = run([{"act": ["sc:1", "refund_done"]}, {"show": {"tab": "b2c", "sc": {"state": "", "open": {"1": True}}}}],
               body_of([refund_row()]), {"1": sc_item("1")}, context={}, fail={"read": scope})
     first = out["steps"][0]
-    assert first["phase"] == "failed" and first["error"] == "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נכתב כלום."
+    assert first["phase"] == "failed" and first["error"] == "לאפליקציה אין הרשאה לעדכן את הלוח הזה. לא נשמרו שינויים."
     assert first["can"] == {"state": "no", "why": "no_scope"} and mutations(out) == []
     assert 'data-act="sc:1:refund_done" disabled' in out["steps"][1]["html"]
 
 
 @pytest.mark.parametrize("monday, words", [
-    ({"fail": {"read": {"reject": {"message": "rate limit exceeded"}}}}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה. לא נכתב כלום."),
-    ({"missing": [fd.SC["status"]]}, "עמודה שהפעולה כותבת לא נמצאה בלוח; נדב צריך לבדוק. לא נכתב כלום."),
+    ({"fail": {"read": {"reject": {"message": "rate limit exceeded"}}}}, "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה. לא נשמרו שינויים."),
+    ({"missing": [fd.SC["status"]]}, "עמודה שהפעולה מעדכנת לא נמצאה בלוח. יש לפנות לנדב. לא נשמרו שינויים."),
     ({"labels": {SC_BOARD: {fd.SC["status"]: dict(fd.PAY, **{"4": "הוחזר"})}}},
-     "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."),
-    ({"keep": [fd.SC["status"]]}, "מאנדיי ענתה, אבל הערך בשורה אינו מה שנשלח; לבדוק את השורה במאנדיי."),
+     "תווית שהפעולה מעדכנת השתנתה במאנדיי. יש לפנות לנדב. לא נשמרו שינויים."),
+    ({"keep": [fd.SC["status"]]}, "הערך שנמצא בשורה שונה מהערך שנשלח. יש לבדוק את השורה במאנדיי."),
     ({"fail": {"write": {"at": 1, "answer": {"errors": [{"message": "Something went wrong"}]}}}},
-     "מאנדיי לא קיבלה את הכתיבה. לא נכתב כלום."),
+     "מאנדיי לא קיבלה את בקשת העדכון. לא נשמרו שינויים."),
 ])
 def test_a_failure_is_said_in_words_never_silent(monday, words):
     out = run([{"act": ["sc:1", "refund_done"]}, {"confirm": True}], body_of([refund_row()]), {"1": sc_item("1")}, **monday)
@@ -397,7 +397,7 @@ def test_a_failure_is_said_in_words_never_silent(monday, words):
 def test_a_row_monday_holds_on_another_board_is_not_written():
     item = dict(sc_item("1"), board=B2_BOARD)
     out = run([{"act": ["sc:1", "refund_done"]}], body_of([refund_row()]), {"1": item})
-    assert out["steps"][0]["error"] == "השורה לא נמצאה בלוח (אולי נמחקה או הועברה). לא נכתב כלום." and mutations(out) == []
+    assert out["steps"][0]["error"] == "השורה לא נמצאה בלוח (אולי נמחקה או הועברה). לא נשמרו שינויים." and mutations(out) == []
 
 
 @pytest.mark.parametrize("typed, words", [
@@ -418,9 +418,9 @@ def test_the_plan_box_shows_what_will_be_written_in_mondays_words_and_the_house_
               body_of([refund_row()]), {"1": sc_item("1")})
     import html as h
     html = h.unescape(out["steps"][1]["html"])
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 1", בשמך:' in html
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה 1", בשמך:' in html
     assert '<li><b>סטטוס תשלום</b>: עכשיו "שולם", ייכתב "תשלום הוחזר"</li>' in html
-    assert fd.DESK_ACTIONS["refund_done"]["after"] in html and 'data-act-go="1">כתיבה</button>' in html
+    assert fd.DESK_ACTIONS["refund_done"]["after"] in html and 'data-act-go="1">שמירה</button>' in html
     assert "—" not in html and "→" not in html
 
 
@@ -460,7 +460,7 @@ def test_the_desk_shows_even_when_monday_never_answers_whether_it_may_write():
 
 
 def test_a_plan_shown_before_the_row_changed_in_monday_is_planned_again_and_never_written_over_unseen():
-    """A plan read a while ago was written as it was: the row is read again on "כתיבה", and what changed is planned again."""
+    """A plan read a while ago was written as it was: the row is read again on "שמירה", and what changed is planned again."""
     moved = {fd.SC["status"]: status_cell(fd.PAY, "2")}                    # someone set "יש בעיה" meanwhile
     out = run([{"act": ["sc:1", "refund_done"]}, {"mutate": {"1": moved}}, {"confirm": True}],
               body_of([refund_row()]), {"1": sc_item("1")})
@@ -473,7 +473,7 @@ def test_a_plan_shown_before_the_row_changed_in_monday_is_planned_again_and_neve
                {"show": {"tab": "b2c", "sc": {"state": "", "open": {"1": True}}}}], body_of([refund_row()]), {"1": sc_item("1")})
     import html as h
     page = h.unescape(out["steps"][3]["html"])
-    assert "השורה השתנתה במאנדיי מאז שהתוכנית הוצגה" in page and 'עכשיו "יש בעיה", ייכתב "תשלום הוחזר"' in page
+    assert "השורה השתנתה במאנדיי מאז הצגת האישור" in page and 'עכשיו "יש בעיה", ייכתב "תשלום הוחזר"' in page
     # monday marked it meanwhile: nothing left to write, and nothing is
     out = run([{"act": ["sc:1", "refund_done"]}, {"mutate": {"1": {fd.SC["status"]: status_cell(fd.PAY, "4")}}},
                {"confirm": True}], body_of([refund_row()]), {"1": sc_item("1")})
@@ -512,17 +512,17 @@ def test_a_written_row_covers_only_a_reading_that_has_not_caught_up_never_a_late
     out = run([{"act": ["sc:1", "credit_ref"], "typed": {fd.SC["credit_ref"]: "ZK-7"}}, {"confirm": True}, show],
               body_of([refunded]), {"1": sc_item("4", **{fd.SC["credit_ref"]: {"text": ""}})},
               answers={"POST /api/desk/refresh": [behind, behind, behind]})
-    assert "נכתב, מתעדכן" in out["steps"][2]["html"] and 'value="ZK-7"' in out["steps"][2]["html"]
+    assert "נשמר, מתעדכן" in out["steps"][2]["html"] and 'value="ZK-7"' in out["steps"][2]["html"]
 
 
 def test_the_done_line_says_the_row_moves_only_when_a_status_was_written():
     show = {"show": {"tab": "b2c", "sc": {"state": "", "open": {"1": True}}}}
     out = run([{"act": ["sc:1", "refund_done"]}, {"confirm": True}, show], body_of([refund_row()]), {"1": sc_item("1")})
-    assert "נכתב במאנדיי בשמך. המסך מתעדכן, והשורה תעבור לשיבוץ שלה." in out["steps"][2]["html"]
+    assert "השינוי נשמר במאנדיי בשמך. התצוגה והשיבוץ מתעדכנים." in out["steps"][2]["html"]
     refunded = sc(1, st="4", refund="1000", refund_date="2026-11-02")
     out = run([{"act": ["sc:1", "credit_ref"], "typed": {fd.SC["credit_ref"]: "ZK-7"}}, {"confirm": True}, show],
               body_of([refunded]), {"1": sc_item("4", **{fd.SC["credit_ref"]: {"text": ""}})})
-    assert "נכתב במאנדיי בשמך. המסך מתעדכן. " in out["steps"][2]["html"] and "תעבור לשיבוץ" not in out["steps"][2]["html"]
+    assert "השינוי נשמר במאנדיי בשמך. התצוגה מתעדכנת. " in out["steps"][2]["html"] and "תעבור לשיבוץ" not in out["steps"][2]["html"]
 
 
 # --- the second hostile review of slice 3 (11.11): each failed before its fix ---------------------------------------------
@@ -549,18 +549,18 @@ def test_a_plan_the_server_sends_with_another_index_is_never_written():
     out = run([{"act": ["sc:1", "refund_done"]}, {"confirm": True}], first, {"1": sc_item("1")})
     assert mutations(out) == []
     assert out["steps"][1]["phase"] == "failed" and out["steps"][1]["error"] == \
-        "הכתיבה הזאת מחוץ לעמודות שהמסך רשאי לכתוב, ולכן לא נשלחה. לא נכתב כלום."
+        "העדכון הזה מחוץ לעמודות שהמסך רשאי לעדכן, ולכן לא נשלח. לא נשמרו שינויים."
 
 
 def test_a_label_renamed_in_monday_after_the_plan_was_shown_stops_the_write():
-    """The read on "כתיבה" compared the cells and not the labels: index 4 went out under another name."""
+    """The read on "שמירה" compared the cells and not the labels: index 4 went out under another name."""
     renamed = {SC_BOARD: {fd.SC["status"]: dict(fd.PAY, **{fd.P_REFUNDED: "בוטל"})}}
     out = run([{"act": ["sc:1", "refund_done"]}, {"relabel": renamed}, {"confirm": True}], body_of([refund_row()]),
               {"1": sc_item("1")})
     assert out["steps"][0]["phase"] == "confirm"
     assert mutations(out) == []
     assert out["steps"][2]["phase"] == "failed" and out["steps"][2]["error"] == \
-        "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+        "תווית שהפעולה מעדכנת השתנתה במאנדיי. יש לפנות לנדב. לא נשמרו שינויים."
 
 
 def test_billed_never_writes_an_invoice_box_she_did_not_touch_over_what_monday_holds_now():
@@ -595,7 +595,7 @@ def test_a_written_row_shows_a_later_change_of_one_column_while_another_is_still
     import html as h
     page = h.unescape(out["steps"][2]["html"])
     assert "<dt>סכום החזר</dt><dd><bdi>700.00 ₪</bdi></dd>" in page and "<bdi>500.00 ₪</bdi>" not in page
-    assert "נכתב, מתעדכן" in page and fd.PAY[fd.P_PART] in page          # the status, still behind, is covered
+    assert "נשמר, מתעדכן" in page and fd.PAY[fd.P_PART] in page          # the status, still behind, is covered
 
 
 def test_a_write_monday_never_answers_frees_the_desk_and_says_it_may_have_landed():
@@ -604,14 +604,14 @@ def test_a_write_monday_never_answers_frees_the_desk_and_says_it_may_have_landed
               wait_ms=5, hang=["mutation"])
     wrote = out["steps"][1]
     assert wrote["phase"] == "failed" and wrote["error"] == \
-        "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתבה; לבדוק את השורה במאנדיי."
+        "מאנדיי לא הגיבה בזמן לבקשת העדכון. לא ידוע אם השינוי נשמר. יש לבדוק את השורה במאנדיי לפני ניסיון נוסף."
     assert ["/api/desk/refresh", None] in out["posts"]
     assert 'data-act="sc:1:refund_done" disabled' not in out["steps"][2]["html"]
 
 
 def test_a_read_monday_never_answers_frees_the_desk_and_says_nothing_was_written():
     out = run([{"act": ["sc:1", "refund_done"]}], body_of([refund_row()]), {"1": sc_item("1")}, wait_ms=5, hang=["query"])
-    assert out["steps"][0]["phase"] == "failed" and out["steps"][0]["error"] == "מאנדיי לא ענתה בזמן. לא נכתב כלום."
+    assert out["steps"][0]["phase"] == "failed" and out["steps"][0]["error"] == "מאנדיי לא ענתה בזמן. לא נשמרו שינויים."
 
 
 def test_an_arabic_letter_mark_is_refused_like_the_other_bidi_marks():

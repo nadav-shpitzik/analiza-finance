@@ -467,14 +467,14 @@ def tile_of(html: str, attr: str, key: str) -> str:
 
 
 def test_an_empty_state_keeps_its_pill_with_its_0_as_an_empty_tile_keeps_its_tile():
-    """QA 5 (24.11): the pill "ביקש החזר, טרם אושר" disappeared when empty, while an empty task's tile stays with its ✓. Every
+    """QA 5 (24.11): the pill "החזר ממתין לאישור" disappeared when empty, while an empty task's tile stays with its ✓. Every
     state stays, an empty one muted with its 0, on both tabs; pressed, its list says it is empty."""
     got = drive(answer(), [{"show": {"tab": "b2c", "sc": {"state": "tasks", "period": "", "open": {}}}},
                            {"click": [{"bstate": "refund_asked"}]},
                            {"show": {"tab": "b2b", "b2": {"state": "tasks", "view": "list", "customer": "", "open": {}}}}],
                 monday=world())
     b2c, pressed, b2b = [s["html"] for s in got["steps"]]
-    for key, label in (("refund_asked", "ביקש החזר, טרם אושר"), ("no_money", "ללא תקבול")):
+    for key, label in (("refund_asked", "החזר ממתין לאישור"), ("no_money", "ללא תקבול")):
         assert tile_of(b2c, "data-bstate", key).startswith("fin-state zero dot | 0 " + label), key
     for key in ("open", "planned", "pending", "paid", "cancelled"):
         assert tile_of(b2b, "data-b2state", key).startswith("fin-state zero dot | 0 "), key
@@ -494,7 +494,7 @@ def test_a_refresh_on_its_way_has_one_word_on_the_button_and_beside_the_readings
 
 
 def test_a_date_that_was_not_typed_says_by_what_it_is_dated_and_an_empty_value_is_a_dash():
-    """QA 10 (24.11): "יום היצירה" beside a payment date did not read without the legend - it says "(לפי יום היצירה)": in
+    """QA 10 (24.11): "תאריך יצירה" beside a payment date did not read without the legend - it says "(לפי תאריך יצירה)": in
     the details and the row's situation as text, in the list's cell drawn around the legend's term by finance.css (the
     cell's markup is held by tests/test_desk_parity_js.py). And in "החזר בוצע" an empty "תאריך החזר" was an empty cell
     while every other empty value is "-": so is it now, and every column's empty value."""
@@ -512,9 +512,9 @@ def test_a_date_that_was_not_typed_says_by_what_it_is_dated_and_an_empty_value_i
                             {"show": {"tab": "b2b", "b2": {"state": "", "view": "list", "customer": "", "open": {}}}}],
                 monday=world())
     every, refunded, b2_all = [s["html"] for s in got["steps"]]
-    said = '03.11.26 <span class="fin-subtle">(לפי יום היצירה)</span>'
+    said = '03.11.26 <span class="fin-subtle">(לפי תאריך יצירה)</span>'
     assert fact(detail_of(every, "3101"), "תאריך תקבול") == said
-    assert "שולם <bdi>4,000.00 ₪</bdi> ב-03.11.26 (לפי יום היצירה)" in detail_of(every, "3101")
+    assert "שולם <bdi>4,000.00 ₪</bdi> ב-03.11.26 (לפי תאריך יצירה)" in detail_of(every, "3101")
     assert cells_of(every, "3101")["date"] == said  # the list's cell says it in full too, in its text (not drawn by css)
     dash = '<span class="fin-subtle">-</span>'
     assert cells_of(refunded, "3105")["refund_date"] == dash
@@ -551,7 +551,7 @@ def test_a_receipt_sent_on_a_payment_that_brought_no_money_in_is_a_red_chip_and_
     assert cells_of(html, "3108")["notes"] == (
         '<div class="fin-chips"><span class="fin-chip bad">שליחת קבלה: יצאה, בסטטוס &quot;לא שולם&quot;</span>'
         '<span class="fin-chip q">בלי הרשמה ובלי ליד מקור</span></div>')
-    assert ("<li>שליחת קבלה &quot;יצאה&quot;, וסטטוס תשלום &quot;לא שולם&quot;: קבלה יצאה על כסף שלא נכנס</li>"
+    assert ("<li>שליחת קבלה &quot;יצאה&quot;, וסטטוס תשלום &quot;לא שולם&quot;: סימון שליחת הקבלה אינו תואם לסטטוס התשלום</li>"
             in detail_of(html, "3108"))
     flags = node(LOAD + "console.log(JSON.stringify(F._flags()));", None)
     assert flags["all"]["receipt_no_money"] == "שליחת קבלה: יצאה, בסטטוס {status}"
@@ -778,14 +778,14 @@ def test_the_page_asks_again_on_return_only_after_5_seconds_and_never_inside_the
 
 
 @pytest.mark.parametrize("status_idx, status, why", [
-    ("0", "לא שולם", 'לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום "לא שולם")'),
-    ("2", "יש בעיה", 'לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום "יש בעיה")'),
-    ("", "", "לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום ריק)"),
-    ("31", "תווית חדשה", 'לא נספר: תווית שהמסך לא מכיר (סטטוס תשלום "תווית חדשה")'),
+    ("0", "לא שולם", 'לא נספר: הסטטוס אינו מציין שהתקבל כסף (סטטוס תשלום "לא שולם")'),
+    ("2", "יש בעיה", 'לא נספר: הסטטוס אינו מציין שהתקבל כסף (סטטוס תשלום "יש בעיה")'),
+    ("", "", "לא נספר: הסטטוס אינו מציין שהתקבל כסף (סטטוס תשלום ריק)"),
+    ("31", "תווית חדשה", 'לא נספר: תווית לא מוכרת (סטטוס תשלום "תווית חדשה")'),
 ])
 def test_an_amount_not_counted_is_struck_through_and_says_why_when_pointed_at(status_idx, status, why):
     """QA 26.11 (F): an amount shown struck through in a list - not counted, its status brings no money in - says why when
-    it is pointed at: "לא נספר: הסטטוס לא מכניס כסף", and the row's status; a label the desk does not know, in its chip's
+    it is pointed at: "לא נספר: הסטטוס אינו מציין שהתקבל כסף", and the row's status; a label the desk does not know, in its chip's
     words. A counted amount has no such title."""
     import html as h
     v = view()
@@ -817,10 +817,10 @@ def test_what_changed_shows_its_lines_under_the_top_bar_until_closed_and_stays_c
     got = drive(answer(), [{"click": [{"whatsNew": "close"}]}, {"show": {"tab": "b2b"}}])
     lines = [h.unescape(x) for x in whats_new(got["first"])]
     assert len(lines) == 7 and got["first"].index('class="fin-new"') < got["first"].index('class="fin-tabbar"')
-    assert lines[0].startswith('סימון אדום "חשבשבת: ..."') and "מסמכים בחשבשבת בלי חיוב במאנדיי" in lines[1]
+    assert lines[0].startswith('סימון אדום "חשבשבת: ..."') and "מסמכי חשבשבת ללא התאמה במאנדיי" in lines[1]
     assert lines[2].startswith('"רישום מחשבשבת"') and lines[3].startswith('"לפי מחזור"')
     assert lines[4].startswith('"לא פער"') and '"לא להציע"' in lines[4]
-    assert lines[5].startswith('"שולם, שליחת קבלה: טרם"') and "הופקה בחשבשבת" in lines[5]
+    assert lines[5].startswith('"שולם, קבלה לטיפול"') and "הופקה בחשבשבת" in lines[5]
     assert lines[6].startswith('"ייצוא לאקסל עם ת.ז"')
     assert not any("—" in x or "–" in x for x in lines)
     assert 'data-whats-new="close">סגירה</button>' in got["first"]
@@ -1046,7 +1046,7 @@ def test_an_action_reads_shows_the_plan_writes_the_index_and_asks_this_services_
     assert [(w["variables"]["b"], w["variables"]["i"], json.loads(w["variables"]["v"])) for w in writes] == [
         (SC_BOARD, "3102", {"color_mm4cq1hw": {"index": 1}})]                         # by index, never by text
     assert wrote["phase"] == "done" and ["/api/desk/refresh", None] in got["posts"]
-    assert "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן." in got["toasts"]
+    assert "נשמר במאנדיי בשמך: שליחת קבלה \"יצאה\". התצוגה מתעדכנת." in got["toasts"]
 
 
 # --- 1.1 (D2, the desk move plan §1b): two actions on the row itself, for one row or several at once ---------------------
@@ -1102,7 +1102,7 @@ def batch_answers(v: dict, refreshed: dict | None = None) -> dict:
 
 
 def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_its_write():
-    """Select two rows, press once, one confirmation listing each row's write; on "כתיבה" each row is read again right
+    """Select two rows, press once, one confirmation listing each row's write; on "שמירה" each row is read again right
     before its own write, written by index and checked against monday's answer; one refresh after the batch."""
     import html as h
     v = receipts_view()
@@ -1122,10 +1122,10 @@ def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_
     # one confirmation, from the two rows read in one request, before anything is written
     assert plan["batch"]["phase"] == "confirm" and [i["verdict"] for i in plan["batch"]["items"]] == ["write", "write"]
     page = h.unescape(plan["html"])
-    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in page
+    assert "יעודכן במאנדיי בשמך, ב-2 שורות:" in page
     assert '<li><b>תלמיד/ה 2</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
     assert '<li><b>תלמיד/ה 6</b> · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"</li>' in page
-    assert 'data-batch-go="1">כתיבה</button>' in page and plan["sent"] == 1
+    assert 'data-batch-go="1">שמירה</button>' in page and plan["sent"] == 1
     assert got["sent"][0]["kind"] == "query" and got["sent"][0]["variables"] == {
         "i": ["3102", "3106"], "c": [RECEIPT_COL], "b": [SC_BOARD]}
     # each row read right before its write, written by index, one after the other
@@ -1134,7 +1134,7 @@ def test_two_receipts_picked_are_written_with_one_confirmation_each_read_before_
     assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
     assert done["batch"]["phase"] == "done" and [i["result"] for i in done["batch"]["items"]] == ["written", "written"]
     # QA 26.11 (1), changed deliberately: the batch's box is its one report - it says so, and no flash says it again
-    assert "נכתב במאנדיי בשמך ב-2 שורות." in h.unescape(done["html"]) and got["toasts"] == []
+    assert "נשמר במאנדיי בשמך ב-2 שורות." in h.unescape(done["html"]) and got["toasts"] == []
     # one refresh, as after one action; the picks are the batch's and are cleared
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
     assert done["picked"] == [] and "data-row=\"3102\"" not in done["html"]          # the reading placed them in "הושלם"
@@ -1152,9 +1152,9 @@ def test_a_rows_own_button_is_one_press_to_its_confirmation_and_says_what_follow
                 monday=receipts_world(), context=WRITES, answers=batch_answers(v, refunded))
     plan, done = got["steps"][1], got["steps"][2]
     page = h.unescape(plan["html"])
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 3", בשמך:' in page
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה 3", בשמך:' in page
     assert '<li><b>תלמיד/ה 3</b> · סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"</li>' in page
-    assert "אחרי הכתיבה אפליקציית ההחזרים סוגרת את הבקשה." in page                # the action's `after`, from the server
+    assert "אחרי השמירה אפליקציית ההחזרים סוגרת את הבקשה." in page                # the action's `after`, from the server
     assert writes_of(got) == [(SC_BOARD, "3103", {STATUS_COL: {"index": 4}})]
     assert done["batch"]["items"] == [{"key": "sc:3103", "verdict": "write", "why": "", "result": "written"}]
 
@@ -1174,9 +1174,9 @@ def test_a_row_changed_in_monday_since_the_reading_is_not_written_and_the_confir
     assert [(i["key"], i["verdict"], i["why"]) for i in plan["batch"]["items"]] == [
         ("sc:3102", "write", ""), ("sc:3106", "skip", why)]
     page = h.unescape(plan["html"])
-    assert 'ייכתב במאנדיי בשורה "תלמיד/ה 2", בשמך:' in page and "<p>לא ייכתב:</p><ul><li><b>תלמיד/ה 6</b> · %s</li>" % why in page
+    assert 'יעודכן במאנדיי בשורה "תלמיד/ה 2", בשמך:' in page and "<p>לא יעודכן:</p><ul><li><b>תלמיד/ה 6</b> · %s</li>" % why in page
     assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}})]
-    assert "לא נכתב:" in h.unescape(done["html"]) and why in h.unescape(done["html"])
+    assert "לא נשמר:" in h.unescape(done["html"]) and why in h.unescape(done["html"])
 
 
 def test_a_row_changed_after_the_confirmation_was_shown_is_not_written_and_the_rest_is():
@@ -1188,11 +1188,11 @@ def test_a_row_changed_after_the_confirmation_was_shown_is_not_written_and_the_r
                 monday=receipts_world(), context=WRITES, answers=batch_answers(receipts_view()))
     done = got["steps"][5]["batch"]
     assert [(i["key"], i["result"]) for i in done["items"]] == [("sc:3102", "skipped"), ("sc:3106", "written")]
-    assert done["items"][0]["why"] == 'השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו שליחת קבלה "לא רלוונטי"'
+    assert done["items"][0]["why"] == 'השתנתה במאנדיי מאז הצגת האישור, ועכשיו שליחת קבלה "לא רלוונטי"'
     assert writes_of(got) == [(SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
     report = h.unescape(got["steps"][5]["html"])
-    assert "נכתב במאנדיי בשמך בשורה אחת." in report and "<li><b>תלמיד/ה 6</b></li>" in report
-    assert "<p>לא נכתב:</p>" in report
+    assert "נשמר במאנדיי בשמך בשורה אחת." in report and "<li><b>תלמיד/ה 6</b></li>" in report
+    assert "<p>לא נשמר:</p>" in report
 
 
 def test_a_row_that_fails_is_said_with_why_and_the_others_are_written():
@@ -1202,9 +1202,9 @@ def test_a_row_that_fails_is_said_with_why_and_the_others_are_written():
                 monday=receipts_world(answers=[{}, {}, denied]), context=WRITES, answers=batch_answers(receipts_view()))
     done = got["steps"][4]
     assert [(i["key"], i["result"], i["why"]) for i in done["batch"]["items"]] == [
-        ("sc:3102", "failed", "מאנדיי לא מרשה לך לכתוב בשורה הזאת. לא נכתב כלום."), ("sc:3106", "written", "")]
+        ("sc:3102", "failed", "אין לך הרשאה לעדכן את השורה במאנדיי. לא נשמרו שינויים."), ("sc:3106", "written", "")]
     # QA 26.11 (1), changed deliberately: the box says it - the row written, the one that failed and why - and no flash
-    assert "נכתב במאנדיי בשמך בשורה אחת." in done["html"] and got["toasts"] == []
+    assert "נשמר במאנדיי בשמך בשורה אחת." in done["html"] and got["toasts"] == []
     assert 'class="fin-act-msg bad" role="alert"' in done["html"] and "<p>נכשל:</p>" in done["html"]
     assert len([p for p in got["posts"] if p[0] == "/api/desk/refresh"]) == 1
 
@@ -1216,10 +1216,10 @@ def test_a_missing_permission_stops_the_batch_at_its_first_write_and_nothing_els
                 monday=receipts_world(answers=[{}, {}, scope]), context={}, answers=batch_answers(receipts_view()))
     done = got["steps"][4]
     assert [(i["result"], i["why"]) for i in done["batch"]["items"]] == [
-        ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נכתב כלום."), ("failed", "לאפליקציה אין הרשאה לכתוב בלוח הזה. לא נשלח.")]
+        ("failed", "לאפליקציה אין הרשאה לעדכן את הלוח הזה. לא נשמרו שינויים."), ("failed", "לאפליקציה אין הרשאה לעדכן את הלוח הזה. לא נשלח.")]
     assert [s["kind"] for s in got["sent"]] == ["query", "query", "mutation"] and done["can"]["state"] == "no"
     # QA 26.11 (1), changed deliberately: said by the box alone
-    assert "לא נכתב כלום." in done["html"] and got["toasts"] == []
+    assert "לא נשמרו שינויים." in done["html"] and got["toasts"] == []
     assert not [p for p in got["posts"] if p[0] == "/api/desk/refresh"]
     assert "data-row-act" not in done["html"] and "data-pick" not in done["html"]   # no button left where it cannot write
 
@@ -1230,7 +1230,7 @@ def test_a_label_renamed_in_monday_stops_the_whole_batch_before_anything_is_writ
     got = drive(steps=[{"show": TASKS}, {"click": [{"pick": "sc:3102"}]}, {"click": [{"batch": "receipt_sent"}]}],
                 monday=monday, context=WRITES, answers=batch_answers(receipts_view()))
     failed = got["steps"][2]["batch"]
-    said = "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק. לא נכתב כלום."
+    said = "תווית שהפעולה מעדכנת השתנתה במאנדיי. יש לפנות לנדב. לא נשמרו שינויים."
     assert failed["phase"] == "failed" and failed["error"] == said
     assert writes_of(got) == [] and "data-batch-go" not in got["steps"][2]["html"]
     # QA 26.11 (1): said by the batch's box alone - no flash says it again
@@ -1311,7 +1311,7 @@ def test_every_row_picks_at_most_one_batchs_worth_and_a_pick_past_it_is_said():
                             {"click": [{"pickAll": "1"}]}, {"click": [{"pick": "sc:4029"}]}, {"click": [{"pickAll": "1"}]}],
                 monday=receipts_world(), context=WRITES)
     assert len(got["steps"][1]["picked"]) == 25 and "sc:4029" not in got["steps"][2]["picked"]
-    assert "אפשר לבחור עד 25 שורות לכתיבה אחת." in got["toasts"]
+    assert "אפשר לבחור עד 25 שורות לשמירה אחת." in got["toasts"]
     assert got["steps"][3]["picked"] == []                       # every row it can was picked: the second press lets go
 
 
@@ -1334,8 +1334,7 @@ def test_a_batch_floats_beside_the_bar_which_keeps_its_place_while_it_is_on_the_
     assert "fin-batchbar" not in closed and "fin-pop" not in closed
 
 
-CARD_NOTE = ("נכתב במאנדיי, כפי שמוצג כאן. כרטיס הפריט בלשונית הזאת עשוי להציג את הערך שלפני הכתיבה, עד שהדף ייטען "
-             "מחדש בדפדפן.")
+CARD_NOTE = ("הערך במאנדיי עודכן. כרטיס הפריט עשוי להציג את הערך הקודם עד לטעינה מחדש של הדף.")
 
 
 def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_show_the_value_from_before_it():
@@ -1360,7 +1359,7 @@ def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_
     assert writes_of(got) == [(SC_BOARD, "3102", {RECEIPT_COL: {"index": 1}}), (SC_BOARD, "3106", {RECEIPT_COL: {"index": 1}})]
     assert [e["args"]["itemId"] for e in got["executed"] if e["what"] == "openItemCard"] == [3106, 3102, 3102, 3106]
     # (QA 26.11, 1: the batch's write is said by its box alone, no flash)
-    assert got["toasts"] == [CARD_NOTE, "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן.", CARD_NOTE]
+    assert got["toasts"] == [CARD_NOTE, "נשמר במאנדיי בשמך: שליחת קבלה \"יצאה\". התצוגה מתעדכנת.", CARD_NOTE]
     # outside monday a row's link opens its page in a new tab, which shows the value at once: nothing to say
     source = code_of(PAGE)
     assert source.index("cardNote(el.dataset.open)") > source.index("if (deps.monday) {", source.index("if (el.dataset.open) {"))
@@ -1373,7 +1372,7 @@ def test_one_flash_shows_at_a_time_and_the_newest_takes_the_place_of_the_one_on_
     answers = {"GET /api/desk": [{"body": answer(receipts_view())}],
                "POST /api/desk/refresh": [{"body": answer(receipts_done(), taken_at="2026-11-24T08:00:09+00:00")}]}
     # (QA 26.11, 1: a batch's write is said by its box alone, so the write here is a row's action in its details)
-    wrote = "נכתב במאנדיי בשמך: שליחת קבלה \"יצאה\". המסך מתעדכן."
+    wrote = "נשמר במאנדיי בשמך: שליחת קבלה \"יצאה\". התצוגה מתעדכנת."
     got = drive(steps=[{"show": TASKS}, {"act": ["sc:3102", "receipt_sent"]}, {"confirm": True},
                        {"click": [{"open": "3102"}, ["fin-name"]]}, {"click": [{"pick": "sc:3106"}]},
                        {"click": [{"pick": "sc:3106"}]}],
@@ -1414,18 +1413,18 @@ def test_a_payments_details_show_its_leads_id_number_read_as_the_person_never_fr
 @pytest.mark.parametrize("first, words", [
     # no CRM seat: the board answers nothing - and since D2 no Excel file holds the number either
     ({"noBoard": True}, "אין לך גישה ללוח הלידים במאנדיי"),
-    ({"noColumn": True}, "העמודה ת.ז לא נמצאה בלוח הלידים; נדב צריך לבדוק"),
+    ({"noColumn": True}, "העמודה ת.ז לא נמצאה בלוח הלידים. יש לפנות לנדב"),
     ({"noItems": True}, "הליד לא נמצא בלוח הלידים"),
     ({"reject": {"message": "Unauthorized field or type"}}, "לאפליקציה אין הרשאה לקרוא את לוח הלידים"),
     ({"reject": {"message": "User unauthorized to perform action"}}, "אין לך גישה ללוח הלידים במאנדיי"),
-    ({"reject": {"message": "Rate limit exceeded"}}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+    ({"reject": {"message": "Rate limit exceeded"}}, "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה"),
 ])
 def test_when_monday_does_not_give_the_id_number_the_details_say_why_and_offer_to_try_again(first, words):
     one = {"tab": "b2c", "sc": {"state": "", "period": "", "open": {"3101": True}}}
     got = drive(answer(), [{"show": one}, {"click": [{"idRetry": "3101"}]}], monday=world(answers=[first]))
     failed, again = got["steps"]
     assert fact(detail_of(failed["html"], "3101"), "ת.ז") == (
-        '<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" data-id-retry="3101">לנסות שוב</button>'
+        '<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" data-id-retry="3101">ניסיון חוזר</button>'
         % words)
     assert "000000018" in fact(detail_of(again["html"], "3101"), "ת.ז") and len(got["sent"]) == 2
 
@@ -1464,7 +1463,7 @@ def test_a_newer_reading_reads_the_number_again_and_the_last_one_stays_on_the_sc
                 answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [{"body": newer}]})
     assert len(got["sent"]) == 2 and "POST /api/desk/refresh" in got["calls"]
     shown = got["steps"][1]["html"]
-    assert "000000018" in fact(detail_of(shown, "3101"), "ת.ז") and "קורא ממאנדיי" not in shown
+    assert "000000018" in fact(detail_of(shown, "3101"), "ת.ז") and "טוען ממאנדיי" not in shown
 
 
 def test_outside_monday_the_id_number_is_not_read_and_the_details_say_where_it_is():
@@ -1524,10 +1523,10 @@ def test_a_refund_to_executes_bank_account_is_read_as_the_person_only_when_its_d
 
 @pytest.mark.parametrize("first, words", [
     ({"noBoard": True}, "אין לך גישה לפרטי החשבון במאנדיי"),
-    ({"noColumn": True}, "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge; נדב צריך לבדוק"),
+    ({"noColumn": True}, "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge. יש לפנות לנדב"),
     ({"noItems": True}, "התקבול לא נמצא בלוח Student Charge"),
     ({"reject": {"message": "Unauthorized field or type"}}, "לאפליקציה אין הרשאה לקרוא את לוח Student Charge"),
-    ({"reject": {"message": "Rate limit exceeded"}}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+    ({"reject": {"message": "Rate limit exceeded"}}, "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה"),
     ({"reject": {"message": "Internal server error"}}, "לא נקראו ממאנדיי"),
 ])
 def test_when_monday_does_not_give_the_bank_account_the_details_say_why_and_offer_to_try_again(first, words):
@@ -1535,7 +1534,7 @@ def test_when_monday_does_not_give_the_bank_account_the_details_say_why_and_offe
     got = drive(answer(), [{"show": REFUND_OPEN}, {"click": [{"bankRetry": "3103"}]}], monday=world(answers=[first]))
     failed, again = got["steps"]
     assert bank_box(failed["html"]) == ('<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" '
-                                        'data-bank-retry="3103">לנסות שוב</button>' % words)
+                                        'data-bank-retry="3103">ניסיון חוזר</button>' % words)
     assert "1234567" in bank_box(again["html"])
 
 
@@ -1551,7 +1550,7 @@ def test_a_bank_account_monday_holds_empty_outside_monday_and_while_it_is_read_a
 
 
 READING = ('<span class="fin-reading" role="status"><span class="fin-spin" aria-hidden="true"></span>'
-           '<span class="fin-subtle">קורא ממאנדיי...</span></span>')
+           '<span class="fin-subtle">טוען נתונים ממאנדיי...</span></span>')
 
 
 def test_a_companys_vat_id_is_read_as_the_person_only_when_its_ledger_shows_the_billing_details():
@@ -1574,17 +1573,17 @@ def test_a_companys_vat_id_is_read_as_the_person_only_when_its_ledger_shows_the_
 
 @pytest.mark.parametrize("monday, words", [
     ({"answers": [{"noBoard": True}]}, "אין לך גישה ללוח החברות במאנדיי"),
-    ({"answers": [{"noColumn": True}]}, "העמודה ח.פ לא נמצאה בלוח החברות; נדב צריך לבדוק"),
+    ({"answers": [{"noColumn": True}]}, "העמודה ח.פ לא נמצאה בלוח החברות. יש לפנות לנדב"),
     ({"answers": [{"noItems": True}]}, "החברה לא נמצאה בלוח החברות"),
     ({"answers": [{"reject": {"message": "Your app is missing the required scopes: boards:read"}}]},
      "לאפליקציה אין הרשאה לקרוא את לוח החברות"),
-    ({"answers": [{"reject": {"message": "complexity budget exhausted"}}]}, "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה"),
+    ({"answers": [{"reject": {"message": "complexity budget exhausted"}}]}, "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה"),
 ])
 def test_when_monday_does_not_give_the_vat_id_the_billing_details_say_why_and_offer_to_try_again(monday, words):
     got = drive(answer(), [{"show": LEDGER}, {"click": [{"vatRetry": "7703"}]}], monday=world(**monday), board=B2_BOARD)
     failed, again = got["steps"]
     assert fact(failed["html"], "ח.פ") == ('<span class="fin-badtext">%s</span> <button type="button" class="fin-linkbtn" '
-                                           'data-vat-retry="7703">לנסות שוב</button>' % words)
+                                           'data-vat-retry="7703">ניסיון חוזר</button>' % words)
     assert fact(again["html"], "ח.פ") == '<bdi dir="ltr">500000027</bdi>'
 
 
@@ -1641,7 +1640,7 @@ def test_a_companys_billing_details_are_edited_from_the_browser_as_the_person_re
     assert form["bill"]["phase"] == "edit" and 'data-bill="vat_id" dir="ltr" inputmode="numeric" maxlength="9" value=""' in form["html"]
     assert 'במאנדיי עכשיו: <bdi dir="ltr">H7703</bdi>' in form["html"] and ">שוטף+30</option>" in form["html"]
     page = h.unescape(plan["html"])
-    assert plan["bill"]["phase"] == "confirm" and 'ייכתב בלוח החברות, בחברה "חברה ג", בשמך:' in page
+    assert plan["bill"]["phase"] == "confirm" and 'יעודכן בלוח החברות, בחברה "חברה ג", בשמך:' in page
     assert '<li><b>ח.פ</b>: עכשיו ריק, ייכתב "512345678"</li><li><b>תנאי תשלום</b>: עכשיו ריק, ייכתב "שוטף+30"</li>' in page
     assert ("יומן הפעילות של לוח החברות שומר מי כתב, מה היה ומה נכתב. עדכון על החברה לא ייכתב: לאפליקציה אין הרשאה לכתוב "
             "עדכונים.") in page
@@ -1651,7 +1650,7 @@ def test_a_companys_billing_details_are_edited_from_the_browser_as_the_person_re
     assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {VAT_COLUMN: "512345678", TERMS_COL: {"ids": [2]}})]
     assert got["updates"] == [] and done["bill"]["outcome"] == "no_update"
     after = h.unescape(done["html"])
-    assert "נכתב בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב." in after
+    assert "נשמר בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב." in after
     assert fact(done["html"], "תנאי תשלום") == "<bdi>שוטף+30</bdi>" and fact(done["html"], "ח.פ") == '<bdi dir="ltr">512345678</bdi>'
     assert [p for p in got["posts"] if p[0] == "/api/desk/refresh"] == [["/api/desk/refresh", None]]
     assert "512345678" not in json.dumps(got["posts"] + got["calls"] + got["usage"])
@@ -1669,7 +1668,7 @@ def test_with_updates_write_the_old_apps_update_is_written_on_the_company_with_b
         "ח.פ: היה ריק, נכתב &quot;512345678&quot;.<br>תנאי תשלום: היה ריק, נכתב &quot;שוטף+30&quot;.<br>"
         "הכתיבה נעשתה מהדפדפן בשם מי שכתב, ויומן הפעילות של לוח החברות רושם אותה גם הוא.")}]
     assert done["bill"]["outcome"] == "posted"
-    assert "נכתב בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב." in h.unescape(done["html"])
+    assert "נשמר בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב." in h.unescape(done["html"])
 
 
 @pytest.mark.parametrize("edits, words", [
@@ -1711,7 +1710,7 @@ def test_details_changed_in_monday_after_the_form_was_read_are_shown_and_never_w
         {"click": [{"billGo": "1"}]}, {"click": [{"billSave": "1"}]}]
     got = drive(steps=steps, monday=billing_world(), board=B2_BOARD, context=WRITES)
     moved, again, saved = got["steps"][-3:]
-    assert moved["bill"]["phase"] == "edit" and "בינתיים פרטי החברה השתנו במאנדיי" in moved["bill"]["error"]
+    assert moved["bill"]["phase"] == "edit" and "פרטי החברה השתנו במאנדיי" in moved["bill"]["error"]
     form = h.unescape(moved["html"])
     assert 'data-bill="vat_id" dir="ltr" inputmode="numeric" maxlength="9" value="520034620"' in form
     assert 'במאנדיי עכשיו: <bdi dir="ltr">520034620</bdi>' in form and '<option value="2" selected>' in form
@@ -1721,7 +1720,7 @@ def test_details_changed_in_monday_after_the_form_was_read_are_shown_and_never_w
 def test_terms_whose_labels_moved_in_monday_are_never_written_and_the_other_details_still_are():
     renamed = [dict(x, name="30 יום") if x["id"] == 2 else x for x in TERMS_LABELS]
     got = drive(steps=bill_steps(("terms", "2"), save=False), monday=billing_world(labels=renamed), board=B2_BOARD, context=WRITES)
-    assert got["steps"][-1]["bill"]["error"] == "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נכתב כלום. נדב צריך לבדוק."
+    assert got["steps"][-1]["bill"]["error"] == "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נשמרו שינויים. יש לפנות לנדב."
     got = drive(steps=bill_steps(("hash_key", "10269")), monday=billing_world(labels=renamed), board=B2_BOARD, context=WRITES)
     assert writes_of(got) == [(ACCOUNTS_BOARD, "7703", {HASH_COL: "10269"})]
 
@@ -1730,7 +1729,7 @@ def test_terms_whose_labels_moved_in_monday_are_never_written_and_the_other_deta
     (dict(WRITES, user={"isViewOnly": True}), None, "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אי אפשר לערוך מכאן."),
     ({"permissions": {"approvedScopes": ["boards:read"], "requiredScopes": ["boards:read"]}}, None,
      "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אי אפשר לערוך מכאן."),
-    ({}, {"absent": True}, "עריכת פרטי החיוב נכתבת במאנדיי בשמך, ולכן היא זמינה רק כשהתצוגה פתוחה מתוך מאנדיי."),
+    ({}, {"absent": True}, "כדי לערוך את פרטי החיוב במאנדיי בשמך, יש לפתוח את התצוגה מתוך מאנדיי."),
 ])
 def test_who_may_not_write_sees_the_details_with_why_and_no_edit(context, monday, why):
     got = drive(answer(), [{"show": LEDGER}, {"click": [{"billEdit": "7703"}]}, {"click": [{"terms": "7703"}]}],
@@ -1753,10 +1752,10 @@ def test_no_terms_beside_a_company_opens_its_ledger_with_the_form_on_the_terms()
 
 @pytest.mark.parametrize("answers, words, maybe", [
     ([{}, {}, {}, {"reject": {"message": "User unauthorized to perform action"}}],
-     "מאנדיי לא מרשה לך לכתוב בלוח החברות. לא נכתב כלום.", False),
+     "אין לך הרשאה לעדכן את לוח החברות במאנדיי. לא נשמרו שינויים.", False),
     ([{}, {}, {}, {"reject": {"message": "Your app is missing the required scopes: boards:write"}}],
-     "לאפליקציה אין הרשאה לכתוב בלוח החברות. לא נכתב כלום.", False),
-    ([{}, {}, {}, {"hold": True}], "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב.",
+     "לאפליקציה אין הרשאה לעדכן את לוח החברות. לא נשמרו שינויים.", False),
+    ([{}, {}, {}, {"hold": True}], "מאנדיי לא הגיבה בזמן לבקשת העדכון. לא ידוע אם השינוי נשמר. יש לבדוק את החברה במאנדיי לפני ניסיון נוסף.",
      True),
 ])
 def test_a_billing_write_that_failed_is_said_in_words_and_one_that_may_have_landed_is_read_again(answers, words, maybe):
@@ -1773,8 +1772,8 @@ def test_a_value_monday_kept_otherwise_is_said_and_read_again():
     monday["keep"] = [TERMS_COL]
     got = drive(steps=bill_steps(("terms", "2")), monday=monday, board=B2_BOARD, context=WRITES)
     done = got["steps"][-1]
-    assert done["bill"]["error"] == "מאנדיי ענתה, אבל הערך שנשמר אינו מה שנשלח. לבדוק את החברה במאנדיי."
-    assert "לא נכתב כלום" not in done["bill"]["error"] and ["/api/desk/refresh", None] in got["posts"]
+    assert done["bill"]["error"] == "הערך שנמצא במאנדיי שונה מהערך שנשלח. יש לבדוק את החברה במאנדיי."
+    assert "לא נשמרו שינויים" not in done["bill"]["error"] and ["/api/desk/refresh", None] in got["posts"]
 
 
 @pytest.mark.parametrize("step, context, sent", [
@@ -1819,7 +1818,7 @@ def test_an_answer_without_a_view_says_the_data_was_not_read_yet_and_offers_the_
     assert "נכשלה" not in first and "fin-tabs" not in first
     assert got["calls"][:2] == ["GET /api/desk", "POST /api/desk/refresh"] and "fin-tabs" in got["steps"][0]["html"]
     got = drive(failed, [], monday=world())
-    assert '<p class="fin-msg">הקריאה האחרונה נכשלה.</p>' in got["first"] and "הנתונים עוד לא נקראו" in got["first"]
+    assert '<p class="fin-msg">עדכון הנתונים האחרון נכשל.</p>' in got["first"] and "הנתונים עוד לא נקראו" in got["first"]
     # a reading on its way (`refreshing`) is asked for by the page's own second request, as for a view
     got = drive(steps=[{"raw": True}], monday=world(),
                 answers={"GET /api/desk": [{"body": answer(None, refreshing=True)}], "GET /api/desk?fresh=1": [{"body": answer()}]})
@@ -1832,15 +1831,15 @@ def test_a_reading_whose_view_could_not_be_built_is_said_as_the_servers_fault_wi
     crashed = answer(None, view_error="crashed", taken_at="2026-11-24T08:00:00+00:00",
                      last_attempt={"taken_at": "2026-11-24T08:00:00+00:00", "ok": True, "error": None})
     first = drive(crashed, [], monday=world())["first"]
-    assert '<p class="fin-msg">הנתונים נקראו ממאנדיי, אבל השולחן לא נבנה מהם. זו תקלה בשרת, ונדב צריך לבדוק אותה.</p>' in first
+    assert '<p class="fin-msg">הנתונים נטענו ממאנדיי, אך תצוגת הכספים לא נוצרה. יש לפנות לנדב לבדיקת התקלה בשרת.</p>' in first
     assert "הנתונים עוד לא נקראו" not in first and "data-refresh" not in first and "<button" not in first
     assert "fin-tabs" not in first
     # a view on the screen: a refresh answered with a view that could not be built keeps it, and says why
     got = drive(steps=[{"click": [{"refresh": "1"}], "raw": True}], monday=world(),
                 answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [{"body": crashed}]})
-    assert "fin-tabs" in got["steps"][0]["html"] and "השולחן לא נבנה" not in got["steps"][0]["html"]
-    assert got["toasts"] == ["הנתונים החדשים נקראו ממאנדיי, אבל השולחן לא נבנה מהם, ולכן מוצגים הנתונים הקודמים. זו תקלה "
-                             "בשרת, ונדב צריך לבדוק אותה."]
+    assert "fin-tabs" in got["steps"][0]["html"] and "תצוגת הכספים לא נוצרה" not in got["steps"][0]["html"]
+    assert got["toasts"] == ["נתונים חדשים נטענו ממאנדיי, אך תצוגת הכספים לא נוצרה מהם, ולכן מוצגים הנתונים הקודמים. "
+                             "יש לפנות לנדב לבדיקת התקלה בשרת."]
     # and an answer with no reading at all is still "not read yet", with its refresh
     assert "הנתונים עוד לא נקראו" in drive(answer(None), [], monday=world())["first"]
 
@@ -1850,7 +1849,7 @@ REFRESH_FAILED = "הרענון נכשל, ומוצגים הנתונים הקוד�
 
 @pytest.mark.parametrize("failure, said", [
     ({"status": 503, "error": "finance_unavailable"},
-     REFRESH_FAILED + ": לא הצלחנו לקרוא עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."),
+     REFRESH_FAILED + ": לא הצלחנו לטעון עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."),
     ({"status": 500, "error": "http_500"}, REFRESH_FAILED + " (http_500)."),
     ({"blocked": True, "status": 401, "error": "unauthorized"}, REFRESH_FAILED + " (unauthorized)."),
     ({"message": "Failed to fetch"}, REFRESH_FAILED + "."),                  # no answer at all
@@ -2017,7 +2016,7 @@ def test_an_id_that_is_not_digits_is_escaped_in_a_retry_key_and_in_an_items_link
     assert "<img" not in html and 'onerror="' not in html
     safe = "3101&quot;&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
     assert ('<span class="fin-badtext">אין לך גישה ללוח הלידים במאנדיי</span> <button type="button" class="fin-linkbtn" '
-            'data-id-retry="%s">לנסות שוב</button>' % safe) in html
+            'data-id-retry="%s">ניסיון חוזר</button>' % safe) in html
     assert html.count('href="https://analiza-college-group.monday.com/boards/5093448677/pulses/%s"' % safe) == 3
 
 
@@ -2091,9 +2090,9 @@ def test_without_a_context_the_desk_gets_no_monday_and_without_a_token_the_view_
     assert got["mounted"][0]["monday"] is None
     got = glue(noSdk=True)
     assert got["mounted"] == [] and got["shown"] == ["screen-blocked"]
-    assert got["blocked"] == "פתחו את התצוגה מתוך monday - שם היא מקבלת את הזהות שלכם."
+    assert got["blocked"] == "יש לפתוח את התצוגה מתוך מאנדיי כדי להזדהות."
     got = glue(noDesk=True, context={"boardId": 1})
-    assert got["blocked"] == "קובץ התצוגה של הכספים לא נטען. רעננו את הדף."
+    assert got["blocked"] == "תצוגת הכספים לא נטענה. אפשר לרענן את הדף."
 
 
 def test_the_glue_asks_a_fresh_token_once_on_token_expired_and_carries_a_429_and_keepalive():
@@ -2136,7 +2135,7 @@ def test_a_pending_receipt_says_how_long_it_has_waited_beside_its_date_and_in_it
         {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {"3102": True}}}},
         {"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}}])
     queue, details, everything = (step["html"] for step in got["steps"])
-    assert "ממתין 21 ימים" in queue and queue.count("ממתין ") == 1
+    assert "ממתין 21 ימים" in queue and len(re.findall(r"ממתין (?!ל)", queue)) == 1
     assert details.count("ממתין 21 ימים") == 2      # beside its date, and in the details' line
     assert everything.count("ממתין 21 ימים") == 1 and everything.count("fin-waited\"") + everything.count("fin-waited ") == 1
     # 21 days is past a week: the wait is red (WAIT_LATE_DAYS); the details' line says it in words only
@@ -2201,23 +2200,27 @@ def test_a_pending_receipt_says_what_the_books_hold_of_it_under_its_state_and_in
 def test_the_queues_line_says_the_servers_split_in_words():
     one = lambda totals, books=ISSUED: _queue(books, {"count": 1, "sums": {"money_in": "4000"}, "receipts": totals})[0]
     line = lambda html: re.search(r'<p class="fin-rcpt-line">(.*?)</p>', html).group(1)
-    assert line(one({"issued": 1, "not": 0, "unknown": 0})) == "הקבלה עליו כבר הופקה בחשבשבת: נשאר לסמן במאנדיי."
-    assert line(one({"issued": 0, "not": 1, "unknown": 0}, UNSEEN)) == "לא זוהתה עליו קבלה בחשבשבת."
+    # Gemini's review of 26.11: a receipt identified in the books is not one sent, so the line asks for the status, not "יצאה"
+    I = "יש לעדכן את סטטוס שליחת הקבלה בהתאם למצבה בפועל."
+    assert line(one({"issued": 1, "not": 0, "unknown": 0})) == "לתקבול זוהתה קבלה בחשבשבת: " + I
+    assert line(one({"issued": 0, "not": 1, "unknown": 0}, UNSEEN)) == "לתקבול לא זוהתה קבלה בחשבשבת."
     assert line(one({"issued": 5, "not": 3, "unknown": 0})) == (
-        "ל-5 מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ל-3 מהם לא זוהתה קבלה בחשבשבת.")
+        "ל-5 תקבולים זוהתה קבלה בחשבשבת: " + I + " ל-3 תקבולים לא זוהתה קבלה בחשבשבת.")
     assert line(one({"issued": 1, "not": 7, "unknown": 0})) == (
-        "לאחד מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ל-7 מהם לא זוהתה קבלה בחשבשבת.")
-    assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "הקבלות על כולם כבר הופקו בחשבשבת: נשאר לסמן במאנדיי."
-    assert line(one({"issued": 0, "not": 4, "unknown": 0}, UNSEEN)) == "לאף אחד מהם לא זוהתה קבלה בחשבשבת."
-    assert line(one({"issued": 0, "not": 0, "unknown": 4}, None)).startswith("מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע")
+        "לתקבול אחד זוהתה קבלה בחשבשבת: " + I + " ל-7 תקבולים לא זוהתה קבלה בחשבשבת.")
+    assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "לכל התקבולים זוהתה קבלה בחשבשבת: " + I
+    assert line(one({"issued": 0, "not": 4, "unknown": 0}, UNSEEN)) == "לאף תקבול לא זוהתה קבלה בחשבשבת."
+    assert line(one({"issued": 0, "not": 0, "unknown": 4}, None)) == "לא ניתן לבדוק כרגע אם הקבלות הופקו בחשבשבת: אין השוואה עדכנית."
     # the second review of 26.11: a number just past the end of its series is neither issued nor missing yet
     assert line(one({"issued": 2, "not": 1, "later": 1, "unknown": 0})) == (
-        "ל-2 מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. לאחד מהם לא זוהתה קבלה בחשבשבת. באחד מהם המספר שבשורה "
-        "עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
+        "ל-2 תקבולים זוהתה קבלה בחשבשבת: " + I + " לתקבול אחד לא זוהתה קבלה בחשבשבת. בתקבול אחד מספר החשבונית טרם "
+        "נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")
     assert line(one({"issued": 0, "not": 0, "later": 3, "unknown": 0})) == (
-        "המספרים בכל השורות עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
+        "מספרי החשבוניות בכל השורות טרם נמצאו בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")
     assert line(one({"issued": 1, "not": 0, "later": 4, "unknown": 0})) == (
-        "לאחד מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ב-4 מהם המספר שבשורה עוד לא בהעתק של הספרים, שמתעדכן כל שעה.")
+        "לתקבול אחד זוהתה קבלה בחשבשבת: " + I + " ב-4 תקבולים מספר החשבונית טרם נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")
+    assert line(one({"issued": 0, "not": 0, "later": 1, "unknown": 0})) == (
+        "מספר החשבונית טרם נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")
     # no line before the totals land, for a total of another reading, or without the split
     assert "fin-rcpt-line" not in _queue(ISSUED, None)[0]
     assert "fin-rcpt-line" not in _queue(ISSUED, {"other_reading": True, "taken_at": "x"})[0]

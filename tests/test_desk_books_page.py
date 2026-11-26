@@ -126,7 +126,7 @@ def test_a_number_not_yet_in_the_copy_is_said_in_the_rows_details_and_nowhere_el
     html = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"5": True}}}])[0]
     detail = html[html.index('<tr class="fin-detail">', html.index('data-row="5"')):]
     detail = detail[:detail.index("</td></tr>")]
-    assert '<p class="fin-dx-books">62504: עוד לא בהעתק של הספרים</p>' in detail and "fin-dx-warn" not in detail
+    assert '<p class="fin-dx-books">62504: טרם נמצא בעותק נתוני חשבשבת</p>' in detail and "fin-dx-warn" not in detail
     assert "fin-books-chips" not in cell(html, "5", "state")
 
 
@@ -137,7 +137,7 @@ def test_the_students_list_draws_each_document_and_its_candidates_as_candidates_
     part = part[:part.index('data-books="unclear"')] if 'data-books="unclear"' in part else part
     assert "<h2>%s</h2>" % fd.BOOKS_LIST_TITLE in part and "מסמך אחד" in part
     assert re.findall(r'<th class="b-[a-z]+[^"]*">(.*?)</th>', part) == [
-        "מספר מסמך", "סוג מסמך", "תאריך מסמך", "סכום בחשבשבת (כולל מע&quot;מ)", "שם בכרטיס", "מועמדת לפי שם"]
+        "מספר מסמך", "סוג מסמך", "תאריך מסמך", "סכום בחשבשבת (כולל מע&quot;מ)", "שם בכרטיס", "שורות בשם תואם"]
     row = part[part.index("<tbody>"):part.index("</tbody>")]
     assert '<bdi dir="ltr">62503</bdi>' in row and "חשבונית מס/קבלה" in row and "4,000.00 ₪" in row and "גימל תלמיד" in row
     # the candidate: the row's name opening its own card in monday, its state and its status - and no word of a match
@@ -146,7 +146,7 @@ def test_the_students_list_draws_each_document_and_its_candidates_as_candidates_
     assert "fin-statechip" in row and "שולם" in row
     assert not re.search("התאמה|מותאם|קושר", h.unescape(row))
     # and the sentence above the list says the law: a candidate by name only, a match by the number cited
-    assert "מועמדת לפי שם בלבד: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית" in part
+    assert "שורות בשם תואם הן רק מועמדות: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית" in part
     # under the rows of "לטיפול", never above them, and never on another tile or a search
     assert tasks.index('data-books="b2c"') > tasks.index('data-row="1"')
     others = draw(view, [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}},

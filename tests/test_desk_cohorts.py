@@ -126,7 +126,7 @@ def test_every_live_voucher_index_is_placed_and_the_parts_are_chavas_in_her_orde
     assert set(ch.PART_OF) | set(ch.WAIVED) | set(ch.OUT) | {"5"} == live
     assert list(ch.PARTS)[:4] == ["approved", "submitted", "hq", "not_submitted"]
     assert ch.PARTS["approved"]["label"] == "אושר - ממתין לתשלום" and ch.PARTS["not_submitted"]["label"] == "טרם הוגש"
-    assert ch.PARTS["hq"]["label"] == "בטיפול מטה / ממתין לתקציב" and ch.PARTS["no_status"]["label"] == "בלי סטטוס שובר"
+    assert ch.PARTS["hq"]["label"] == "בטיפול מטה / ממתין לתקציב" and ch.PARTS["no_status"]["label"] == "שובר ללא סיווג"
     assert fd.VOUCHER["8"] == "בטיפול מטה" and fd.VOUCHER["9"] == "ממתין לתקציב"
     # a label renamed in monday is still placed by its index
     part = part_of([], [coh(roster=["E1"])], [dict(enr("E1", voucher="1"), **{rd.EN["voucher"]: "שם חדש"})])
@@ -586,7 +586,7 @@ def test_a_payment_the_view_loses_is_said_by_the_check_and_the_line_never_export
     url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
     info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
         io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
-    assert "לא שלמה" in info["שימו לב"]
+    assert "חלקיים" in info["שימו לב"]
 
 
 def test_the_cohorts_come_money_that_should_have_come_in_first_and_the_students_by_part():
@@ -1007,7 +1007,7 @@ def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, mo
     url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
     info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
         io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
-    assert "לא שלמה" in info["שימו לב"]
+    assert "חלקיים" in info["שימו לב"]
 
 
 def test_a_cohorts_module_that_breaks_is_its_parts_alone_and_both_tabs_stand(desk, monkeypatch, caplog):  # noqa: F811
@@ -1035,7 +1035,7 @@ def test_a_cohorts_module_that_breaks_is_its_parts_alone_and_both_tabs_stand(des
     url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
     info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
         io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
-    assert "לא שלמה" in info["שימו לב"]
+    assert "חלקיים" in info["שימו לב"]
 
 
 # ---- the voucher track: only its cohorts, and every one of them, paid for or not ---------------------------------------

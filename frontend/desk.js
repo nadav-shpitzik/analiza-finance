@@ -127,10 +127,10 @@
       var token = got[0], c = got[1];
       if (c && c.theme) { applyTheme(c.theme); }
       if (!token) {
-        blocked("פתחו את התצוגה מתוך monday - שם היא מקבלת את הזהות שלכם.");
+        blocked("יש לפתוח את התצוגה מתוך מאנדיי כדי להזדהות.");
         return null;
       }
-      if (!window.FinanceDesk) { blocked("קובץ התצוגה של הכספים לא נטען. רעננו את הדף."); return null; }
+      if (!window.FinanceDesk) { blocked("תצוגת הכספים לא נטענה. אפשר לרענן את הדף."); return null; }
       var board = boardOf(c);
       return window.FinanceDesk.mount(byId("fin-root"), {
         api: api,

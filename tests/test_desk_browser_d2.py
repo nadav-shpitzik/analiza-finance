@@ -212,10 +212,10 @@ def test_two_receipts_picked_on_their_rows_are_written_with_one_confirmation(ser
                                      ["sc:3106:receipt_sent", 'שליחת קבלה: "יצאה"']]
     bar = " ".join(steps["bar"].split())
     assert "נבחרו 2 שורות" in bar and 'שליחת קבלה: "יצאה" (2)' in bar
-    assert "ייכתב במאנדיי בשמך, ב-2 שורות:" in steps["plan"]
+    assert "יעודכן במאנדיי בשמך, ב-2 שורות:" in steps["plan"]
     assert 'תלמיד/ה 2 · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"' in steps["plan"]
     assert 'תלמיד/ה 6 · שליחת קבלה: עכשיו "טרם", ייכתב "יצאה"' in steps["plan"]
-    assert "נכתב במאנדיי בשמך ב-2 שורות." in steps["done"]
+    assert "נשמר במאנדיי בשמך ב-2 שורות." in steps["done"]
     # one read of the two for the confirmation, then each read right before its write, by index
     reads = [m["variables"]["i"] for m in got["monday"] if m["query"].startswith("query") and m["variables"].get("c") == [RECEIPT]]
     assert reads == [["3102", "3106"], ["3102"], ["3106"]]
@@ -284,25 +284,25 @@ def test_a_companys_billing_details_are_edited_from_the_browser_as_the_person(se
   out.steps.plan = await text(".fin-billing .fin-act-plan");
   await shot("4-b-confirmation-NAME");
   await page.click("[data-bill-save]");
-  await page.waitForFunction(() => /נכתב בלוח החברות/.test((document.querySelector(".fin-billing") || {}).innerText || ""),
+  await page.waitForFunction(() => /נשמר בלוח החברות/.test((document.querySelector(".fin-billing") || {}).innerText || ""),
     null, { timeout: 15000 });
   await page.waitForFunction(() => !document.querySelector(".fin-refreshing"), null, { timeout: 15000 });
   out.steps.done = await text(".fin-billing");
   await shot("4-c-written-NAME");
 """.replace("NAME", name), base, sdk(store, labels, B2_BOARD, scopes))
     steps, with_update = got["steps"], "updates:write" in scopes
-    assert 'ייכתב בלוח החברות, בחברה "חברה ג", בשמך:' in steps["plan"]
+    assert 'יעודכן בלוח החברות, בחברה "חברה ג", בשמך:' in steps["plan"]
     assert 'ח.פ: עכשיו ריק, ייכתב "512345678"' in steps["plan"] and 'תנאי תשלום: עכשיו ריק, ייכתב "שוטף+30"' in steps["plan"]
     assert mutations(got) == [(ACCOUNTS, "7703", {VAT: "512345678", TERMS: {"ids": [2]}})]
     if with_update:
         assert "על החברה ייכתב גם עדכון בשמך: מה היה ומה נכתב." in steps["plan"]
         assert len(got["updates"]) == 1 and got["updates"][0]["i"] == "7703"
         assert "ח.פ: היה ריק, נכתב &quot;512345678&quot;." in got["updates"][0]["body"]
-        assert "נכתב בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב." in steps["done"]
+        assert "נשמר בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב." in steps["done"]
     else:
         assert "עדכון על החברה לא ייכתב: לאפליקציה אין הרשאה לכתוב עדכונים." in steps["plan"]
         assert got["updates"] == [] and not [m for m in got["monday"] if "create_update" in m["query"]]
-        assert "נכתב בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב." in steps["done"]
+        assert "נשמר בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב." in steps["done"]
     assert "512345678" in steps["done"] and "שוטף+30" in steps["done"]
     # the server: one refresh after the write, and never the ח.פ
     assert len([x for x in log if x["path"] == "/api/desk/refresh"]) == 1

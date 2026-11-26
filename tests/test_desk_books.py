@@ -290,10 +290,10 @@ def test_books_ref_invalid_names_each_number_and_why():
     head = "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: "
     got = {int(i) % 100: ms[0] for i, ms in part["marks"].items()}
     assert {n: m["long"] for n, m in got.items()} == {
-        1: head + "40000 לא נמצא", 2: head + "62600 בשני מסמכים", 3: head + "70100 חשבונית זיכוי",
+        1: head + "40000 לא נמצא", 2: head + "62600 מספר כפול", 3: head + "70100 חשבונית זיכוי",
         4: head + "80500 קבלה; 40505 חשבון עסקה", 5: head + "50400 חשבונית מס בסכום שלילי", 6: head + "62610 טיוטה"}
     assert part["notes"] == {}
-    assert got[2]["text"] == "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 62600: שני מסמכים תקפים בחשבשבת נושאים את המספר הזה."
+    assert got[2]["text"] == "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 62600: לשני מסמכים תקפים בחשבשבת יש אותו מספר."
     assert "70100: חשבונית זיכוי, ולא חשבונית מס או חשבונית מס/קבלה" in got[3]["text"]
     assert "50400: חשבונית מס בסכום שלילי, כלומר ביטול" in got[5]["text"]
     assert got[6]["text"] == head + "62610: בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף."
@@ -348,7 +348,7 @@ def test_a_negative_invoice_receipt_is_said_as_a_negative_sum_not_as_another_typ
 def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_gets_no_mark():
     """The copy is read every hour: a document issued and cited on monday since is just past the last number the copy holds
     in its series (status 1, by the rule of the copy's `series()`), and is no gap yet - no `books_ref_invalid` for it, and
-    the row's details say "עוד לא בהעתק של הספרים". "Just past": at most NOT_YET_SPAN (20) past the last number of the series
+    the row's details say "טרם נמצא בעותק נתוני חשבשבת". "Just past": at most NOT_YET_SPAN (20) past the last number of the series
     nearest below it - both sides of each end: the last plus one and plus 20 are not yet in the copy, plus 21 is not found,
     and so is a number not held at or below a series' last, or below every series. Another refused number of the row keeps
     its mark."""
@@ -362,15 +362,15 @@ def test_a_number_just_past_the_end_of_its_series_is_not_yet_in_the_copy_and_get
     assert {i: ms[0]["long"] for i, ms in part["marks"].items()} == {
         "2": head + "62502 לא נמצא", "4": head + "40000 לא נמצא", "5": head + "70100 חשבונית זיכוי",
         "9": head + "62524 לא נמצא", "11": head + "50421 לא נמצא"}
-    assert part["notes"] == {"1": "62504: עוד לא בהעתק של הספרים", "3": "50401: עוד לא בהעתק של הספרים",
-                             "5": "62504: עוד לא בהעתק של הספרים", "6": "62505: עוד לא בהעתק של הספרים",
-                             "7": "62504: עוד לא בהעתק של הספרים", "8": "62523: עוד לא בהעתק של הספרים",
-                             "10": "50420: עוד לא בהעתק של הספרים"}
+    assert part["notes"] == {"1": "62504: טרם נמצא בעותק נתוני חשבשבת", "3": "50401: טרם נמצא בעותק נתוני חשבשבת",
+                             "5": "62504: טרם נמצא בעותק נתוני חשבשבת", "6": "62505: טרם נמצא בעותק נתוני חשבשבת",
+                             "7": "62504: טרם נמצא בעותק נתוני חשבשבת", "8": "62523: טרם נמצא בעותק נתוני חשבשבת",
+                             "10": "50420: טרם נמצא בעותק נתוני חשבשבת"}
     assert part["marks"]["5"][0]["documents"] == ["70100"] and "62504" not in part["marks"]["5"][0]["text"]
     # the note is in the row's details only: no flag, no chip, and no place in "לטיפול"
     merged = db.merge(view, dict(part, state="ok", reasons=[], as_of=None, key="k"))
     row = {r["id"]: r for r in merged["b2c"]["rows"]}["1"]
-    assert row["books_note"] == "62504: עוד לא בהעתק של הספרים" and "books" not in row and "books_task" not in row
+    assert row["books_note"] == "62504: טרם נמצא בעותק נתוני חשבשבת" and "books" not in row and "books_task" not in row
     assert not any(f.startswith("books_") for f in row["flags"])
     ends = db.series_ends(docs)
     assert db.not_yet_read("62504", ends) and db.not_yet_read("62523", ends) and not db.not_yet_read("62524", ends)
@@ -413,7 +413,7 @@ def test_the_details_never_say_not_yet_in_the_copy_of_an_absurd_number():
 
 def test_a_number_the_copy_holds_as_a_draft_is_a_draft_not_missing_from_the_copy():
     """Spec §4.1: a draft carries its series' next number. A row citing a draft cites no valid document (FR-2: the mark),
-    and the copy does hold the number: it is said as a draft, never "עוד לא בהעתק של הספרים"."""
+    and the copy does hold the number: it is said as a draft, never "טרם נמצא בעותק נתוני חשבשבת"."""
     docs = NOT_YET_DOCS + [doc(62504, status=0)]                             # a draft, the next number of its series
     assert not_ready(copy(docs)) is None
     part, _v, _r = run([pay(1, "62504")], docs)
@@ -557,7 +557,7 @@ def test_a_mark_moves_no_row_changes_no_sum_and_joins_tasks_only_from_the_era():
     assert after["5"]["receipt_books"] == db.receipt_laid({})            # it cites nothing, and no document has its name
     assert after["1"]["flags"] == before["1"]["flags"] + ["books_receipt_unpaid"]
     tasks = [r["id"] for r in fd.filter_b2c(merged["b2c"], "tasks", "", "")]
-    assert sorted(tasks) == ["1", "4", "5"]                       # 5 is "שולם, שליחת קבלה: טרם"; 3 is older
+    assert sorted(tasks) == ["1", "4", "5"]                       # 5 is "שולם, קבלה לטיפול"; 3 is older
     assert [r["id"] for r in fd.filter_b2c(view["b2c"], "tasks", "", "")] == ["5"]
     whole = merged["b2c"]["periods"][0]
     assert whole["tasks"] == 3 and sum(whole["states"][k]["count"] for k in fd.TASK_STATES) == 1
@@ -1384,7 +1384,7 @@ def test_the_students_tasks_file_carries_the_marked_rows_and_its_list_and_the_un
     assert rows["101"][heads.index("שיבוץ")] == "ללא תקבול"
     lst = wb["מסמכים בלי חיוב"]
     lheads = [c.value for c in lst[1]]
-    assert lheads == ["מספר מסמך", "סוג מסמך", "תאריך מסמך", 'סכום בחשבשבת (כולל מע"מ)', "שם בכרטיס", "מועמדת לפי שם"]
+    assert lheads == ["מספר מסמך", "סוג מסמך", "תאריך מסמך", 'סכום בחשבשבת (כולל מע"מ)', "שם בכרטיס", "שורות בשם תואם"]
     first = [c.value for c in lst[2]]
     assert first[0] == "62503" and first[1] == "חשבונית מס/קבלה" and first[3] == 4000 and first[4] == "תלמיד-גימל"
     assert first[5].startswith("תלמיד-גימל (") and lst[2][0].data_type == "s" and lst.sheet_view.rightToLeft is True
@@ -1515,7 +1515,7 @@ def test_the_desk_reads_the_copy_whole_and_says_when_it_is_not(booked_pg):
     main.app.state.desk.books._checked_at = None
     held = client.get("/api/desk", headers=auth).json()["view"]["books"]
     assert (held["state"], held["reasons"], held["as_of"]) == ("held", ["last_run_incomplete"], v["books"]["as_of"])
-    assert "הקריאה האחרונה של חשבשבת לא הגיעה לסוף" in held["said"]
+    assert "טעינת הנתונים האחרונה מחשבשבת לא הושלמה" in held["said"]
     health = client.get("/health").json()["desk"]["books"]
     assert (health["state"], health["reasons"]) == ("held", ["last_run_incomplete"])
 

@@ -112,7 +112,7 @@ def test_a_press_opens_a_confirmation_that_says_what_it_does_and_sends_the_serve
     assert 'role="group" aria-label="לא פער"' in box[:200]
     assert "<b>חשבונית מס/קבלה 62606, תומר נחום</b>" in box
     assert "המסמך יוסתר מהרשימה לכולם כ&quot;לא פער&quot;, כל עוד הוא נשאר בחשבשבת כמו עכשיו" in box
-    assert "ולא נכתב כלום במאנדיי או בחשבשבת" in box and 'data-nag-go="1">הסתרה</button>' in box
+    assert "לא מתבצע שינוי במאנדיי או בחשבשבת" in box and 'data-nag-go="1">הסתרה</button>' in box
     assert got["posts"] == [[NAG, {"kind": "books_doc_students", "subject": "62606", "evidence": evidence,
                                    "taken": "2026-11-24T10:00:01+00:00", "books": "k-1"}]]
     # the server's desk after it is drawn: the document is gone from the list and listed as hidden, the box closed
@@ -130,7 +130,7 @@ def test_a_proposals_press_says_it_is_not_to_be_proposed_and_a_marks_says_its_ro
                {"click": [{"nag": "books_amount_differs:9", "nagFrom": "detail"}]}])
     fill, closed, mark = got["steps"][1]["html"], got["steps"][2]["html"], got["steps"][3]["html"]
     box = fill[fill.index('class="fin-nag-box'):]
-    assert 'aria-label="לא להציע"' in box[:200] and "ההצעה לא תוצג יותר, לאף אחד" in box
+    assert 'aria-label="לא להציע"' in box[:200] and "ההצעה תוסתר לכל המשתמשים" in box
     assert "<b>&quot;נועה ברק&quot;: בחשבשבת: 62601</b>" in box
     assert "fin-nag-box" not in closed and got["posts"] == []
     box = mark[mark.index('class="fin-nag-box'):]
@@ -195,9 +195,9 @@ def test_an_alert_that_came_back_says_so_beside_it():
              live_row("books_ref_fill", "1", "2" * 64, 5, by=1)]
     v = nag_view(stale)
     rows, tasks = draw(body(v), [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"7": True, "1": True}}}, TASKS])
-    assert ("חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 בידי משתמש/ת 9, והראיה השתנתה מאז.") in detail_of(rows, "7")
-    assert "חזר: הוסתר כ&quot;לא להציע&quot; ב-26.11, 11:00 בידי אתה" in detail_of(rows, "1")
-    assert "חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 בידי אתה" in doc_row(tasks, "50501")
+    assert ("חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 על ידי משתמש/ת 9. הנתונים השתנו מאז.") in detail_of(rows, "7")
+    assert "חזר: הוסתר כ&quot;לא להציע&quot; ב-26.11, 11:00 על ידי אתה" in detail_of(rows, "1")
+    assert "חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 על ידי אתה" in doc_row(tasks, "50501")
     assert v["b2c"]["books"]["returned_counts"] == {"books_receipt_unpaid": 1, "books_ref_fill": 1}
 
 
@@ -221,7 +221,7 @@ def test_the_pages_words_are_the_servers_and_the_legends():
                         ("b2b", (fd.NAG_WORD, fd.NAG_LIST_WORD, fd.NAG_BACK_WORD))):
         assert set(words_) <= fd.legend_terms(tab), tab
     legend = dict(fd.LEGEND["b2c"])[" · ".join((fd.NAG_WORD, fd.NAG_FILL_WORD, fd.NAG_LIST_WORD, fd.NAG_BACK_WORD))]
-    assert "ולא נכתב כלום במאנדיי או בחשבשבת" in legend and "צופה במאנדיי לא יכול להסתיר" in legend
+    assert "לא מתבצע שינוי במאנדיי או בחשבשבת" in legend and "צופה במאנדיי לא יכול להסתיר" in legend
     page = (fd.__file__.rsplit("/app/", 1)[0] + "/frontend/finance.js")
     code = open(page, encoding="utf-8").read()
     assert '"' + fd.NAG_BACK_WORD + ': הוסתר כ' in code.replace("\\\"", '"')
@@ -441,7 +441,7 @@ def test_each_press_says_on_hover_what_it_does_in_the_confirmations_own_words():
     detail = draw(body(nag_view()), [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"9": True}}}])[0]
     title = lambda press: h.unescape(re.search(r'title="([^"]+)"', press).group(1))
     assert title(press_of(tasks, "books_doc_students", "62606", "list")).startswith("המסמך יוסתר מהרשימה לכולם")
-    assert title(press_of(tasks, "books_ref_fill", "1", "list")).startswith("ההצעה לא תוצג יותר, לאף אחד")
+    assert title(press_of(tasks, "books_ref_fill", "1", "list")).startswith("ההצעה תוסתר לכל המשתמשים")
     assert title(press_of(detail, "books_amount_differs", "9", "detail")).startswith("הסימון יוסתר לכולם")
 
 

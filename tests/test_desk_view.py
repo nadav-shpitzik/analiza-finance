@@ -493,7 +493,7 @@ def test_the_two_before_billing_labels_are_one_state_and_it_keeps_its_warnings()
     assert {"no_contract", "over_deal_value"} <= set(b2row(v, 4)["flags"])          # a planned charge keeps them too
     labels = {k: s["label"] for k, s in fd.B2B_STATES.items()}
     assert (labels["to_bill"], labels["planned"], labels["open"]) == \
-        ("לחיוב החודש", "לחיוב בחודש הבא ואילך", "חויב, טרם הגיע מועד הפירעון")
+        ("לחיוב החודש", "לחיוב בחודש הבא ואילך", "חויב, ממתין לפירעון")
     assert "approval" not in fd.B2B_STATES and "to_invoice" not in fd.B2B_STATES
     assert fd.B2B_TASK_STATES == ["exception", "to_bill", "overdue", "partial"]
     assert v["b2b"]["customers"][0]["to_bill"] == D(12000 + 1000 + 1000)   # both labels add up in one column
@@ -547,8 +547,8 @@ def test_the_legend_defines_each_word_the_desk_computes_and_no_monday_column():
     for word in ("מועד פירעון", "בפיגור", "לחיוב החודש", "יתרה פתוחה", "לפי מועד פירעון", "יתרה לגבייה", "שיבוץ",
                  "לטיפול", "לפי לקוח", "לא בפיגור", "ללא מועד פירעון", "מה לבדוק", "סטטוס", "Account משלם"):
         assert word in b2b, word
-    for word in (fd.LAST_DAY_LABEL, "יום היצירה", "שיבוץ", "לטיפול", "מחזור", "סטודנטים", "תקבול", "סטודנט/ית",
-                 "פרטי חשבון", "עבר", "לפני", "סכום מחוק", "נוהל הרשמה", "ליד מקור", "סטטוס שובר משה\"ע"):
+    for word in (fd.LAST_DAY_LABEL, "תאריך יצירה", "שיבוץ", "לטיפול", "מחזור", "סטודנטים", "תקבול", "סטודנט/ית",
+                 "פרטי חשבון", "עבר", "לפני", "סכום שלא נספר", "נוהל הרשמה", "ליד מקור", "סטטוס שובר משה\"ע"):
         assert word in b2c, word
     words = dict(fd.LEGEND["b2c"])
     assert "14" in words[fd.LAST_DAY_LABEL] and fd.PLANNED_LABEL in words[fd.LAST_DAY_LABEL]
@@ -588,7 +588,7 @@ def test_each_states_sentence_holds_for_the_rows_at_its_edges():
     assert row_of(v, 1)["state"] == "exception"
     assert v["b2c"]["periods"][0]["states"]["exception"]["money_in"] == D(4000) == v["b2c"]["money_in"]
     assert "לספור" not in fd.B2C_STATES["exception"]["about"]
-    # "חויב, טרם הגיע מועד הפירעון": a company without payment terms (17 of 22 on 09.11), on its demand day, is in this
+    # "חויב, ממתין לפירעון": a company without payment terms (17 of 22 on 09.11), on its demand day, is in this
     # state with its due date TODAY - neither "the end of the month plus the terms" nor "not arrived yet" is true of it
     v = view(b2_rows=[b2(1, payment="2", due=TODAY.isoformat())], accounts=[acct("A1", "")])
     assert (b2row(v, 1)["state"], b2row(v, 1)["due"]) == ("open", TODAY.isoformat())
@@ -915,7 +915,7 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
     monday's own title with where it comes from. "פרטי חיוב" says the edit is the person's own since ADR-0188: in
     analiza-metrics it said the server wrote it ("בידי השרת"), which this service never does."""
     for tab in ("b2c", "b2b"):
-        assert {"פעולות", "נכתב, מתעדכן"} <= fd.legend_terms(tab), tab
+        assert {"פעולות", "נשמר, מתעדכן"} <= fd.legend_terms(tab), tab
     assert {"פרטי חיוב", "ח.פ", "מפתח חשבשבת", "חשבונית על שם", "תנאי תשלום"} <= fd.legend_terms("b2b")
     said = {i["term"]: i["text"] for p in fd._legend_out("b2b") for i in p["items"]}
     # MON-43's rule, said without its number (QA 24.11)
@@ -924,7 +924,7 @@ def test_the_words_slice_3_draws_are_defined_in_the_legend():
     # what the page does (the adversarial review of 62fd993): written from the browser as the person, the before and the
     # after in monday's activity log, and an Update on the company only with the permission to write one - never promised
     bill = said["פרטי חיוב"]
-    assert "נכתבת מהדפדפן בשמך" in bill and "יומן הפעילות של לוח החברות שומר מה היה ומה נכתב" in bill
+    assert "נשמרת מהדפדפן בשמך" in bill and "יומן הפעילות של לוח החברות שומר מה היה ומה נכתב" in bill
     assert "רק כשלאפליקציה יש הרשאה לכתוב עדכונים במאנדיי" in bill and "ועל החברה נכתב עדכון בשמך" not in bill
     # the ID number is never in the Excel file now (app/desk/export.py), and the legend no longer says it is
     students = {i["term"]: i["text"] for p in fd._legend_out("b2c") for i in p["items"]}
@@ -1032,7 +1032,7 @@ def test_the_legend_says_what_all_holds_and_its_other_words_plainly():
         flags = {k: x for k, _t, x in fd.LEGEND_FLAGS[tab]}
         assert "אחרי שהמסך נבנה" in flags["status_unknown"] and "נכתב" not in flags["status_unknown"]
     words = dict(fd.LEGEND["b2c"])
-    assert '"ללא תקבול"' in words["הכל"] and "סכום המשבצות" in words["הכל"]
+    assert '"ללא תקבול"' in words["הכל"] and "סכום השיבוצים" in words["הכל"]
     assert '"בוטל"' in dict(fd.LEGEND["b2b"])["הכל"] and "בכרטסת שלה" in dict(fd.LEGEND["b2b"])["הכל"]
     bank = words["פרטי חשבון"]
     assert "שאינה" not in bank and "ממולאות כשההחזר מאושר" in bank and '"החזר לביצוע"' in bank

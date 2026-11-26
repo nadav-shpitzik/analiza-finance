@@ -44,7 +44,7 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    against another student's balance). It sits in one part by the voucher status (`color_mm5fr6d6`, by INDEX, never by its
    text; the runbook's live set): PARTS, in Chava's order (her answer of 26.11) - "אושר - ממתין לתשלום" (1) first,
    "הוגש – ממתין להחלטה" (0), "בטיפול מטה" or "ממתין לתקציב" (8, 9), "טרם הוגש" (17) - and two of the desk's own:
-   "אושר - יתרה שולמה" (4) with a balance left, where the payments do not show what sales marked, and "בלי סטטוס שובר": an
+   "אושר - יתרה שולמה" (4) with a balance left, where the payments do not show what sales marked, and "שובר ללא סיווג": an
    empty status, the grey empty label (5), a label this module does not know, or a person whose enrollments say two
    statuses. Never hidden. "נדחה" and "נדחה - קיבל מלגה מאנליזה" (2, 3) are waived: no balance, the waiver recorded on the
    enrollment only. "ביטל השתתפות" (6, 7) and "לא רלוונטי" (10) are out of the count.
@@ -101,11 +101,16 @@ VIEW_WORD = "לפי מחזור"
 PRICE_WORD = "מחיר"                    # monday's own title, on the Cohorts board
 STUDENTS_WORD = "סטודנטים בצפי"         # not the tab's "סטודנטים" (people by their payments)
 EXPECTED_WORD, PAID_WORD, BALANCE_WORD = "צפי תשלום", "שולם בפועל", "יתרה לגבייה"   # the request's words (backlog 0313)
+# what "שולם בפועל" is, said when it is pointed at (Gemini's review of 26.11 asked for "תקבולים נטו"; Chava's word stays)
+PAID_TITLE = "כל מה שכבר נכנס, אחרי ניכוי החזרים"
 OVERPAID_WORD = "שולם מעבר למחיר"
 WAIVED_WORD, OUT_WORD = "ויתור", "מחוץ לחשבון"
-NO_STATUS_LABEL = "בלי סטטוס שובר"
-UNPRICED_TITLE = "מחזורים בלי מחיר"
-UNLINKED_WORD, SHARED_WORD = "תקבולים בלי הרשמה", "תקבול של כמה סטודנטים"
+NO_STATUS_LABEL = "שובר ללא סיווג"
+UNPRICED_TITLE = "מחזורים ללא חישוב"
+UNLINKED_WORD, SHARED_WORD = "תקבולים בלי הרשמה", "תקבול עם שיוך מרובה"
+# under the figures when a line holds one (Gemini's review of 26.11: said only in the legend until then)
+SHARED_NOTE = ("%s נספר בכל אחד מהמחזורים שלו, ולכן בסכום של כמה מחזורים הוא עשוי להיספר יותר מפעם אחת."
+               % _q(SHARED_WORD))
 # the enrollment's "Status" (`color_mm0sxcvn`), said in Hebrew inside a Hebrew sentence (QA of 26.11, 7: "מחוץ לחשבון: Status
 # "Frozen""); its labels stay as monday has them, and the legend says which column it is
 ENROLLMENT_STATUS_WORD = "סטטוס ההרשמה"
@@ -141,8 +146,8 @@ TRACK_LABEL = "שוברים משרד העבודה"   # Registration Flow's label
 # QA of 26.11 (E): the view's figures stand where the list's "התקבלו" (every payment) stood, and its "שולם בפועל" is the
 # voucher cohorts' only: said above them, and in the legend
 TRACK_ONLY = "מחזורי שוברים בלבד"
-FIGS_NOTE = ("הסכומים כולל מע\"מ, רק במחזורי השוברים עם מחיר, ולכן %s כאן קטן מ\"התקבלו\" ברשימה, שהוא כל התקבולים."
-             % "\"שולם בפועל\"")
+FIGS_NOTE = ("הסכומים כוללים מע\"מ ומוצגים רק עבור מחזורי שוברים עם מחיר. %s הוא התקבולים בניכוי החזרים במחזורים "
+             "אלה; \"התקבלו\" ברשימה כולל את כלל התקבולים לפני ניכוי החזרים." % "\"שולם בפועל\"")
 # the one sentence that says which cohorts the view holds (above the table, and in the legend)
 TRACK_SAID = ("רק מחזורים שנוהל ההרשמה שלהם %s: החלקים הם סטטוסי שובר, ומחזור במסלול אחר לא מוצג ולא נספר, גם כשיש לו "
               "מחיר." % _q(TRACK_LABEL))
@@ -161,7 +166,7 @@ LEGEND = [
      "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % (ENROLLMENT_STATUS_WORD, _IN_LABELS)),
     (EXPECTED_WORD, "המחיר כפול מספר ה%s, ועוד מה ששילמו סטודנטים עם %s או %s (אצלם הצפי הוא מה ששילמו, והיתרה 0): "
                     "מה שהיה צריך להיכנס מכולם." % (STUDENTS_WORD, _q(WAIVED_WORD), _q(OUT_WORD))),
-    (PAID_WORD, "כל מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
+    (PAID_WORD, "כל מה שכבר נכנס, אחרי ניכוי החזרים: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
                 "המקדמה, ושורת %s שנפתחת כשמכירות מסמנים %s. גם מה ששילמו סטודנטים עם %s או %s, ובשורת המחזור גם %s "
                 "ו%s, שלא נספרים לאף סטודנט/ית."
      % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]), _q(WAIVED_WORD), _q(OUT_WORD),
@@ -207,7 +212,7 @@ NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במח�
                          "כי ההרשמה שלה/ו במחזור מקושרת לאותו ליד, או שהליד הוא של אותו אדם, ואין עוד סטודנט/ית כזה/ו "
                          "במחזור."}
 # said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
-NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו או עם התקבולים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
+NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו או עם התקבולים שלו. יש לפנות לנדב לבדיקת התקלה בשרת."
 # said in place of the table when the reading could not read the cohorts (app/desk/reading.py COHORTS_UNREAD): what was not
 # read, why in its own words, and that nothing else is touched (the review of D4)
 _TRACK_LIST = "רשימת המחזורים במסלול %s" % _q(TRACK_LABEL)
@@ -221,7 +226,7 @@ UNREAD_SAID = OrderedDict([
 UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
 UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."
 # said in its place when its own computation failed (app/desk/view.py `_cohorts_of`): a fault of the server's
-CRASHED_SAID = ("התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל."
+CRASHED_SAID = ("התצוגה %s לא מוצגת: החישוב שלה נכשל. יש לפנות לנדב לבדיקת התקלה בשרת. שאר המסך מוצג כרגיל."
                 % _q(VIEW_WORD))
 OUT_WHY = {"status": ENROLLMENT_STATUS_WORD, "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
@@ -418,7 +423,8 @@ def _frame() -> dict:
             "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
                       "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
                       "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED,
-                      "track_only": TRACK_ONLY, "figs_note": FIGS_NOTE},
+                      "track_only": TRACK_ONLY, "figs_note": FIGS_NOTE, "shared_note": SHARED_NOTE,
+                      "paid_title": PAID_TITLE},
             "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()]}
 
 

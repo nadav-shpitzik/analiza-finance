@@ -116,9 +116,9 @@ def _what_to_check(word: str, states: dict) -> tuple[str, str]:
 # the total is of what the desk counts, in a column of its own); "date", "int", "text".
 B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     # monday's "תאריך תקבול", as on the page: where it was not typed, the day the row was created, and the next column
-    # says so in the page's word for it ("יום היצירה", QA 11.11, 2.5: "תאריך" held two things under one name)
+    # says so in the page's word for it ("תאריך יצירה", QA 11.11, 2.5: "תאריך" held two things under one name)
     ("תאריך תקבול", lambda r: day(r["date"]), "date", 12),
-    ("מקור התאריך", lambda r: "הוקלד" if r["date_from"] == "paid" else "יום היצירה", "text", 13),
+    ("מקור התאריך", lambda r: "הוקלד" if r["date_from"] == "paid" else "תאריך יצירה", "text", 13),
     ("אסמכתת חשבונית", lambda r: r["invoice"], "text", 15),
     ("סטודנט/ית", lambda r: r["name"], "text", 26),
     # no "ת.ז" here: analiza-metrics read it live for the file, and this service never reads one (ID_NUMBERS_NOT_IN_FILE);
@@ -261,7 +261,7 @@ BOOKS_SHEETS = {
 
 
 # what "פרטים" says when the file's part of the books is not the one the page showed (its key, D3)
-BOOKS_OTHER_SAID = ("הסימונים והרשימות של חשבשבת בקובץ הם מהשוואה לספרים אחרת מזו שהמסך הציג (העותק של חשבשבת או הקריאה "
+BOOKS_OTHER_SAID = ("הסימונים והרשימות של חשבשבת בקובץ הם מהשוואה לספרים אחרת מזו שהמסך הציג (עותק נתוני חשבשבת או הנתונים "
                     "ממאנדיי התעדכנו בינתיים): ייתכן שהם שונים מהמסך.")
 
 
@@ -319,7 +319,7 @@ def b2c_book(rows: list[dict], about: dict[str, Any], sheets: list | None = None
     return book("תקבולים", b2c_columns(with_id), rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
                      [("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
                       ("תאריך תקבול", "כפי שהוקלד בלוח; כשלא הוקלד, היום שבו נוצרה השורה במאנדיי, ואז במקור "
-                                      "התאריך כתוב \"יום היצירה\""),
+                                      "התאריך כתוב \"תאריך יצירה\""),
                       ("שיבוץ", "הרשימה שהמסך שם בה את התקבול, כמו במסך ובמקרא שלו"),
                       ("נציג מכירות", "בעל הליד מקור כפי שהוא היום, כמו בלוח: מי שמטפל בליד עכשיו, לא בהכרח מי "
                                       "שמכר"),
@@ -411,7 +411,7 @@ def book(title: str, columns: list, rows: list[dict], about: dict[str, Any], wha
                 sums[c] += row[c]
     lines = []
     if not about.get("complete", True):
-        lines.append(("שימו לב", "הקריאה ממאנדיי לא שלמה: אין להסתמך על הסכומים בקובץ. רענון בשולחן יקרא שוב."))
+        lines.append(("שימו לב", "הנתונים ממאנדיי חלקיים. אין להסתמך על הסכומים בקובץ. יש לרענן את שולחן הכספים ולהפיק קובץ חדש."))
     if about.get("screen_taken_at"):   # set only when the page showed another reading
         lines.append(("שימו לב", "הקובץ נבנה מקריאה של %s, והמסך הציג קריאה של %s: ייתכן שהשורות שונות מהמסך."
                       % (about.get("taken_at"), about.get("screen_taken_at"))))
@@ -532,7 +532,7 @@ def customers_workbook(rows: list[dict], about: dict[str, Any]) -> bytes:
 # does - "לטיפול", a state's label, "הכל" - and its period, or its company when one is chosen. The aging file is named by
 # the view's own name, "לפי לקוח" (the page has no "גיול"). The ASCII name, for old clients, says the same in keys.
 def file_part(text: str) -> str:
-    """A part of a file name, safe on every system: "שולם, שליחת קבלה: טרם" is "שולם-שליחת-קבלה-טרם", a company
+    """A part of a file name, safe on every system: "שולם, קבלה לטיפול" is "שולם-שליחת-קבלה-טרם", a company
     "מרכז רפואי העמק/כללית" is "מרכז-רפואי-העמק-כללית", and a quote mark is dropped ('צה"ל' is "צהל")."""
     text = re.sub(r"[\"'\u05f3\u05f4\x00-\x1f\x7f]", "", text or "")
     text = re.sub(r"[\\/:*?<>|,.\s]+", "-", text)

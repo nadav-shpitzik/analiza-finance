@@ -269,7 +269,7 @@ def test_a_refunds_two_dates_are_side_by_side_in_its_details_and_the_legal_one_h
     assert "<td class=\"k-planned\">15.11.26</td>" in refund
     # a "לא שולם" row's typed amount is shown struck through, never as money - and why, on hover (changed deliberately,
     # QA 26.11, F: the title named the status only); an old refund has no dates to show
-    assert ('<s class="fin-subtle" title="לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום &quot;לא שולם&quot;)"><bdi>2,500.00 ₪'
+    assert ('<s class="fin-subtle" title="לא נספר: הסטטוס אינו מציין שהתקבל כסף (סטטוס תשלום &quot;לא שולם&quot;)"><bdi>2,500.00 ₪'
             '</bdi></s>') in plain
     details = plain[plain.index('<tr class="fin-detail">'):]
     # an old refund shows the same refund fields as every refund (QA 2.9), its unknown dates as "-"
@@ -297,8 +297,8 @@ def test_a_charge_billed_without_a_demand_day_shows_its_invoice_and_an_open_list
                          {"tab": "b2b", "b2": {"state": "open", "view": "list", "customer": "", "open": {}}}],
                         [sc(1)], [b2(1, payment="2", due="", invoice="INV-7"), b2(2, payment="2", due="2026-11-05")],
                         accounts=[acct("A1", "שוטף+30")])
-    assert "<li>חויב בלי מועד דרישת תשלום, אסמכתת חשבונית INV-7</li>" in exc
-    assert '<span class="fin-chip">חויב בלי מועד דרישת תשלום</span>' in exc
+    assert "<li>חויב ללא מועד דרישת תשלום, אסמכתת חשבונית INV-7</li>" in exc
+    assert '<span class="fin-chip">חויב ללא מועד דרישת תשלום</span>' in exc
     head = open_[open_.index("<thead>"):open_.index("</thead>")]
     assert head.index("מועד פירעון") < head.index("חברה")
     assert '<td class="k-due">30.12.26 <bdi class="fin-subtle">שוטף+30</bdi></td>' in open_      # 30.11 + 30
@@ -510,7 +510,7 @@ def test_a_billed_charge_without_a_demand_day_says_so_in_every_list_with_its_inv
                            [sc(1)], rows)
     first = partial.split("<tbody>")[1].split("</tr>")[0]
     assert '<td class="k-demand"><span class="fin-chip bad">חסר</span></td>' in first and "INV-1" in first
-    assert "<li>חויב בלי מועד דרישת תשלום, אסמכתת חשבונית INV-1</li>" in partial
+    assert "<li>חויב ללא מועד דרישת תשלום, אסמכתת חשבונית INV-1</li>" in partial
     assert '<td class="k-demand"><span class="fin-chip bad">חסר</span></td>' in paid
 
 
@@ -540,7 +540,7 @@ def test_lists_and_details_call_mondays_columns_by_their_titles_and_the_desks_st
         accounts=[acct("A1"), acct("A2")], deals=[dict(deal("D1", value="96000"), **{fd.DL["stage"]: "בהרצה ללא חוזה"})])
     assert '<th class="k-date">תאריך תקבול</th>' in all_sc and '<th class="k-state">שיבוץ</th>' in all_sc
     assert '<td class="k-date">04.10.26</td>' in all_sc
-    assert '<td class="k-date">06.10.26 <span class="fin-subtle">(לפי יום היצירה)</span></td>' in all_sc
+    assert '<td class="k-date">06.10.26 <span class="fin-subtle">(לפי תאריך יצירה)</span></td>' in all_sc
     # "ליד מקור" was added by QA 2.5 and left on 17.11 (Nadav: "זה לא אומר לה כלום ולא משנה")
     assert "<dt>ליד מקור</dt>" not in all_sc and "שם מהליד" not in all_sc
     assert "<b>סכום לזיכוי <bdi>1,000.00 ₪</bdi></b>" in refund and "להחזיר" not in refund
@@ -587,7 +587,7 @@ def test_the_details_show_the_same_fields_in_the_same_places_on_every_row():
 
 
 def test_the_aging_band_and_the_tile_carry_different_names_and_the_legend_says_what_each_holds():
-    """QA 2.4: the band "טרם הגיע מועד" (272,731) and the tile "חויב, טרם הגיע מועד הפירעון" (260,731): near-identical names,
+    """QA 2.4: the band "טרם הגיע מועד" (272,731) and the tile "חויב, ממתין לפירעון" (260,731): near-identical names,
     different numbers - the band also holds 3275685583, a charge in "חריג" that is still open money."""
     rows = [b2(1, payment="2", due="2026-11-05", amount="1000"),           # open: due 05.11 with no terms, today 09.11? no:
             b2(2, payment="2", due="2026-11-30", amount="12000")]          # billed before its demand day: "חריג", still owed
@@ -678,7 +678,7 @@ def test_every_label_the_page_draws_is_mondays_title_or_in_the_legend():
                 missing.add((tab, label))
     assert not missing, sorted(missing)
     # and the words the page writes beside a value are in the legend too
-    for word in ("יום היצירה", "עבר", "חסר", "תווית בלי שם", "סכום מחוק", "היום", "בעוד", "לפני"):
+    for word in ("תאריך יצירה", "עבר", "חסר", "תווית בלי שם", "סכום שלא נספר", "היום", "בעוד", "לפני"):
         assert word in fd.legend_terms("b2c") | fd.legend_terms("b2b"), word
 
 

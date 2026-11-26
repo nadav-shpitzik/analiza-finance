@@ -9,7 +9,7 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
      holds as a draft). **But a number just past the end of a series is not yet in the copy** (`not_yet_read`: at most
      NOT_YET_SPAN past the last number of the series nearest below it, and held by no document of the copy): the books are
      read every hour, and a document issued and cited since is no gap - no mark for it, and the row's details say "עוד לא
-     בהעתק של הספרים" (`books_note`). A number further on, between two series or below every series is mistyped: marked;
+     בעותק נתוני חשבשבת" (`books_note`). A number further on, between two series or below every series is mistyped: marked;
    - `books_amount_differs`: `amount_mismatch` only (the rounding band is no mark) - "בשורה X, בחשבשבת Y", the group's two
      sums, including VAT;
    - `books_receipt_unpaid` (the desk move plan §1a.2.1: the row says "לא שולם" while the books hold an invoice-receipt
@@ -19,10 +19,10 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
      usual unpaid row: A1's `amount_unreadable`, which has no group) or its group's two sums agree within the tolerance.
      The books say the money came in (FR-L12) and the row says it did not: the case of 23.11, also when the
      invoice-receipts carry different days (A1's `dates_differ`, which A1 judges before the row's status).
-   No other row is marked. **A mark moves no row out of its state** (משבצת), so no state's count or sum changes;
+   No other row is marked. **A mark moves no row out of its state** (שיבוץ), so no state's count or sum changes;
    a marked row whose date is from ERA_FROM on (the row's date as the desk dates it: "תאריך תקבול", else the day it was
    made) also joins "לטיפול" (`books_task`); an older one keeps its mark on the row only (spec §6.4.2, ADR-0168 §5).
-2. **"מסמכים בחשבשבת בלי חיוב במאנדיי"** (spec §6.1.2; FR-C4, FR-D1): status-1 tax invoices and invoice-receipts of the era
+2. **"מסמכי חשבשבת ללא התאמה במאנדיי"** (spec §6.1.2; FR-C4, FR-D1): status-1 tax invoices and invoice-receipts of the era
    that no charge row cites. On a student's card, dated within Student Charge's window (FR-7), each with the Student
    Charge rows whose name equals the card's name as a set of words - **a candidate, never a match, never a link, never a
    fill** (the law of the rules' §5). A row's name is compared as the person's (`person_name`: before its first "|", so
@@ -133,18 +133,19 @@ UNPAID_STATUSES = (P_UNPAID, P_PROBLEM)
 # Why a card's side is not clear (cards.UNCLEAR_CODES): the documents of such a card go to members of both charge boards
 # only
 UNCLEAR_WHY = {
-    "no_invoice_receipt": "בכרטיס אין חשבונית מס/קבלה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
-    "invoice_receipt_and_proforma": "בכרטיס יש חשבונית מס/קבלה וגם חשבון עסקה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
+    "no_invoice_receipt": "בכרטיס אין חשבונית מס/קבלה, ומפתח הכרטיס אינו תואם למפתח חשבשבת של חברה במאנדיי",
+    "invoice_receipt_and_proforma": "בכרטיס יש חשבונית מס/קבלה וגם חשבון עסקה, ומפתח הכרטיס אינו תואם למפתח חשבשבת של חברה "
+                                    "במאנדיי",
     # a key that names no card (`card_of`), judged by the card's name (`side_card`)
-    "name_no_invoice_receipt": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) או "
+    "name_no_invoice_receipt": "המפתח של הכרטיס הוסתר בעותק נתוני חשבשבת (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) או "
                                "שאין לו מפתח, ולכן הוא נשפט לפי השם שבו, ובמסמכים בשם הזה אין חשבונית מס/קבלה",
-    "name_invoice_receipt_and_proforma": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או "
+    "name_invoice_receipt_and_proforma": "המפתח של הכרטיס הוסתר בעותק נתוני חשבשבת (מספר של שש ספרות ומעלה, כמו מספר זהות או "
                                          "ח.פ) או שאין לו מפתח, ולכן הוא נשפט לפי השם שבו, ובשם הזה יש חשבונית מס/קבלה "
                                          "וגם חשבון עסקה, כמו בכרטיס של חברה",
     # neither a key nor a name: the document alone, and a tax invoice alone says no side
-    "key_masked": "המפתח של הכרטיס הוסתר בעותק של הספרים (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) ואין בו שם, ולכן "
+    "key_masked": "המפתח של הכרטיס הוסתר בעותק נתוני חשבשבת (מספר של שש ספרות ומעלה, כמו מספר זהות או ח.פ) ואין בו שם, ולכן "
                   "החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי היא",
-    "key_empty": "למסמך אין בעותק של הספרים מפתח כרטיס ולא שם, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי "
+    "key_empty": "למסמך אין בעותק נתוני חשבשבת מפתח כרטיס ולא שם, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי "
                  "היא",
 }
 
@@ -154,19 +155,19 @@ REASONS = {
     "demo": "השירות מחובר לחברת הדמו בחשבשבת, ולכן אין כאן השוואה לספרים.",
     "company": "השירות לא מחובר לחברה של אנליזה בחשבשבת, ולכן אין כאן השוואה לספרים.",
     "not_configured": "לשירות אין מסד נתונים, ולכן אין כאן השוואה לספרים.",
-    "never_completed": "העותק של חשבשבת עוד לא הושלם אף פעם.",
-    "last_run_incomplete": "הקריאה האחרונה של חשבשבת לא הגיעה לסוף.",
-    "last_run_not_ok": "הקריאה האחרונה של חשבשבת לא הייתה תקינה.",
-    "retry_waiting": "יש מסמכים בחשבשבת שהקריאה שלהם נכשלה ועוד לא נקראו שוב.",
-    "holes": "בעותק של חשבשבת חסרים מספרים בתוך סדרה של מסמכים.",
-    "copy_stale": "העותק של חשבשבת לא התעדכן יותר משלוש שעות.",
-    "store_error": "לא הצלחנו לקרוא עכשיו את העותק של חשבשבת.",
+    "never_completed": "עותק נתוני חשבשבת עוד לא הושלם אף פעם.",
+    "last_run_incomplete": "טעינת הנתונים האחרונה מחשבשבת לא הושלמה.",
+    "last_run_not_ok": "טעינת הנתונים האחרונה מחשבשבת לא הייתה תקינה.",
+    "retry_waiting": "יש מסמכים בחשבשבת שהטעינה שלהם נכשלה ועוד לא נטענו שוב.",
+    "holes": "בעותק נתוני חשבשבת חסרים מספרים בתוך סדרה של מסמכים.",
+    "copy_stale": "עותק נתוני חשבשבת לא התעדכן יותר משלוש שעות.",
+    "store_error": "לא הצלחנו לטעון עכשיו את עותק נתוני חשבשבת.",
     "accounts_unread": "לא הצלחנו לקרוא ממאנדיי את מפתחות חשבשבת של החברות.",
-    "reading_incomplete": "הקריאה ממאנדיי לא שלמה.",
+    "reading_incomplete": "הנתונים ממאנדיי חלקיים.",
     # an answer at once (a reading past its span, answered while the next is read) on an instance that holds no Account's
     # key yet: never a read of monday in it - the page's own next request computes the part
     "pending": "ההשוואה לחשבשבת מתעדכנת.",
-    "busy": "ההשוואה לחשבשבת עוד מחושבת.",
+    "busy": "ההשוואה לחשבשבת עדיין מתבצעת.",
     # a note, not a reason the part is not current (NOTES): Student Charge is compared to the books within its window only
     # (FR-7), so from the year after it no student's document is listed or marked - said, never an empty list without a word
     "student_window_ended": "ההשוואה של Student Charge לחשבשבת היא של %d בלבד, ולכן מסמכים של סטודנטים מ-%d ואילך לא "
@@ -181,8 +182,8 @@ NONE_SAID = "לכן אין כאן סימונים מהספרים ואין רשי�
 # The lists' own sentences, above each (their headings are the legend's words, view.BOOKS_LIST_TITLE and the rest)
 STUDENTS_ABOUT = ("חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ועד סוף %d, בכרטיס של סטודנט/ית בחשבשבת, ששום שורה בלוחות "
                   "החיובים לא מפנה אליהן באסמכתת חשבונית. ליד מסמך: שורות ב-Student Charge ששמן זהה לשם בכרטיס, כל אחת "
-                  "מועמדת לפי שם בלבד: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית. כשחשבשבת מציעה שורה אחת למסמך, "
-                  "ההצעה כתובה מתחת, ו\"%s\" כותב במאנדיי את המספר בשורה אחרי אישור שלך."
+                  "שורות בשם תואם הן רק מועמדות: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית. כשהשולחן מציע לפי נתוני חשבשבת שורה אחת למסמך, "
+                  "ההצעה כתובה מתחת, ו\"%s\" מעדכן במאנדיי את המספר בשורה אחרי אישור שלך."
                   % (ERA_FROM.strftime("%d.%m.%Y"), STUDENT_WINDOW_YEAR, BOOKS_FILL_BUTTON))
 COMPANIES_ABOUT = ("חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ואילך, בכרטיס שהוא מפתח חשבשבת של חברה בלוח החברות, ששום "
                    "שורה בלוחות החיובים לא מפנה אליהן באסמכתת חשבונית." % ERA_FROM.strftime("%d.%m.%Y"))
@@ -194,7 +195,7 @@ UNCLEAR_ABOUT = ("חשבוניות מס וחשבוניות מס/קבלה תקפ�
 # the chip, in a word, and in the row's details, in a sentence
 REF_WHY = {
     "ref_not_in_books": ("לא נמצא", "אין בחשבשבת מסמך תקף במספר הזה"),
-    "ref_ambiguous": ("בשני מסמכים", "שני מסמכים תקפים בחשבשבת נושאים את המספר הזה"),
+    "ref_ambiguous": ("מספר כפול", "לשני מסמכים תקפים בחשבשבת יש אותו מספר"),
 }
 # a number the copy holds only as a draft (spec §4.1: a draft carries its series' next number): no valid document (FR-2)
 DRAFT_WHY = ("טיוטה", "בחשבשבת יש במספר הזה טיוטה, ולא מסמך תקף")
@@ -216,24 +217,24 @@ CANDIDATES_MAX = 10  # a common name shows its first ten rows, and how many more
 # before the desk's era, so the desk proposes nothing to it (`proposals`)
 CANDIDATE_WHY = {
     "not_active": "השורה בארכיון או שנמחקה",
-    "not_money_in": "סטטוס התשלום של השורה לא אומר שהכסף נכנס",
+    "not_money_in": "סטטוס התשלום בשורה אינו מציין שהתקבל כסף",
     "has_ref": "לשורה כבר יש אסמכתה %s",
     "ref_unreadable": "באסמכתת החשבונית של השורה יש טקסט שאינו רשימת מספרים",
     "amount_unreadable": "סכום ששולם בשורה ריק או אינו מספר",
     "out_of_window": "השורה אינה מתוארכת ב-%d" % STUDENT_WINDOW_YEAR,
-    "no_candidate": "אין בחשבשבת מסמך פנוי בשם של השורה",
+    "no_candidate": "אין בחשבשבת מסמך בשם של השורה, שאף שורה במאנדיי לא מפנה אליו",
     "amount_differs": "אין בחשבשבת מסמך בשם של השורה ובסכום ששולם בה",
     "date_far": "המסמכים בשם ובסכום של השורה רחוקים יותר מ-%d יום מהתאריך שלה" % fr_c2.FILL_WINDOW_DAYS,
     "tax_invoice_waits": "בשם ובסכום של השורה יש בחשבשבת חשבונית מס, שאינה הוכחה שהכסף נכנס",
     "two_candidates": "בשם ובסכום של השורה יש בחשבשבת יותר מחשבונית מס/קבלה אחת",
-    "number_ambiguous": "מספר החשבונית שמתאימה לשורה לא מזהה אותה לבדה בחשבשבת",
+    "number_ambiguous": "מספר החשבונית המתאימה לשורה אינו ייחודי בחשבשבת",
     "document_wanted_twice": "גם שורה אחרת מתאימה לאותה חשבונית",
     "other_document": "לשורה מתאימה חשבונית אחרת: %s",
     "era": "השורה מלפני %s, ולכן אין כאן הצעה" % ERA_FROM.strftime("%d.%m.%Y"),
 }
 REF_BUCKETS = ("ref_not_in_books", "ref_ambiguous", "ref_not_an_invoice")
 # what a row's details say of a number it cites that is just past the end of its series (`not_yet_read`)
-NOT_YET_SAID = "עוד לא בהעתק של הספרים"
+NOT_YET_SAID = "טרם נמצא בעותק נתוני חשבשבת"
 # how far past the last number of a series a cited number may be and still be a document issued since the copy's last
 # tick (the copy is read every hour; a few dozen documents a day): further, it is a mistyped number (review of dfa967b:
 # unbounded, every wrong number above the lowest series was "not yet in the copy", and never marked)
@@ -505,12 +506,12 @@ def fill_mark(fill: dict, idx: dict) -> dict:
         kind = FILLS[0]
         chip = _flag_text(kind).replace("{number}", values["number"])
         text = ("בחשבשבת %s: היחידה בשם שבשורה, בסכום ששולם ובתוך %d יום מהתאריך שלה, ששום שורה לא מפנה אליה. רישום "
-                "מחשבשבת כותב את המספר באסמכתת חשבונית%s." % (said, fr_c2.FILL_WINDOW_DAYS,
+                "מחשבשבת מעדכן את המספר באסמכתת חשבונית%s." % (said, fr_c2.FILL_WINDOW_DAYS,
                                                            " ואת התאריך בתאריך תקבול" if "date" in values else ""))
     else:
         kind = FILLS[1]
         chip = _flag_text(kind).replace("{date}", _dmy(values["date"]))
-        text = "באסמכתת חשבונית: %s בחשבשבת. תאריך תקבול ריק, ורישום מחשבשבת כותב בו את התאריך הזה." % said
+        text = "באסמכתת חשבונית: %s בחשבשבת. תאריך תקבול ריק, ורישום מחשבשבת מעדכן בו את התאריך הזה." % said
     return {"kind": kind, "chip": chip, "text": text, "documents": list(numbers)}
 
 
@@ -519,7 +520,7 @@ RECEIPT_HOW = ("cited", "found", "not_yet")
 
 
 def receipt_in_books(entry: Optional[dict], row_name: Any, fill: Optional[dict], idx: dict) -> dict:
-    """What the books say of a payment in "שולם, שליחת קבלה: טרם" - the first that holds:
+    """What the books say of a payment in "שולם, קבלה לטיפול" - the first that holds:
     - {"number", "how": "cited"}: A1 matched the row (fr_c2.A1_MATCHED: its group's rows and documents tie, no tax invoice,
       one day), and a number it cites is the one valid invoice-receipt carrying it, answered by the books (not `missing`),
       on a card whose name is the row's as FR-C2 compares them (the row's words before its first "|"). The second review of
@@ -567,7 +568,7 @@ def receipt_laid(found: dict) -> dict:
 
 
 def receipts_split(rows: list) -> dict:
-    """The line over the queue "שולם, שליחת קבלה: טרם", counted in one place (GET /api/desk/totals): of the list's rows in
+    """The line over the queue "שולם, קבלה לטיפול", counted in one place (GET /api/desk/totals): of the list's rows in
     that state, how many the books hold a receipt of (`receipt_books.issued`), how many none was identified of (`not`), how
     many cite a number not yet in the copy (`later`), and how many the books cannot say of now (`unknown`: no part laid on
     this reading)."""
@@ -790,7 +791,7 @@ def merge(view: dict, part: dict) -> dict:
     under `books_unclear`, and the part's state under `books`. D4: on a row the books propose a fill to, its chip (a flag,
     beside the marks' in `books`), its values (`books_fill`: {number?, date?}) and the action that writes them, and on its
     document in the students' list its `proposal` - only from a current part of this very reading (`laid`); a proposal
-    neither moves a row nor joins "לטיפול". Nadav 26.11: on a row in "שולם, שליחת קבלה: טרם", what the books say of its
+    neither moves a row nor joins "לטיפול". Nadav 26.11: on a row in "שולם, קבלה לטיפול", what the books say of its
     receipt (`receipt_books`, `receipt_laid`), on the same terms as a proposal. R5: each list's part also carries what is
     hidden as "לא פער" of it (`hidden`, with who and when; app/desk/dismissals.py `hide` took them out of the marks and the
     lists, so out of "לטיפול" and its counts too) and, by kind, how many are hidden and how many came back (`hidden_counts`,

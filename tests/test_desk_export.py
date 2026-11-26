@@ -112,7 +112,7 @@ def test_the_file_is_the_list_as_filtered_right_to_left_with_types_and_a_total_t
     data = {ws.cell(row=i, column=4).value: [x.value for x in ws[i]] for i in (2, 3)}
     first = data["תלמיד/ה 1"]
     assert first[0].date().isoformat() == "2026-10-04" and first[1] == "הוקלד" and first[col["סכום ששולם"]] == 3950.5
-    assert data["תלמיד/ה 2"][1] == "יום היצירה"
+    assert data["תלמיד/ה 2"][1] == "תאריך יצירה"
     # the lead's Owner; a payment with no lead has none, an empty cell and never a word
     assert first[col["נציג מכירות"]] == "סבטלנה" and data["תלמיד/ה 2"][col["נציג מכירות"]] is None
     assert first[col["שיבוץ"]] == "הושלם"                        # the receipt went out; no reference decides
@@ -186,7 +186,7 @@ def test_an_incomplete_reading_is_never_exported_as_complete(desk, monkeypatch):
     served(monkeypatch, snap([sc(1)], [b2(1)], sc_count=5))
     f = desk.client.get(export_link(desk).json()["url"])
     info = [r[1].value for r in openpyxl.load_workbook(io.BytesIO(f.content))["פרטים"].iter_rows()]
-    assert any("לא שלמה" in str(v) for v in info)
+    assert any("חלקיים" in str(v) for v in info)
 
 
 def test_a_reading_short_on_a_board_of_the_tab_is_not_exported_as_complete(desk, monkeypatch):  # noqa: F811
@@ -201,7 +201,7 @@ def test_a_reading_short_on_a_board_of_the_tab_is_not_exported_as_complete(desk,
 
     def warned(tab):
         f = desk.client.get(export_link(desk, tab=tab).json()["url"])
-        return any("לא שלמה" in str(r[1].value) for r in openpyxl.load_workbook(io.BytesIO(f.content))["פרטים"].iter_rows())
+        return any("חלקיים" in str(r[1].value) for r in openpyxl.load_workbook(io.BytesIO(f.content))["פרטים"].iter_rows())
     assert warned("b2c") is True and warned("b2b") is False
 
 
@@ -390,7 +390,7 @@ def test_the_files_name_the_company_as_monday_does(desk, monkeypatch):  # noqa: 
     assert one["סינון"] == "חברה: לקוח A1"
     _h, _r, every = sheet(desk, {"tab": "b2b", "state": ""}, "חיובים")
     _h, _r, aging = sheet(desk, {"tab": "b2b_customers"}, "לפי לקוח")
-    assert (every["סינון"], aging["סינון"]) == ("כל החברות", "כל החברות עם משהו פתוח")
+    assert (every["סינון"], aging["סינון"]) == ("כל החברות", "כל החברות עם חיוב פתוח")
 
 
 def test_each_file_is_named_by_its_list_and_its_period_or_company(desk, monkeypatch):  # noqa: F811
@@ -407,7 +407,7 @@ def test_each_file_is_named_by_its_list_and_its_period_or_company(desk, monkeypa
     assert names({"tab": "b2c", "state": "refund_to_execute", "period": "2026-10"})[0] == \
         "תקבולים-סטודנטים_החזר-לביצוע_אוקטובר-2026"
     hebrew, ascii_ = names({"tab": "b2c", "state": "receipt_pending"})
-    assert hebrew == "תקבולים-סטודנטים_שולם-שליחת-קבלה-טרם_כל-התקופה" and ascii_.startswith("finance-students-receipt_pending-all-")
+    assert hebrew == "תקבולים-סטודנטים_שולם-קבלה-לטיפול_כל-התקופה" and ascii_.startswith("finance-students-receipt_pending-all-")
     hebrew, ascii_ = names({"tab": "b2b", "state": "exception", "customer": "A1"})
     assert hebrew == "חיובים-לקוחות-עסקיים_חריג-לבדיקה_לקוח-A1" and ascii_.startswith("finance-companies-exception-A1-")
     assert names({"tab": "b2b", "state": "", "customer": "A2"})[0] == "חיובים-לקוחות-עסקיים_הכל_מרכז-רפואי-העמק-כללית"
@@ -461,7 +461,7 @@ def test_a_row_says_what_to_check_and_its_refund_as_monday_holds_it_beside_the_o
     assert heads.index("מה לבדוק") == heads.index("שיבוץ") + 1
     assert heads.index(fd.REFUNDED_WORD) == heads.index("סכום החזר") + 1
     # not only in "חריג": a payment waiting for its receipt says so, as the page's chips do
-    assert rows["2"]["שיבוץ"] == "שולם, שליחת קבלה: טרם" and rows["2"]["מה לבדוק"] == "חסרה אסמכתת חשבונית · שליחת קבלה: טרם"
+    assert rows["2"]["שיבוץ"] == "שולם, קבלה לטיפול" and rows["2"]["מה לבדוק"] == "חסרה אסמכתת חשבונית · שליחת קבלה: טרם"
     # every chip, where the page shows five and "ועוד 2"; the row's own status in quotes, as on the page
     assert rows["3"]["מה לבדוק"] == " · ".join([
         'סכום לזיכוי בסטטוס "יש בעיה"', 'סכום החזר בסטטוס "יש בעיה"', 'תאריך החזר בסטטוס "יש בעיה"',

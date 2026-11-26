@@ -576,7 +576,7 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
     reads monday, and when this instance holds another reading it says so (`other_reading`) instead of a total that does
     not belong to the rows on the screen (analiza-metrics `finance_totals`, review 10.11). D3: and of the books' part the
     page shows (`books`, its key), since "לטיפול" holds the rows the books mark: another part is `other_reading` too.
-    Nadav 26.11: for the list "שולם, שליחת קבלה: טרם", also how many of its rows the books hold a receipt of, how many none
+    Nadav 26.11: for the list "שולם, קבלה לטיפול", also how many of its rows the books hold a receipt of, how many none
     was identified of, and how many they cannot say of now (`receipts`, app/desk/books.py `receipts_split`)."""
     got = _gated(request, "desk-totals")
     if isinstance(got, JSONResponse):
@@ -753,7 +753,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         name, ascii_name = cohorts_file_names(q, today)
     elif tab == "b2b_customers":
         # a company is monday's "חברה" (round 3); only the view keeps its name "לפי לקוח"
-        data = customers_workbook(rows, dict(about, state_label="לפי לקוח", period_label="כל החברות עם משהו פתוח"))
+        data = customers_workbook(rows, dict(about, state_label="לפי לקוח", period_label="כל החברות עם חיוב פתוח"))
         name, ascii_name = customers_file_names(today)
     else:
         who = next((x["account"] for x in whole["b2b"]["rows"] if x["account_id"] == customer), "") if customer else ""

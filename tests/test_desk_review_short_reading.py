@@ -31,7 +31,7 @@ def test_a_reading_known_short_is_not_drawn_as_whole(desk):  # noqa: F811
     link = desk.client.post("/api/desk/export-link", headers=_auth(),
                             json={"tab": "b2c", "taken": body["taken_at"]}).json()["url"]
     info = openpyxl.load_workbook(io.BytesIO(desk.client.get(link).content))["פרטים"]
-    assert "לא שלמה" in str(info.cell(row=1, column=2).value)
+    assert "חלקיים" in str(info.cell(row=1, column=2).value)
     # the page, given that same answer, says every payment was read and offers the file as whole
     html = drive(body)["first"]
-    assert "הקריאה לא שלמה" in html, html[html.find("fin-foot"):][:400]
+    assert "הנתונים ממאנדיי חלקיים" in html, html[html.find("fin-foot"):][:400]

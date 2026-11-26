@@ -191,10 +191,10 @@ def test_a_proposal_says_its_chip_and_its_sentence_in_the_legends_words():
     assert texts["books_ref_fill"] == "בחשבשבת: {number}" and texts["books_date_fill"] == "תאריך מחשבשבת: {date}"
     assert marks["1"]["text"] == (
         "בחשבשבת חשבונית מס/קבלה 62601 מ-12.11.2026 על 3,517.00 ₪ כולל מע\"מ: היחידה בשם שבשורה, בסכום ששולם ובתוך 30 יום "
-        "מהתאריך שלה, ששום שורה לא מפנה אליה. רישום מחשבשבת כותב את המספר באסמכתת חשבונית ואת התאריך בתאריך תקבול.")
-    assert marks["2"]["text"].endswith("רישום מחשבשבת כותב את המספר באסמכתת חשבונית.")
+        "מהתאריך שלה, ששום שורה לא מפנה אליה. רישום מחשבשבת מעדכן את המספר באסמכתת חשבונית ואת התאריך בתאריך תקבול.")
+    assert marks["2"]["text"].endswith("רישום מחשבשבת מעדכן את המספר באסמכתת חשבונית.")
     assert marks["3"]["text"] == ("באסמכתת חשבונית: חשבונית מס/קבלה 62603 מ-03.11.2026 על 3,517.00 ₪ כולל מע\"מ בחשבשבת. "
-                                  "תאריך תקבול ריק, ורישום מחשבשבת כותב בו את התאריך הזה.")
+                                  "תאריך תקבול ריק, ורישום מחשבשבת מעדכן בו את התאריך הזה.")
     for m in marks.values():
         assert not any(d["account_name"] in m["text"] for d in DOCS), m["text"]
 
@@ -243,7 +243,7 @@ def test_books_fill_writes_only_what_the_books_propose_and_each_cell_only_when_i
     assert step == [
         {"column": "text_mm6d6s97", "title": "אסמכתת חשבונית", "kind": "text", "books": "number", "if_empty": True},
         {"column": "date_mm8yh4bn", "title": "תאריך תקבול", "kind": "date", "books": "date", "if_empty": True}]
-    assert a["after"] == "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."
+    assert a["after"] == "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שהשולחן מציע לפי נתוני חשבשבת."
     # the allowlist gains exactly the date, as a date (spec §7.3); the number's column was on it (sc_invoice)
     assert fd.desk_writes()[fd.STUDENT_CHARGE]["date_mm8yh4bn"] == "date"
     assert fd.desk_writes()[fd.STUDENT_CHARGE]["text_mm6d6s97"] == "text"
@@ -279,7 +279,7 @@ def test_the_legend_says_exactly_what_the_page_checks_before_it_writes_a_proposa
     assert "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת: שורה ש%s, %s, %s או %s שבה אינם מה שהמסך קרא." % tuple(titles) in said
     assert "כשאסמכתת חשבונית של שורה אחרת בלוח Student Charge היא כבר המספר שהיא מקבלת" in said
     assert "וכשקריאה חדשה של הלוחות, שנחתה בזמן שהאישור פתוח, כבר לא מציעה לה את אותו הדבר" in said
-    assert "וממש לפני הכתיבה קורא כל שורה שוב" in text and "שם" not in said.split()
+    assert "וממש לפני השמירה קורא כל שורה שוב" in text and "שם" not in said.split()
 
 
 # ---- the merge (D4): a proposal on its row, from a current part of the reading shown only -------------------------------

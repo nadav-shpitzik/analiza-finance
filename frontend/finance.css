@@ -190,7 +190,7 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-t .k-date, #screen-finance table.fin-t td.k-demand, #screen-finance table.fin-t .k-planned,
 #screen-finance table.fin-t .k-refund_date, #screen-finance table.fin-t .k-asked, #screen-finance table.fin-t .k-last_day { white-space: nowrap; }
 #screen-finance table.fin-t td.k-due { min-width: 84px; }
-/* QA 10 (24.11): beside a payment date that was not typed, "(לפי יום היצירה)" (finance.js paidDate), on a line of its own
+/* QA 10 (24.11): beside a payment date that was not typed, "(לפי תאריך יצירה)" (finance.js paidDate), on a line of its own
    under the date */
 #screen-finance table.fin-t tbody td.k-date > .fin-subtle { display: block; white-space: normal; }
 #screen-finance table.fin-t td.k-charge { min-width: 180px; }
@@ -198,7 +198,7 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-t td.k-notes { min-width: 170px; }
 /* QA 4 (24.11): at full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut
    to "פר" and reached only by scrolling sideways: their widest cells could not wrap. A state's name and the totals' label
-   may wrap now, in their cell, rather than push the last column out (the date's "(לפי יום היצירה)" sits under the date);
+   may wrap now, in their cell, rather than push the last column out (the date's "(לפי תאריך יצירה)" sits under the date);
    a state's dot stays on its first line */
 #screen-finance table.fin-t td .fin-statechip { white-space: normal; align-items: flex-start; }
 #screen-finance table.fin-t td .fin-statechip::before { margin-top: calc(.725em - 4px); }

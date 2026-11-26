@@ -90,16 +90,20 @@ def test_the_list_has_the_switch_and_the_view_draws_the_servers_figures_in_the_t
     # the view: no tiles of the payments, its own figures - changed deliberately (QA 26.11, 2): in the table's order, and
     # "אושר - ממתין לתשלום", the first part, the one tinted (it was the first figure, the balance after it)
     assert "fin-states" not in cohorts and "fin-cohorts-t" in cohorts
-    figs = re.findall(r'<div( class="fin-hi")?><dt>([^<]+)</dt><dd><bdi>([^<]+)</bdi>', cohorts)
+    figs = re.findall(r'<div( class="fin-hi")?><dt(?: title="[^"]*")?>([^<]+)</dt><dd><bdi>([^<]+)</bdi>', cohorts)
+    # Gemini's review of 26.11: "שולם בפועל" stays Chava's word, and says what it is when it is pointed at, in the figure and
+    # in the table's head alike
+    assert cohorts.count('<dt title="%s">%s</dt>' % (ch.PAID_TITLE, ch.PAID_WORD)) == 1
+    assert len(re.findall(r'<th class="k-paid[^"]*" title="%s">%s</th>' % (ch.PAID_TITLE, ch.PAID_WORD), cohorts)) == 1
     assert [(bool(h), dt) for h, dt, _ in figs] == [(False, ch.EXPECTED_WORD), (False, ch.PAID_WORD),
                                                     (False, ch.BALANCE_WORD), (True, ch.PARTS["approved"]["label"])]
     # (the review of D4, changed deliberately: E3's waived 4,000 is in "שולם בפועל" and the expected)
     assert [x for _h, _dt, x in figs] == ["48,000 ₪", "22,000 ₪", "26,000 ₪", "6,000 ₪"]
-    heads = re.findall(r'<th class="k-([a-z_]+)[^"]*">([^<]*)</th>', cohorts)
+    heads = re.findall(r'<th class="k-([a-z_]+)[^"]*"(?: title="[^"]*")?>([^<]*)</th>', cohorts)
     # the price and the students counted are said under the cohort's name, so the table fits monday's widths
     assert [k for k, _ in heads] == ["more", "cohort", "expected", "paid", "balance", "part_approved", "part_submitted",
                                      "part_hq", "part_not_submitted", "part_no_status"]
-    assert re.findall(r'<th class="[^"]*fin-hi[^"]*">([^<]+)</th>', cohorts) == [ch.PARTS["approved"]["label"]]
+    assert re.findall(r'<th class="[^"]*fin-hi[^"]*"(?: title="[^"]*")?>([^<]+)</th>', cohorts) == [ch.PARTS["approved"]["label"]]
     assert 'data-export="b2c_cohorts"' in cohorts and "<p class=\"fin-about\">%s</p>" % ch.ABOUT.replace('"', "&quot;") in cohorts
     # the cohorts in the server's order, each line its numbers, as money with agorot
     assert rows_of(cohorts) == ["C1", "C2"]
@@ -124,8 +128,8 @@ def test_the_figures_the_table_and_the_excel_file_say_the_money_in_one_order():
     v = real_view(s)
     html = render([case()], v)[0]
     order = [ch.EXPECTED_WORD, ch.PAID_WORD, ch.BALANCE_WORD] + [p["label"] for p in ch.PARTS.values()]
-    figures = re.findall(r"<dt>([^<]+)</dt>", html)
-    table = [x for x in re.findall(r'<th class="k-[a-z_]+[^"]*">([^<]*)</th>', html) if x in order]
+    figures = re.findall(r'<dt(?: title="[^"]*")?>([^<]+)</dt>', html)
+    table = [x for x in re.findall(r'<th class="k-[a-z_]+[^"]*"(?: title="[^"]*")?>([^<]*)</th>', html) if x in order]
     assert table == order and figures == order[:4]                 # every part here, "settled" too: it holds 7,000
     part = v["b2c"]["cohorts"]
     wb = openpyxl.load_workbook(io.BytesIO(cohorts_workbook(ch.filter_cohorts(part, ""), part["unpriced"], {})))
@@ -254,7 +258,7 @@ def test_everything_that_came_in_is_the_cohorts_paid_the_money_no_student_holds_
     line = cells_of(shut, "fin-rowbtn")[0]
     assert line["paid"] == "23,000 ₪" and line["balance"] == "20,000 ₪" and line["expected"] == "20,000 ₪"
     assert line["cohort"].endswith(" · %s 20,000 ₪" % ch.UNLINKED_WORD)
-    figs = {k: re.sub(r"<[^>]+>", "", x) for k, x in re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", shut)}
+    figs = {k: re.sub(r"<[^>]+>", "", x) for k, x in re.findall(r'<dt(?: title="[^"]*")?>([^<]+)</dt><dd>(.*?)</dd>', shut)}
     assert figs[ch.PAID_WORD] == "23,000 ₪" and figs[ch.BALANCE_WORD] == "20,000 ₪"
     # the students' rows as they were: no student paid anything, each owes the whole price
     students = [x for x in cells_of(opened) if "paid" in x]
@@ -282,7 +286,7 @@ def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():
     assert [x["balance"] for x in students] == ["6,049.50 ₪", "6,000 ₪"]
     # the figures above the table write each amount as the table does (the review of D4: they were rounded to the shekel,
     # 7,951 above a column that said 7,950.50)
-    figs = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", html))
+    figs = dict(re.findall(r'<dt(?: title="[^"]*")?>([^<]+)</dt><dd>(.*?)</dd>', html))
     shown = {k: re.sub(r"<[^>]+>", "", v) for k, v in figs.items()}
     assert shown[ch.PARTS["approved"]["label"]] == line["part_approved"] and shown[ch.BALANCE_WORD] == line["balance"]
     assert shown[ch.PAID_WORD] == line["paid"] and shown[ch.EXPECTED_WORD] == line["expected"] == "20,000 ₪"
@@ -296,7 +300,7 @@ def test_the_cohorts_without_a_price_are_listed_on_demand_with_why():
 
 
 def test_with_every_cohort_priced_one_line_says_there_is_none_without_a_price():
-    """QA 26.11 (5): with all 14 voucher cohorts priced, "מחזורים בלי מחיר" showed nothing at all - no line under the
+    """QA 26.11 (5): with all 14 voucher cohorts priced, "מחזורים ללא חישוב" showed nothing at all - no line under the
     table. One line says so now, with nothing to open; and a list of one is drawn as before (above)."""
     s = cohort_snapshot()
     s["cohorts"] = [c for c in s["cohorts"] if c["id"] != "C3"]

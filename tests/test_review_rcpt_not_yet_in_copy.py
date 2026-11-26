@@ -1,6 +1,6 @@
 """Hostile review of the receipts split (92021e0), LOW: a payment that cites the receipt Chava issued since the last read
 of the books is "לא זוהתה בחשבשבת" - "אין בחשבשבת מספר, שם וסכום שמתאימים לתקבול" - and counted in the queue's line as
-"לא זוהתה קבלה בחשבשבת", while the same row's details say the number is only "עוד לא בהעתק של הספרים".
+"לא זוהתה קבלה בחשבשבת", while the same row's details say the number is only "טרם נמצא בעותק נתוני חשבשבת".
 
 The books are copied once an hour. A number just past the end of its series, held by no document of the copy, is not yet in
 the copy (app/desk/books.py `not_yet_read`): the desk gives no mark for it and says so in the row's details (`books_note`).

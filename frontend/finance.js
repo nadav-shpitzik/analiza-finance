@@ -23,7 +23,7 @@
  * 1.1 "שליחת קבלה: יצאה" and "סימון תשלום הוחזר" sit on the row itself, for one row or several picked at once (the box
  *     at the row's start, up to BATCH_MAX): she made those two edits 30 times in monday, eight refunds within two
  *     minutes, and never pressed them in a row's details. One press reads the rows live as the person and shows ONE
- *     confirmation listing each row's write; a row monday changed since the desk's reading is not written. On "כתיבה"
+ *     confirmation listing each row's write; a row monday changed since the desk's reading is not written. On "שמירה"
  *     each row is read again right before its write and checked after, as a single action (confirmAction), and the
  *     result is said per row. One refresh after the batch, as after one action. The allowlist did not change; readRow
  *     became readRows of one row, so one request reads a batch.
@@ -60,10 +60,10 @@
  *      foundMark); the search's fields are one list (MATCH) for the rule and for the mark.
  * QA 4 At full width the students' "לטיפול" and "הכל" ran about 40 pixels past their frame, "פתיחה במאנדיי" cut to "פר":
  *      their widest cells could not wrap. A state's name and the totals' label may wrap in their cell now, and the date's
- *      "(לפי יום היצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
+ *      "(לפי תאריך יצירה)" sits under the date (finance.css), so every column fits at monday's view widths of 1280 and 1400
  *      with rows as long as real ones (a students' list's narrowest width went from about 1210 to about 1070 pixels, and
  *      to about 1090 with QA 6's chevron).
- * QA 5 An empty state's pill disappeared ("ביקש החזר, טרם אושר"), while an empty task's tile stays with its ✓. Every
+ * QA 5 An empty state's pill disappeared ("החזר ממתין לאישור"), while an empty task's tile stays with its ✓. Every
  *      state's pill stays, an empty one muted with its 0 and a grey dot, on both tabs (no comment had recorded the hiding
  *      as a decision: it came with analiza-metrics' first import, 10.11).
  * QA 6 Nothing said a row opens its details on a click (there is no "פרטים" button). A row of a list that opens details
@@ -79,7 +79,7 @@
  *      panel clips without being a scroll box) - and only one wider than its frame, at a narrow width, scrolls in a frame
  *      as tall as the view, its sideways scrollbar in reach (fitFrames, after every drawing and on a resize).
  * QA 10 The page's words: a refresh on its way is "מתעדכן" on the button pressed as beside the reading's time (it was
- *       "מרענן" there, REFRESHING); a date not typed says "(לפי יום היצירה)" (CREATED_BY) in the list's cell, the details
+ *       "מרענן" there, REFRESHING); a date not typed says "(לפי תאריך יצירה)" (CREATED_BY) in the list's cell, the details
  *       and the row's situation alike; an empty value is "-" in every column ("תאריך החזר", "מועד פירעון", "עסקה" and
  *       the rest were empty cells); "ממתין לנתונים" shows no amount while none is typed (its "₪0" said there was nothing
  *       to bill). The "(MON-43)" the billing form shows is the server's sentence (account_form.mon43), drawn as sent.
@@ -118,8 +118,8 @@
  *      held one height only while nothing was confirmed. Now the bar keeps its place (barHtml; held, empty, while the
  *      batch's rows offer no box any more), and the batch - its reading, its one confirmation, its progress, its report -
  *      floats in the view beside what was pressed (fin-pop, batchBox): above the row, or the bar, where the view has room,
- *      below it otherwise, never over it, so the pointer that pressed is never on "כתיבה"; it follows a scroll and a resize
- *      (placePop). The focus still goes to its box, never to "כתיבה", and scrolls nothing. A row's details' own plan is as
+ *      below it otherwise, never over it, so the pointer that pressed is never on "שמירה"; it follows a scroll and a resize
+ *      (placePop). The focus still goes to its box, never to "שמירה", and scrolls nothing. A row's details' own plan is as
  *      it was: under its button, which does not move.
  * D3 (25.11, Analiza-Monday backlog 0301 D3; the desk move plan §1a.2): what the books (Hashavshevet) say that monday does
  * not, read only - every word, number and list from the server (app/desk/books.py), drawn here, nothing computed:
@@ -132,8 +132,8 @@
  *      filter_b2c) beside the rows of its task states, and the tile counts what the server counted (each period's
  *      `tasks`). A row's marks sit under its state wherever a list shows "שיבוץ" ("לטיפול", "הכל" and the rest), and in
  *      "מה לבדוק" where a list has it: no column was added, so QA 4's widths hold. An older marked row keeps its mark.
- * D3 3 Under "לטיפול", on each tab, "מסמכים בחשבשבת בלי חיוב במאנדיי" (booksHtml): on the students' tab each document
- *      with its candidates by name - rows of Student Charge named like the card, under "מועמדת לפי שם", each opening its
+ * D3 3 Under "לטיפול", on each tab, "מסמכי חשבשבת ללא התאמה במאנדיי" (booksHtml): on the students' tab each document
+ *      with its candidates by name - rows of Student Charge named like the card, under "שורות בשם תואם", each opening its
  *      card in monday, never drawn as a match; on the companies' tab with the company whose key the card is, and the line
  *      of the vouchers' card. The documents of a card whose side is not clear come only to a member of both charge
  *      boards, and are drawn under both tabs. A search stays on the rows.
@@ -141,7 +141,7 @@
  *      (`view.books.said`). The totals of "לטיפול" are asked by the books' part on the screen (`books`), as by its reading,
  *      and the Excel link carries it too, so a file built from another part says so.
  * D3 5 A number a row cites that is just past the end of its series is not yet in the copy (read every hour): the server
- *      gives no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
+ *      gives no mark for it, and the row's details say "טרם נמצא בעותק נתוני חשבשבת" (`books_note`, booksNote), quietly.
  * D4 (26.11, "רישום מחשבשבת"): what the books propose to fill on a Student Charge row - FR-C2's invoice number and A1's
  *      receipt date, of the desk's era, computed on the server (app/desk/books.py `proposals`) - written by the person.
  *      A chip "בחשבשבת: N" (or "תאריך מחשבשבת: D" for the date alone) under the row's state and in "מה לבדוק", its
@@ -154,10 +154,10 @@
  *      (applyWritten), and the document leaves the list with the next reading.
  * From the hostile review of D4 (26.11), by its numbers:
  * 1  A newer reading that landed while a confirmation of the books' proposals was open (a refresh, or askAgain when the view
- *      takes the focus back from monday's item card) left the batch on the rows it was pressed on, and "כתיבה" wrote a
+ *      takes the focus back from monday's item card) left the batch on the rows it was pressed on, and "שמירה" wrote a
  *      proposal the reading on the screen had withdrawn. A proposal is now always the reading's on the screen: taken off the
  *      current rows when the confirmation is made (settleFills), held to each newer reading while it is open (recheckBatch:
- *      one withdrawn or changed leaves for "לא ייכתב" with why, the count follows, and with none left the confirmation
+ *      one withdrawn or changed leaves for "לא יעודכן" with why, the count follows, and with none left the confirmation
  *      closes, said), and checked again right before each row's write (confirmBatch).
  * 2  The legend promised "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת", and the batch read only the two cells it writes. What a
  *      proposal rests on (the server's `rests_on`: "סטטוס תשלום" by its index and "סכום ששולם") is read with them, in the
@@ -176,11 +176,11 @@
  *      it down, and so did its reading, its progress and its result. Each floats now beside the action's control (actPop,
  *      fin-pop, placed by placePop, following a scroll), as a batch does beside what was pressed: never over the button or
  *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
- * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נכתב במאנדיי..." and the note
+ * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נשמר במאנדיי..." and the note
  *      on monday's card of the row just written). One shows at a time: a new one takes the place of the one on the screen.
  * From the QA of 26.11 on real data (Claude in Chrome on the live desk at 33bd24a), by its numbers:
- * 1  After "כתיבה" from the books' list, the report "נכתב במאנדיי בשמך..." opened high up, cut off at the top of the view and
- *      over the next document's candidates - the line's button had given way to "נכתב, מתעדכן", and the box went beside the
+ * 1  After "שמירה" from the books' list, the report "נשמר במאנדיי בשמך..." opened high up, cut off at the top of the view and
+ *      over the next document's candidates - the line's button had given way to "נשמר, מתעדכן", and the box went beside the
  *      list's head - while a flash at the bottom said the same. The line keeps its place (`data-books-at`) and the report
  *      floats beside it, as the confirmation did; once what was pressed has left the page (the next reading takes the
  *      document off the list), the box stays where it was on the page (POP_AT), never cut off at the view's edge. The box
@@ -194,8 +194,8 @@
  * 4  A search by a student's name in "לפי מחזור" found the cohort and left it closed, the student neither shown nor marked.
  *      A cohort with a student the search finds is open while that search shows it, the student's row tinted and her name
  *      marked (cohortOpen); a click closes it under that search only (SEARCH_SHUT), and her own opened cohorts stay hers.
- * 5  "מחזורים בלי מחיר" drew nothing at all while every cohort on the track was priced (all 14): one line says "אין
- *      מחזורים בלי מחיר" (unpricedHtml).
+ * 5  "מחזורים ללא חישוב" drew nothing at all while every cohort on the track was priced (all 14): one line says "אין
+ *      מחזורים ללא חישוב" (unpricedHtml).
  * 6  When the page got shorter (a search with few results, "ללא תקבול", a cohort closed) its scrollbar went and the centered
  *      desk moved about 7 pixels sideways, so a click on the search's X missed. desk.css keeps the bar's room on the root
  *      (`scrollbar-gutter: stable`); tests/test_desk_browser.py measures it with the scrollbars that take room.
@@ -211,7 +211,7 @@
  *      then (measured in Chromium), and only the visit's first opening greyed, though each row's first opening reads: it is
  *      monday's, around the view, on the app's first monday.api(). A read on its way shows its own spinner in its cell.
  * From the QA's second pass of 26.11 (the old desk and the new side by side), by its letters:
- * A  With the row near the top, a box's first line ("ייכתב במאנדיי בשורה...") was cut under the table's header, which sticks
+ * A  With the row near the top, a box's first line ("יעודכן במאנדיי בשורה...") was cut under the table's header, which sticks
  *      at the top of the view ("הוחזר חלקי", "חויב": a row's action floats inside its details, which paint under it).
  *      placePop's room starts below a header stuck at the view's top (stuckHeads), for every floating box.
  * C  "לרשום את כל ההצעות (28)" counted rows with a proposal, its confirmation "ב-20 שורות" the rows written in one press.
@@ -283,10 +283,10 @@
     /* D4: what the books propose to fill on the row - the server fills each "{...}" (the row's `books`; booksMark) */
     books_ref_fill: "בחשבשבת: {number}", books_date_fill: "תאריך מחשבשבת: {date}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
-    billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
+    billed_no_due: "חויב ללא מועד דרישת תשלום", billed_before_demand: "חויב לפני מועד דרישת התשלום",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
     paid_not_billed: "\"שולם\" לפני \"חויב\"", payer_mismatch: "החברה אינה Account משלם בעסקה",
-    terms_missing: "אין תנאי תשלום", status_unknown: "תווית שהמסך לא מכיר"
+    terms_missing: "אין תנאי תשלום", status_unknown: "תווית לא מוכרת"
   };
   /* the same flag on the other board, where its column has another name */
   var FLAG_ON = { b2: { amount_missing: "סכום לחיוב (ללא מע\"מ) לא הוקלד" } };
@@ -319,15 +319,15 @@
     cohort_no_link: ["תקבול אחד בלי הרשמה ובלי ליד מקור", "תקבולים בלי הרשמה ובלי ליד מקור"],
     cohort_no_cohort: ["תקבול מקושר אחד בלי מחזור", "תקבולים מקושרים בלי מחזור"],
     cohort_missing: ["תקבול אחד שהמחזור שלו לא נמצא במאנדיי", "תקבולים שהמחזור שלהם לא נמצא במאנדיי"],
-    enrollments_missing: ["הרשמה אחת שתקבולים מקושרים אליה ומאנדיי לא מחזיר אותה", "הרשמות שתקבולים מקושרים אליהן ומאנדיי לא מחזיר אותן"],
-    leads_missing: ["ליד מקור אחד שתקבולים מקושרים אליו ומאנדיי לא מחזיר אותו", "לידים שתקבולים מקושרים אליהם ומאנדיי לא מחזיר אותם"],
+    enrollments_missing: ["הרשמה המקושרת לתקבולים לא התקבלה ממאנדיי", "הרשמות המקושרות לתקבולים לא התקבלו ממאנדיי"],
+    leads_missing: ["ליד מקור המקושר לתקבולים לא התקבל ממאנדיי", "לידי מקור המקושרים לתקבולים לא התקבלו ממאנדיי"],
     cohort_ambiguous: ["תקבול אחד עם יותר ממחזור אחד (בהרשמה או בליד מקור)", "תקבולים עם יותר ממחזור אחד (בהרשמה או בליד מקור)"],
     refund_exceeds_paid: ["סכום החזר אחד גדול מסכום ששולם (נספר עד סכום ששולם)", "סכומי החזר גדולים מסכום ששולם (נספרו עד סכום ששולם)"],
     amount_missing: ["תקבול אחד שסכום ששולם בו לא הוקלד", "תקבולים שסכום ששולם בהם לא הוקלד"],
     payer_mismatch: ["חיוב עסקי אחד שהחברה בו אינה Account משלם בעסקה", "חיובים עסקיים שהחברה בהם אינה Account משלם בעסקה"],
     deals_split: ["עסקה אחת שהחיובים שלה רשומים על שתי חברות", "עסקאות שהחיובים שלהן רשומים על שתי חברות"],
-    deals_missing: ["עסקה אחת שחיובים מקושרים אליה ומאנדיי לא מחזיר אותה", "עסקאות שחיובים מקושרים אליהן ומאנדיי לא מחזיר אותן"],
-    accounts_missing: ["חברה אחת שחיובים מקושרים אליה ומאנדיי לא מחזיר אותה", "חברות שחיובים מקושרים אליהן ומאנדיי לא מחזיר אותן"],
+    deals_missing: ["עסקה המקושרת לחיובים לא התקבלה ממאנדיי", "עסקאות המקושרות לחיובים לא התקבלו ממאנדיי"],
+    accounts_missing: ["חברה המקושרת לחיובים לא התקבלה ממאנדיי", "חברות המקושרות לחיובים לא התקבלו ממאנדיי"],
     price_unclear: ["מחזור אחד שהמחיר בו אינו מספר אחד", "מחזורים שהמחיר בהם אינו מספר אחד"],
     expected_missing: ["יתרה פתוחה אחת בלי מחיר מחזור, ולכן בלי סכום", "יתרות פתוחות בלי מחיר מחזור, ולכן בלי סכום"],
     terms_unknown: ["חברה אחת שתנאי התשלום שלה לא מוכרים למסך (נספרה לפי מועד דרישת התשלום)", "חברות שתנאי התשלום שלהן לא מוכרים למסך (נספרו לפי מועד דרישת התשלום)"],
@@ -348,7 +348,7 @@
     guest: "אורחים לא רואים את השולחן.",
     not_a_board_member: "התצוגה הזאת מראה את לוחות החיובים, ואין לך גישה לאף אחד מהם.",
     members_unavailable: "לא הצלחנו לבדוק עכשיו מי רשאי לראות את לוחות החיובים. אפשר לנסות שוב בעוד דקה.",
-    finance_unavailable: "לא הצלחנו לקרוא עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."
+    finance_unavailable: "לא הצלחנו לטעון עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."
   };
   /* an answer whose error the page has no words for: said without its code (the texts' review of 26.11: "(view_error)"
      reached the screen); the code goes to the usage events as it always did */
@@ -428,6 +428,8 @@
   }
   /* the page's parts, the same on both tabs: a tab's money as a few figures (a label over each value, like the details
      panel's facts) with its note and, on the students tab, the period beside them; a panel; a calm empty list */
+  /* Gemini's review of 26.11: the open balance leaves a partly paid charge out (the legend says so); said beside the figure */
+  var OPEN_NOTE = " <small>(לא כולל חיובים ששולמו חלקית)</small>";
   function figs(pairs, note, control) {
     return "<div class=\"fin-figs\"><dl>" + pairs.map(function (x) {
       return "<div><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
@@ -446,7 +448,7 @@
      themselves, and so is its lateness (QA 1.3) */
   var NO_TERMS = "<span class=\"fin-chip\">" + esc(FLAG.terms_missing) + "</span>";
   /* why a payment's "סכום ששולם" is not counted: its status brings no money in - or is a label the desk does not know */
-  var UNCOUNTED = "לא נספר: הסטטוס לא מכניס כסף";
+  var UNCOUNTED = "לא נספר: הסטטוס אינו מציין שהתקבל כסף";
   function uncountedWhy(r) {
     return r.flags.indexOf("status_unknown") !== -1 ? "לא נספר: " + FLAG.status_unknown + " (סטטוס תשלום " + statusWord(r) + ")"
       : UNCOUNTED + " (סטטוס תשלום " + statusWord(r) + ")";
@@ -589,8 +591,8 @@
     return 0;
   }
   /* "תאריך תקבול" as typed; where it was not, the day the row was created, marked so in the cell (QA 2.5) */
-  var CREATED_WORD = "יום היצירה";
-  /* QA 10 (24.11): "יום היצירה" alone beside a date did not read without the legend, so it is said "(לפי יום היצירה)",
+  var CREATED_WORD = "תאריך יצירה";
+  /* QA 10 (24.11): "תאריך יצירה" alone beside a date did not read without the legend, so it is said "(לפי תאריך יצירה)",
      in the list's cell (on a line of its own under the date, finance.css), the details and the row's situation alike */
   var CREATED_BY = "(לפי " + CREATED_WORD + ")";
   function paidDate(r) {
@@ -605,7 +607,7 @@
     if (n === null || n > 0) { return ""; }
     return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
   }
-  /* Nadav 26.11 (receipts go out slowly): under the state of a payment in "שולם, שליחת קבלה: טרם", beside the books' other
+  /* Nadav 26.11 (receipts go out slowly): under the state of a payment in "שולם, קבלה לטיפול", beside the books' other
      chips, what the books say of its receipt - issued there, so only monday is behind ("הופקה בחשבשבת", its number in its
      title), or none identified there ("לא זוהתה בחשבשבת"); the words and their title the server's (app/desk/books.py
      receipt_laid, laid only from a current part of this reading), so nothing at all when the books are not laid. Not in
@@ -628,25 +630,27 @@
   /* the queue's line under its sentence: of its rows, how many the books already hold a receipt of and how many none was
      identified of - every number the server's (GET /api/desk/totals `receipts`, counted once, app/desk/books.py
      receipts_split); nothing until the totals land, and for a total of another reading */
-  var RECEIPTS_UNKNOWN = "מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע: אין השוואה עדכנית של הקריאה הזו לחשבשבת.";
+  var RECEIPTS_UNKNOWN = "לא ניתן לבדוק כרגע אם הקבלות הופקו בחשבשבת: אין השוואה עדכנית.";
   function receiptsLine(t) {
     if (!t || t.failed || t.other_reading || !t.receipts) { return ""; }
     var x = t.receipts, later = x.later || 0, n = x.issued + x.not + later + x.unknown, out = [];
     if (!n) { return ""; }
     if (x.unknown) { return "<p class=\"fin-rcpt-line\">" + esc(RECEIPTS_UNKNOWN) + "</p>"; }
     if (x.issued) {
-      out.push((x.issued === n ? (n === 1 ? "הקבלה עליו כבר הופקה" : "הקבלות על כולם כבר הופקו")
-        : x.issued === 1 ? "לאחד מהם הקבלה כבר הופקה" : "ל-" + NF.format(x.issued) + " מהם הקבלה כבר הופקה") +
-        " בחשבשבת: נשאר לסמן במאנדיי.");
+      /* Gemini's review of 26.11: an issued receipt is not proof that it was sent */
+      out.push((x.issued === n ? (n === 1 ? "לתקבול זוהתה קבלה" : "לכל התקבולים זוהתה קבלה")
+        : x.issued === 1 ? "לתקבול אחד זוהתה קבלה" : "ל-" + NF.format(x.issued) + " תקבולים זוהתה קבלה") +
+        " בחשבשבת: יש לעדכן את סטטוס שליחת הקבלה בהתאם למצבה בפועל.");
     }
     if (x.not) {
-      out.push((x.not === n ? (n === 1 ? "לא זוהתה עליו קבלה" : "לאף אחד מהם לא זוהתה קבלה")
-        : x.not === 1 ? "לאחד מהם לא זוהתה קבלה" : "ל-" + NF.format(x.not) + " מהם לא זוהתה קבלה") + " בחשבשבת.");
+      out.push((x.not === n ? (n === 1 ? "לתקבול לא זוהתה קבלה" : "לאף תקבול לא זוהתה קבלה")
+        : x.not === 1 ? "לתקבול אחד לא זוהתה קבלה" : "ל-" + NF.format(x.not) + " תקבולים לא זוהתה קבלה") + " בחשבשבת.");
     }
     /* the second review of 26.11: a number just past the end of its series is neither issued nor missing yet */
     if (later) {
-      out.push((later === n ? (n === 1 ? "המספר שבשורה" : "המספרים בכל השורות") : later === 1 ? "באחד מהם המספר שבשורה"
-        : "ב-" + NF.format(later) + " מהם המספר שבשורה") + " עוד לא בהעתק של הספרים, שמתעדכן כל שעה.");
+      out.push((later === n ? (n === 1 ? "מספר החשבונית טרם נמצא" : "מספרי החשבוניות בכל השורות טרם נמצאו")
+        : later === 1 ? "בתקבול אחד מספר החשבונית טרם נמצא" : "ב-" + NF.format(later) + " תקבולים מספר החשבונית טרם נמצא") +
+        " בעותק נתוני חשבשבת, שמתעדכן מדי שעה.");
     }
     return "<p class=\"fin-rcpt-line\">" + esc(out.join(" ")) + "</p>";
   }
@@ -739,7 +743,7 @@
   var EXPORTABLE_Q = /^[\u0590-\u05FFA-Za-z0-9 ,.\-\/₪'"()]{0,100}$/;
   function exportable() { return EXPORTABLE_Q.test(state.query); }
   function exportTitle(ok) {
-    return !ok ? " title=\"הקריאה לא שלמה: אין לייצא סכומים שאין להסתמך עליהם. רענון יקרא שוב.\""
+    return !ok ? " title=\"הנתונים חלקיים, ולכן לא ניתן לייצא. אפשר לרענן ולנסות שוב.\""
       : !exportable() ? " title=\"בחיפוש יש תו מיוחד: אפשר לסנן בו, אבל לא לייצא.\"" : "";
   }
   function agorot(s) {
@@ -864,7 +868,7 @@
       tile("tasks", "לטיפול", open, null, true) +
       tasks.map(function (s) { var x = p.states[s.key]; return tile(s.key, s.label, x.count, money(x.money), true); }).join("") +
       /* QA 5 (24.11): every state, an empty one with its 0 - as a task's tile is - so it is clear the state exists and
-         holds nothing ("ביקש החזר, טרם אושר" went missing when empty) */
+         holds nothing ("החזר ממתין לאישור" went missing when empty) */
       "</div><div class=\"fin-stategroup rest\">" +
       rest.map(function (s) {
         var x = p.states[s.key]; return tile(s.key, s.label, x.count, s.key === "no_money" ? null : money(x.money), false);
@@ -925,7 +929,7 @@
   function amountText(v) { return NF2.format(num(v)) + " ₪"; }
   var REFUNDED_LABELS = "\"תשלום הוחזר\" או \"הוחזר חלקי\"";
   var WARN = {
-    invoice_late: "מועד דרישת התשלום עבר, והחיוב עוד לא חויב", no_contract: "העסקה בסטטוס \"בהרצה ללא חוזה\"",
+    invoice_late: "מועד דרישת התשלום עבר, והחיוב טרם סומן \"חויב\"", no_contract: "העסקה בסטטוס \"בהרצה ללא חוזה\"",
     over_deal_value: "סך סכום לחיוב (ללא מע\"מ) בעסקה עובר את שווי עסקה", payer_mismatch: "החיוב רשום על חברה שאינה Account משלם בעסקה",
     /* an approved refund, a refund amount or a refund day on a status that says no refund went out (QA 1.1, 1.2): the
        sentence names the status and the value, so the contradiction can be read without opening monday */
@@ -940,7 +944,7 @@
     },
     /* a receipt sent on a payment whose status brought no money in: the status or the receipt is wrong */
     receipt_no_money: function (r) {
-      return "שליחת קבלה \"יצאה\", וסטטוס תשלום " + statusWord(r) + ": קבלה יצאה על כסף שלא נכנס";
+      return "שליחת קבלה \"יצאה\", וסטטוס תשלום " + statusWord(r) + ": סימון שליחת הקבלה אינו תואם לסטטוס התשלום";
     },
     refund_amount_zero: function (r) {
       return "סטטוס תשלום " + statusWord(r) + ", וסכום החזר 0" +
@@ -1016,7 +1020,7 @@
       case "refunded": return "הוחזר " + money2(r.refunded) + (r.refund_date ? " ב-" + d(r.refund_date) : "") + (r.refund_method ? " · " + esc(r.refund_method) : "");
       case "refund_asked": return paid + " · " + esc(stateLabel(VIEW.b2c.states, "refund_asked"));
       case "no_money": return esc(r.status || "בלי סטטוס תשלום");
-      default: return "<b>לבדיקה</b>: הסיבה למטה";
+      default: return "<b>לבדיקה</b>: פירוט בהמשך";
     }
   }
   /* a refund in play (app/finance.py is_refund_row): asked for, approved or done - and here also a row with a refund amount
@@ -1103,11 +1107,11 @@
       /* the tile "החזר בוצע" leaves out a refund that sits under "חריג": say how much, from the server's figure */
       ["הוחזרו", money(p.refunded) + (num(p.states.exception.refunded) ? " <small>(מתוכם " + money(p.states.exception.refunded) + " ב&quot;" +
         esc(stateLabel(v.states, "exception")) + "&quot;)</small>" : "")],
-      ["סטודנטים", NF.format(p.students)]], "הסכומים כולל מע\"מ", periodSelect());
+      ["סטודנטים", NF.format(p.students)]], "הסכומים כוללים מע\"מ", periodSelect());
     /* an asterisk is explained under the list that shows it, and only when it does */
     var guessed = cols.indexOf("refunded") !== -1 && rows.some(refundGuessed);
     var list = rows.length ? table(rows, cols, detailHtml, null, exportable() ? tot : null) + listNotes([
-      guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
+      guessed && "* בסטטוס תשלום \"תשלום הוחזר\", כאשר סכום החזר ריק או 0, כל סכום ששולם נספר כהחזר."])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
     OUTSIDE = null;
     /* the books' list first: a batch pressed there floats in its panel, and the list's own box then draws none (D4) */
@@ -1223,7 +1227,8 @@
        monday's widths with sums as long as real ones */
     var cols = cohortCols(c, shown), span = cols.length + 1;
     var head = "<tr><th class=\"k-more\"></th>" + cols.map(function (col) {
-      return "<th class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + esc(col.header) + "</th>";
+      return "<th class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\"" +
+        (col.key === "paid" && (c.words || {}).paid_title ? " title=\"" + esc(c.words.paid_title) + "\"" : "") + ">" + esc(col.header) + "</th>";
     }).join("") + "</tr>";
     var q = searchQ();
     var body = shown.map(function (x) {
@@ -1286,8 +1291,11 @@
     var figures = "<div class=\"fin-figs\"><p class=\"fin-figs-title\">" + esc(w.track_only) + "</p><dl>" +
       [[w.expected, cash(t.expected)], [w.paid, cash(t.paid)],
       [w.balance, cash(t.balance)], [c.parts[0].label, cash(t.part_approved), true]].map(function (x) {
-      return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
-    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc(w.figs_note) + "</span></div>";
+      return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt" + (x[0] === w.paid && w.paid_title ? " title=\"" +
+        esc(w.paid_title) + "\"" : "") + ">" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
+    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc(w.figs_note) + "</span>" +
+      (w.shared_note && c.cohorts.some(function (x) { return x.shared && x.shared.count; })
+        ? "<span class=\"fin-figs-note\">" + esc(w.shared_note) + "</span>" : "") + "</div>";
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +
       plural(shown.length, "מחזור אחד", "מחזורים") + " עם מחיר" + (searching() ? " מתאימים לחיפוש" : "") + "</div>" +
       "<p class=\"fin-about\">" + esc(c.about) + "</p>" +
@@ -1396,9 +1404,9 @@
   var IDX = null;
   /* what the page says of the file where the details' words (ID_ERRORS) do not fit */
   var IDS_WORDS = { monday: "מספרי ת.ז לא נקראו ממאנדיי", file: "הקובץ לא נבנה בדפדפן",
-    table: "השרת לא החזיר את רשימת התקבולים כפי שהקובץ צריך", busy: "השולחן ביקש להאט; לנסות שוב בעוד דקה",
+    table: "רשימת התקבולים שהתקבלה אינה תקינה לייצוא", busy: "יותר מדי בקשות. אפשר לנסות שוב בעוד דקה",
     outside: "מספרי ת.ז נקראים ממאנדיי בשמך, ולכן רק כשהתצוגה פתוחה מתוך מאנדיי" };
-  var IDS_TITLE = "מספרי ת.ז נקראים ממאנדיי בשמך, כאן בדפדפן, ולא נשלחים לשום מקום";
+  var IDS_TITLE = "מספרי ת.ז נטענים ממאנדיי בדפדפן, בשמך, ואינם נשלחים לשרת של שולחן הכספים";
   function idsWhy(e, code) {
     if (e && e.error) { return code === "rate_limited" ? IDS_WORDS.busy : errorText(e).replace(/\.$/, ""); }
     return (code !== "monday" && ID_ERRORS[code]) || IDS_WORDS[code] || IDS_WORDS.monday;
@@ -1492,7 +1500,7 @@
       (on ? "מכין קובץ עם ת.ז..." : "ייצוא לאקסל עם ת.ז") + "</button>";
   }
   function idsReading(x) {
-    return x.total ? "קורא ממאנדיי, בשמך, ת.ז של " + plural(x.total, "ליד אחד", "לידים") + (x.done ? ": " + NF.format(x.done) +
+    return x.total ? "טוען ממאנדיי, בשמך, ת.ז של " + plural(x.total, "ליד אחד", "לידים") + (x.done ? ": " + NF.format(x.done) +
       " נקראו" : "") + "..." : "מכין את הקובץ עם ת.ז...";
   }
   /* under the list's head: the file on its way, or why it was not made, with the file without the ID number and another try */
@@ -1501,7 +1509,7 @@
     if (IDX.phase === "reading") { return "<div class=\"fin-idsnote\" role=\"status\" data-ids-note=\"1\">" + esc(idsReading(IDX)) + "</div>"; }
     return "<div class=\"fin-idsnote\" role=\"alert\"><span class=\"fin-badtext\">" + esc("קובץ עם ת.ז לא נוצר: " + IDX.words + ".") +
       "</span> <button type=\"button\" class=\"fin-linkbtn\" data-export=\"b2c\">ייצוא לאקסל בלי ת.ז</button> · " +
-      "<button type=\"button\" class=\"fin-linkbtn\" data-export-ids=\"1\">לנסות שוב</button></div>";
+      "<button type=\"button\" class=\"fin-linkbtn\" data-export-ids=\"1\">ניסיון חוזר</button></div>";
   }
   /* the note's count as the pages come in: its own text where it is on the screen, else a drawing */
   function idsShow(mine) {
@@ -1548,7 +1556,7 @@
      is said as one, never as a match: its name opens its own card in monday, and nothing links or fills anything */
   var BOOKS_AS_OF = "לפי הספרים";
   var BOOKS_HEADS = { number: "מספר מסמך", type: "סוג מסמך", date: "תאריך מסמך", card: "שם בכרטיס",
-    incl: "סכום בחשבשבת (כולל מע\"מ)", excl: "סכום בחשבשבת (ללא מע\"מ)", candidates: "מועמדת לפי שם", accounts: "חברה",
+    incl: "סכום בחשבשבת (כולל מע\"מ)", excl: "סכום בחשבשבת (ללא מע\"מ)", candidates: "שורות בשם תואם", accounts: "חברה",
     why: "למה לא ברור" };
   var BOOKS_COLS = { b2c: ["number", "type", "date", "incl", "card", "candidates", "nag"],
     b2b: ["number", "type", "date", "excl", "incl", "card", "accounts", "nag"],
@@ -1582,7 +1590,7 @@
   function proposalHtml(e) {
     var p = e.proposal, r = p ? rowByKey("sc:" + p.item_id) : null, a = r ? rowFill(r) : null;
     if (!p) { return ""; }
-    /* the line keeps its place (`data-books-at`) when its button gives way to "נכתב, מתעדכן": the report of the write
+    /* the line keeps its place (`data-books-at`) when its button gives way to "נשמר, מתעדכן": the report of the write
        floats beside it, where the confirmation was (QA 26.11, 1). R5: "לא להציע" beside its button: the proposal is the
        row's, and hidden it leaves the row and this line */
     var m = r ? booksMark(r, "books_ref_fill") : null;
@@ -1613,9 +1621,9 @@
     var n = fills.filter(function (r) { return !(r.books_fill || {}).number; }).length;
     return !n ? "" : "<p class=\"fin-listnote\">" + esc(n === 1
       ? "הצעה אחת היא תאריך תקבול בלבד: שורה שכבר מפנה לחשבונית שלה, וחסר בה רק תאריך תקבול. היא ליד השורה שלה ברשימת " +
-        "התקבולים ולא כאן, ו\"" + FILL_ALL + "\" כותב גם אותה."
+        "התקבולים ולא כאן, ו\"" + FILL_ALL + "\" מעדכן גם אותה."
       : NF.format(n) + " הצעות הן תאריך תקבול בלבד: שורות שכבר מפנות לחשבונית שלהן, וחסר בהן רק תאריך תקבול. הן ליד השורות " +
-        "שלהן ברשימת התקבולים ולא כאן, ו\"" + FILL_ALL + "\" כותב גם אותן.") + "</p>";
+        "שלהן ברשימת התקבולים ולא כאן, ו\"" + FILL_ALL + "\" מעדכן גם אותן.") + "</p>";
   }
   function booksCell(k, e) {
     if (k === "number") { return ltr(e.number) || NOT_SET; }
@@ -1687,16 +1695,16 @@
       "סכום ששולם, סטטוס תשלום, והמסמכים עצמם. כשמשהו מהם משתנה, הוא חוזר.",
     doc: "המסמך יוסתר מהרשימה לכולם כ\"לא פער\", כל עוד הוא נשאר בחשבשבת כמו עכשיו: הסוג, הסכום, התאריך, השם בכרטיס, " +
       "והרשימה שהוא בה. כשמשהו מהם משתנה, הוא חוזר לרשימה.",
-    fill: "ההצעה לא תוצג יותר, לאף אחד, כל עוד חשבשבת מציעה לשורה הזאת בדיוק את אותו מספר ואותו תאריך. הצעה אחרת תוצג.",
-    kept: "נשמר בשולחן מי הסתיר ומתי, ולא נכתב כלום במאנדיי או בחשבשבת. מי שהסתיר יכול להחזיר, מתחת לרשימה."
+    fill: "ההצעה תוסתר לכל המשתמשים כל עוד המספר והתאריך המוצעים לשורה לא השתנו. הצעה חדשה תוצג.",
+    kept: "השולחן שומר מי הסתיר ומתי. לא מתבצע שינוי במאנדיי או בחשבשבת. רק מי שהסתיר יכול לבטל את ההסתרה מתחת לרשימה."
   };
   var NAG_ERRORS = {
     other_reading: "המסך התעדכן מאז שנלחץ, ולכן לא הוסתר. המסך נטען מחדש: אפשר ללחוץ שוב.",
     not_shown: "ההתראה כבר לא מוצגת, ולכן לא הוסתרה. המסך נטען מחדש.",
     already_hidden: "ההתראה כבר הוסתרה. המסך נטען מחדש.",
     evidence_changed: "ההתראה השתנתה מאז שהוצגה, ולכן לא הוסתרה. המסך נטען מחדש: אפשר ללחוץ שוב.",
-    dismissals_unavailable: "לא הצלחנו לשמור עכשיו. לא הוסתר כלום; אפשר לנסות שוב עוד מעט.",
-    busy: "ההשוואה לחשבשבת עוד מחושבת. לא הוסתר כלום; אפשר לנסות שוב עוד מעט.",
+    dismissals_unavailable: "לא הצלחנו לשמור עכשיו. לא הוסתר דבר. אפשר לנסות שוב עוד מעט.",
+    busy: "ההשוואה לחשבשבת עדיין מתבצעת. לא הוסתר דבר. אפשר לנסות שוב עוד מעט.",
     view_only: "לצופה במאנדיי אין אפשרות להסתיר התראה.",
     not_a_board_member: "ההתראה שייכת ללוח שאינך חבר/ה בו.",
     not_yours: "רק מי שהסתיר יכול להחזיר.",
@@ -1731,8 +1739,8 @@
   /* an alert whose evidence changed since it was hidden is shown again, and says so */
   function nagBack(alert) {
     var b = alert && alert.returned;
-    return b ? "<div class=\"fin-nag-back\">" + esc("חזר: הוסתר כ\"" + nagWord(alert.kind) + "\" ב-" + nagWhen(b.at) + " בידי " +
-      nagWho(b.by) + ", והראיה השתנתה מאז.") + "</div>" : "";
+    return b ? "<div class=\"fin-nag-back\">" + esc("חזר: הוסתר כ\"" + nagWord(alert.kind) + "\" ב-" + nagWhen(b.at) + " על ידי " +
+      nagWho(b.by) + ". הנתונים השתנו מאז.") + "</div>" : "";
   }
   /* the alert a press names, as the answer on the screen holds it: { evidence, what } or null */
   function nagAlert(kind, subject) {
@@ -1879,7 +1887,7 @@
       case "planned": return esc(label) + " · " + esc(r.billing) + demand;
       case "pending": return esc(label) + ": " + esc(r.billing || "מצב חיוב ריק");
       case "paid": case "cancelled": return esc(label);
-      default: return "<b>לבדיקה</b>: הסיבה למטה";
+      default: return "<b>לבדיקה</b>: פירוט בהמשך";
     }
   }
   /* a charge's details (QA 2.5, 2.9): the charge's own fields, then its company and its deal, each under its own heading -
@@ -1941,7 +1949,7 @@
   }
   function customersHtml(b) {
     var shown = customersShown(b);
-    if (!b.customers.length) { return empty("אין חברה עם משהו לחיוב החודש, ביתרה פתוחה, ששולם חלקית או ב\"חריג, לבדיקה\"."); }
+    if (!b.customers.length) { return empty("אין חברות עם חיובים לחודש הנוכחי, יתרה פתוחה, חיובים ששולמו חלקית או חיובים ב\"חריג, לבדיקה\"."); }
     if (!shown.length) { return empty("אין חברה שהשם שלה מתאים לחיפוש."); }
     /* the A/R aging (Nadav 10.11 "תעשה את 2"): what to do first (to bill this month, partly paid, the tasks), then the open
        money by days past due under one header, and its total last, beside the bands it sums */
@@ -2010,18 +2018,18 @@
     var company = f.customer ? "<div class=\"fin-co\"><h2 class=\"fin-co-name\">" + esc((mine && mine.name) || who || "") + "</h2>" +
       "<button class=\"fin-linkbtn\" type=\"button\" data-customer=\"\">כל החברות</button></div>" : "";
     /* a chosen customer: its own figures and its aging, as a ledger card (כרטסת) opens with */
-    var figures = mine ? figs([["יתרה פתוחה", money(mine.open)], ["מתוכה בפיגור", money(mine.overdue)],
+    var figures = mine ? figs([["יתרה פתוחה", money(mine.open) + OPEN_NOTE], ["מתוכה בפיגור", money(mine.overdue)],
       [stateLabel(b.states, "to_bill"), money(mine.to_bill)]], "הסכומים ללא מע\"מ") +
       "<div class=\"fin-aging\" aria-label=\"לפי מועד פירעון\">" + b.bands.filter(function (x) { return num(mine.aging[x.key]); }).map(function (x) {
         return "<span><span class=\"fin-subtle\">" + esc(bandHeading(x)) + "</span> " + money(mine.aging[x.key]) + "</span>";
       }).join("") + "</div>"
-      : figs([["יתרה פתוחה", money(b.open)], ["מתוכה בפיגור", money(b.overdue) + (num(b.overdue_no_terms)
+      : figs([["יתרה פתוחה", money(b.open) + OPEN_NOTE], ["מתוכה בפיגור", money(b.overdue) + (num(b.overdue_no_terms)
         ? " <small>(מזה " + money(b.overdue_no_terms) + " בחברות בלי תנאי תשלום)</small>" : "")],
-      ["חברות עם משהו פתוח", NF.format(b.customers.length)]], "הסכומים ללא מע\"מ");
+      ["חברות עם חיוב פתוח", NF.format(b.customers.length)]], "הסכומים ללא מע\"מ");
     if (mine) { figures += billingPanel(f.customer, mine); }
     if (f.view === "customers") {
-      return figures + b2Tiles(b) + panel("<div class=\"fin-listhead\"><div><h2>לפי לקוח</h2><div class=\"fin-subtle\">כל חברה עם משהו לחיוב החודש, " +
-        "ביתרה פתוחה, ששולם חלקית או בחריג. לחיצה על חברה פותחת את הכרטסת שלה.</div></div><div class=\"fin-actions\">" + views +
+      return figures + b2Tiles(b) + panel("<div class=\"fin-listhead\"><div><h2>לפי לקוח</h2><div class=\"fin-subtle\">חברות עם חיובים לחודש הנוכחי, " +
+        "יתרה פתוחה, חיובים ששולמו חלקית או חיובים חריגים. לחיצה על חברה פותחת את הכרטסת שלה.</div></div><div class=\"fin-actions\">" + views +
         "<button class=\"fin-btn\" type=\"button\" data-export=\"b2b_customers\"" + (customersShown(b).length && VIEW.checks.b2b_ok && exportable() ? "" : " disabled") +
         exportTitle(VIEW.checks.b2b_ok) + ">ייצוא לאקסל</button></div></div>" + customersHtml(b));
     }
@@ -2070,7 +2078,7 @@
      never writes a label's text. Every write goes out through mondayWrite(), the one place a mutation is composed, which
      refuses any (board, column) outside WRITABLE, a status index no action sets, and any value of another shape, before
      monday.api() is called (tests/test_finance_actions_js.py). An action reads the row live first and shows exactly what will be
-     written; on "כתיבה" it writes, step by step, checks each step against monday's answer, puts the new values on the row
+     written; on "שמירה" it writes, step by step, checks each step against monday's answer, puts the new values on the row
      at once, and asks the server for a refresh. A failure - a permission the app lacks among them - is said in words. */
   /* The page's allowlist: the ONE list of what it may write - (board, column), and the kind of value; for a status, the
      list of the indexes an action sets (review 11.11: a status column was allowed with every one of its labels, so a plan
@@ -2132,22 +2140,22 @@
      edit's Update written - and the person's monday user id, for its words (the context has no name) */
   var CAN_UPDATE = false, USER_ID = "";
   var ABILITY = {
-    outside: "הפעולות נכתבות במאנדיי בשמך, ולכן הן זמינות רק כשהתצוגה פתוחה מתוך מאנדיי.",
+    outside: "כדי לעדכן נתונים במאנדיי בשמך, יש לפתוח את התצוגה מתוך מאנדיי.",
     view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אין כאן פעולות.",
     approve: "לאפליקציה יש הרשאת כתיבה חדשה שעוד לא אישרת: מאנדיי מבקש לאשר אותה בבאנר בראש התצוגה. עד אז אין כאן פעולות.",
     no_scope: "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אין כאן פעולות. עד אז: פתיחה במאנדיי."
   };
   var WRITE_ERRORS = {
-    no_scope: "לאפליקציה אין הרשאה לכתוב בלוח הזה",
-    denied: "מאנדיי לא מרשה לך לכתוב בשורה הזאת",
-    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה",
+    no_scope: "לאפליקציה אין הרשאה לעדכן את הלוח הזה",
+    denied: "אין לך הרשאה לעדכן את השורה במאנדיי",
+    rate_limited: "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה",
     not_found: "השורה לא נמצאה בלוח (אולי נמחקה או הועברה)",
-    columns_changed: "עמודה שהפעולה כותבת לא נמצאה בלוח; נדב צריך לבדוק",
-    label_moved: "תווית שהפעולה כותבת השתנתה במאנדיי; נדב צריך לבדוק",
-    write_refused: "הכתיבה הזאת מחוץ לעמודות שהמסך רשאי לכתוב, ולכן לא נשלחה",
-    unverified: "מאנדיי ענתה, אבל הערך בשורה אינו מה שנשלח; לבדוק את השורה במאנדיי",
+    columns_changed: "עמודה שהפעולה מעדכנת לא נמצאה בלוח. יש לפנות לנדב",
+    label_moved: "תווית שהפעולה מעדכנת השתנתה במאנדיי. יש לפנות לנדב",
+    write_refused: "העדכון הזה מחוץ לעמודות שהמסך רשאי לעדכן, ולכן לא נשלח",
+    unverified: "הערך שנמצא בשורה שונה מהערך שנשלח. יש לבדוק את השורה במאנדיי",
     timeout: "מאנדיי לא ענתה בזמן",
-    monday: "מאנדיי לא קיבלה את הכתיבה"
+    monday: "מאנדיי לא קיבלה את בקשת העדכון"
   };
   var ACT = null;      /* the action on the screen: { key: "sc:123", action, phase, typed, plan, live, error, detail } */
   var DRAFT = {};      /* what was typed into an action's box, by "sc:123:<column>" */
@@ -2482,9 +2490,9 @@
     /* a write sent and not answered in time (runSteps marks what it sent with `landed`): whether it landed is not known */
     if (e && e.code === "timeout" && e.landed) {
       return (titles.length ? "נכתב " + titles.join(", ") + ". " : "") +
-        "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתבה; לבדוק את השורה במאנדיי.";
+        "מאנדיי לא הגיבה בזמן לבקשת העדכון. לא ידוע אם השינוי נשמר. יש לבדוק את השורה במאנדיי לפני ניסיון נוסף.";
     }
-    if (!titles.length) { return why + ". לא נכתב כלום."; }
+    if (!titles.length) { return why + ". לא נשמרו שינויים."; }
     return "נכתב רק " + titles.join(", ") + ", ושאר הפעולה לא: " + why + ".";
   }
   function titleOf(column) {
@@ -2532,7 +2540,7 @@
     act.phase = plan.steps.length ? "confirm" : "nothing";
     /* the plan on the screen ("shown"), or nothing to write since monday already holds it */
     use("act", { action: act.action, phase: plan.steps.length ? "shown" : "nothing" });
-    /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write).
+    /* the plan is read out where it appears: focus on the box itself, never on "שמירה" (a key held down must not write).
        It floats in the view (D4's review, 4b), so the focus scrolls nothing */
     landed(function () {
       var box = root && root.querySelector ? root.querySelector(".fin-act-box.fin-act-plan") : null;
@@ -2581,8 +2589,8 @@
          new name on the row (review 11.11). A plan made now that is not the plan shown is shown, never written. */
       var now = planAction(act.a, live, act.typed, israelToday(), act.untouched), moved = changedSince(act.live, live, act.cols);
       if (moved || now.problems.length || JSON.stringify(now.steps) !== JSON.stringify(act.plan.steps)) {
-        act.notice = moved ? "השורה השתנתה במאנדיי מאז שהתוכנית הוצגה: זו התוכנית לפי מה שיש בה עכשיו."
-          : "מה שהפעולה כותבת השתנה מאז שהתוכנית הוצגה: זו התוכנית לפי מה שיש עכשיו.";
+        act.notice = moved ? "השורה השתנתה במאנדיי מאז הצגת האישור. יש לבדוק את השינויים המוצעים מחדש."
+          : "מה שהפעולה מעדכנת השתנה מאז הצגת האישור. יש לבדוק את השינויים המוצעים מחדש.";
         settlePlan(act, live);
         return null;
       }
@@ -2595,9 +2603,9 @@
       use("act", { action: act.action, phase: "done" });
       act.phase = "done";
       landed();
-      flash("נכתב במאנדיי בשמך: " + act.plan.lines.filter(function (l) { return !l.same && !l.kept; }).map(function (l) {
+      flash("נשמר במאנדיי בשמך: " + act.plan.lines.filter(function (l) { return !l.same && !l.kept; }).map(function (l) {
         return l.title + " " + shownValue(l.kind === "status" ? "text" : l.kind, l.to);
-      }).join(", ") + ". המסך מתעדכן.");
+      }).join(", ") + ". התצוגה מתעדכנת.");
       refreshAfterWrite(0);
     }, function (e) {
       if (ACT !== act && !(e && e.landed)) { return; }
@@ -2619,25 +2627,25 @@
     switch (act.phase) {
       /* floating, it can be closed: it no longer sits in the details out of the way */
       case "invalid": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>");
-      case "reading": return actPop("<p class=\"fin-act-msg\" role=\"status\">קורא את השורה במאנדיי...</p>");
+      case "reading": return actPop("<p class=\"fin-act-msg\" role=\"status\">טוען את השורה ממאנדיי...</p>");
       case "nothing": return actPop((act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
-        "<p class=\"fin-act-msg\" role=\"status\">הכל כבר כך במאנדיי: אין מה לכתוב. " + close + "</p>");
-      case "writing": return actPop("<p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי...</p>");
+        "<p class=\"fin-act-msg\" role=\"status\">הערכים במאנדיי כבר מעודכנים. לא נדרש שינוי. " + close + "</p>");
+      case "writing": return actPop("<p class=\"fin-act-msg\" role=\"status\">מעדכן במאנדיי...</p>");
       /* a status written moves the row to its state once the server reads it; a reference typed does not move it */
-      case "done": return actPop("<p class=\"fin-act-msg ok\" role=\"status\">נכתב במאנדיי בשמך. המסך מתעדכן" +
-        (act.plan.lines.some(function (l) { return l.kind === "status" && !l.same; }) ? ", והשורה תעבור לשיבוץ שלה. " : ". ") +
+      case "done": return actPop("<p class=\"fin-act-msg ok\" role=\"status\">השינוי נשמר במאנדיי בשמך. " +
+        (act.plan.lines.some(function (l) { return l.kind === "status" && !l.same; }) ? "התצוגה והשיבוץ מתעדכנים. " : "התצוגה מתעדכנת. ") +
         close + "</p>");
       case "failed": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>" +
         (act.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(act.detail) + "</p>" : ""));
       case "confirm": {
         var p = act.plan, two = p.steps.length > 1;
-        return "<div class=\"fin-act-plan fin-act-box fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        return "<div class=\"fin-act-plan fin-act-box fin-pop\" role=\"group\" aria-label=\"מה יעודכן\" tabindex=\"-1\">" +
           (act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
-          "<p>ייכתב במאנדיי בשורה " + esc("\"" + act.live.name + "\"") +
+          "<p>יעודכן במאנדיי בשורה " + esc("\"" + act.live.name + "\"") +
           ", בשמך" + (two ? ", בשני שלבים" : "") + ":</p><ul>" + p.lines.map(planLine).join("") + "</ul>" +
           (act.warn ? "<p class=\"fin-badtext\">" + esc(act.warn) + "</p>" : "") +
           (act.after ? "<p class=\"fin-subtle\">" + esc(act.after) + "</p>" : "") +
-          "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-act-go=\"1\">כתיבה</button>" +
+          "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-act-go=\"1\">שמירה</button>" +
           "<button type=\"button\" class=\"fin-btn\" data-act-close=\"1\">ביטול</button></div></div>";
       }
       default: return "";
@@ -2667,7 +2675,7 @@
     var act = ACT && ACT.key === rowKey(r) ? ACT : null;
     var off = CAN.state === "no" || busy() || (!!act && act.phase === "confirm");
     return "<section class=\"fin-dx-block fin-acts\" aria-label=\"פעולות\"><h3 class=\"fin-dx-h\">פעולות <span class=\"fin-dx-name\">" +
-      "נכתבות במאנדיי בשמך</span></h3>" + (CAN.state === "no" ? "<p class=\"fin-act-why\">" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "</p>" : "") +
+      "נשמרות במאנדיי בשמך</span></h3>" + (CAN.state === "no" ? "<p class=\"fin-act-why\">" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "</p>" : "") +
       "<div class=\"fin-act-row\">" + list.map(function (a) {
         return fillAction(a) ? fillControl(r, a, off) : actionControl(r, a, off);
       }).join("") + "</div>" + fillSaid(r) + (act ? actStatus(act) : "") + "</section>";
@@ -2686,7 +2694,7 @@
       "\" data-books-from=\"detail\"" + (off || !fillable(r) ? " disabled" : "") +
       (CAN.state === "no" ? " title=\"" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "\"" : "") + ">" + esc(a.button) + "</button></div>";
   }
-  function writtenMark(r) { return r.written ? " <span class=\"fin-written\">נכתב, מתעדכן</span>" : ""; }
+  function writtenMark(r) { return r.written ? " <span class=\"fin-written\">נשמר, מתעדכן</span>" : ""; }
   /* whether this person may write, from monday's context: read once at mount (an app version's new permission is approved
      in monday's own banner, which loads the view again) */
   function readAbility() {
@@ -2715,7 +2723,7 @@
      the desk, where they sat in a row's details behind a confirm step. So these two sit on the row itself: its button is
      one press to them, and a box at the row's start picks it for several at once, one press for them all. Either way
      ONE confirmation lists what will be written in each row, from the rows read live as the person (one request); a row
-     whose value changed in monday since the desk's reading is not written, and the confirmation says so. On "כתיבה" each
+     whose value changed in monday since the desk's reading is not written, and the confirmation says so. On "שמירה" each
      row is read again right before its write, written through mondayWrite (the allowlist as it is) and checked against
      monday's answer - exactly as a single action (confirmAction) - one row after another; a row that changed since the
      confirmation was shown is not written. The result is said per row: written, not written and why, failed and why.
@@ -2786,13 +2794,13 @@
   }
   /* The hostile review of D4 (26.11): a batch kept the rows of the reading it was pressed on, so a newer reading that landed
      while its confirmation was open - a refresh, or the view taking the focus back from monday's item card (askAgain) -
-     withdrew a proposal on the screen and "כתיבה" still wrote it. A proposal is now always the reading's on the screen: read
+     withdrew a proposal on the screen and "שמירה" still wrote it. A proposal is now always the reading's on the screen: read
      off the current rows by id when the confirmation is made (settleFills), checked again when a newer reading lands while
      it is open (recheckBatch), and once more right before each row's write (confirmBatch). A row whose proposal left or
      changed is not written, and the confirmation and the report say so in one of these closed words */
   var FILL_GONE = "בקריאה החדשה של הלוחות כבר אין הצעה לשורה הזאת";
   var FILL_CHANGED = "ההצעה השתנתה מאז שנפתח האישור, בקריאה החדשה של הלוחות";
-  var FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לכתוב מההצעות שבו. האישור נסגר.";
+  var FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לעדכן מההצעות שבו. האישור נסגר.";
   /* the row on the screen now offers a proposal: the server's values, and the action that writes them */
   function offersFill(r) { return !!r && !!r.books_fill && !!rowFill(r); }
   /* why a row's confirmed proposal may no longer be written ("" when it may): the reading on the screen holds none for it,
@@ -2853,7 +2861,7 @@
   /* a row whose check could not be made: not written, and why (a timeout or monday asking to slow down said as such) */
   function uncheckedWords(e) {
     var why = e.code === "timeout" || e.code === "rate_limited" ? WRITE_ERRORS[e.code] : "";
-    return CITED_UNCHECKED + (why ? " (" + why + ")" : "") + ". לא נכתב כלום.";
+    return CITED_UNCHECKED + (why ? " (" + why + ")" : "") + ". לא נשמרו שינויים.";
   }
   function settleFills(batch, got) {
     batch.items.forEach(function (it) {
@@ -2875,7 +2883,7 @@
     });
   }
   /* a newer reading landed (index) while a confirmation of the books' proposals is open: each row it would write is held
-     to the reading now on the screen. A proposal that left or changed moves to "לא ייכתב" with why, the count follows, and
+     to the reading now on the screen. A proposal that left or changed moves to "לא יעודכן" with why, the count follows, and
      what waits for the next press is counted again; with nothing left to write, the confirmation closes and says why */
   function recheckBatch() {
     var b = BATCH;
@@ -2971,14 +2979,14 @@
     var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
     batch.phase = n ? "confirm" : "nothing";
     use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
-    /* the confirmation is read out where it appears: focus on the box, never on "כתיבה" (a key held down must not write).
+    /* the confirmation is read out where it appears: focus on the box, never on "שמירה" (a key held down must not write).
        It floats in the view (QA2 3), so the focus scrolls nothing */
     landed(function () {
       var box = root && root.querySelector ? root.querySelector(".fin-batch-plan") : null;
       if (box && box.focus) { box.focus({ preventScroll: true }); }
     });
   }
-  /* QA 26.11 (1): the batch's box is the one report of it - the box said "נכתב במאנדיי בשמך..." and a flash at the bottom
+  /* QA 26.11 (1): the batch's box is the one report of it - the box said "נשמר במאנדיי בשמך..." and a flash at the bottom
      said it again. The box is drawn with the students' list (batchHtml, booksPanel), so a flash says it only while that
      list is not on the screen (the companies' tab, "לפי מחזור") */
   function batchShown() { return state.tab === "b2c" && !(state.sc.view === "cohorts" && cohortsPart()); }
@@ -3018,7 +3026,7 @@
             /* the first cell that moved is said, as monday holds it now */
             var x = read.filter(function (c) { return changedSince(it.live, live, [c.column]); })[0] || w;
             it.result = "skipped";
-            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + x.title + " " +
+            it.why = "השתנתה במאנדיי מאז הצגת האישור, ועכשיו " + x.title + " " +
               shownCell(x.kind, live.cells[x.column] || { index: null, text: "" });
             return null;
           }
@@ -3054,8 +3062,8 @@
         code: written === todo.length ? "" : written ? "partial" : "none" });
       landed();
       if (!batchShown()) {
-        flash(written ? "נכתב במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
-          (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". המסך מתעדכן." : "לא נכתב כלום: הפירוט ברשימה.");
+        flash(written ? "נשמר במאנדיי בשמך ב" + (written === 1 ? "שורה אחת" : "-" + NF.format(written) + " שורות") +
+          (written < todo.length ? ", ובשאר לא: הפירוט ברשימה" : "") + ". התצוגה מתעדכנת." : "לא נשמרו שינויים: הפירוט ברשימה.");
       }
       /* one refresh after the batch, as after one action (refreshAfterWrite asks again at most twice while a written row
          is not shown yet) */
@@ -3094,7 +3102,7 @@
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
     var w = b.a.steps[0][0], books = fillAction(b.a);
     if (b.phase === "reading") {
-      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
+      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">טוען ממאנדיי " +
         (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
     }
     if (b.phase === "failed") {
@@ -3103,31 +3111,31 @@
     }
     var writes = b.items.filter(function (it) { return it.verdict === "write"; });
     var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
-    var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
+    var notWritten = skips.length ? "<p>לא יעודכן:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
     if (b.phase === "nothing") {
       /* D4's review: a confirmation a newer reading left with nothing to write says so first (recheckBatch) */
-      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה יעודכן\" tabindex=\"-1\">" +
         (b.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.notice) + "</p>" : "") +
-        "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
+        "<p>אין מה לעדכן במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
         "<div class=\"fin-act-go\">" + close + "</div></div>";
     }
     if (b.phase === "confirm") {
-      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
-        "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
+      return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה יעודכן\" tabindex=\"-1\">" +
+        "<p>" + (writes.length === 1 ? "יעודכן במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
           /* QA 26.11 (C): what the books' proposals write, in the button's words */
-          : books ? "ייכתב במאנדיי בשמך, " + esc(fillCounts(writes.map(function (it) { return it.row; }))) + "."
-            : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
+          : books ? "יעודכן במאנדיי בשמך, " + esc(fillCounts(writes.map(function (it) { return it.row; }))) + "."
+            : "יעודכן במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
           return batchLine(it, planWords(it.plan));
         }).join("") + "</ul>" + notWritten +
         (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
         /* D4: past one batch's worth, the rest of the proposals wait for the next press */
         (b.left ? "<p class=\"fin-subtle\">" + esc((b.left === 1 ? "ועוד הצעה אחת" : "ועוד " + NF.format(b.left) + " הצעות") +
-          ": בלחיצה נוספת אחרי הכתיבה, עד " + BATCH_MAX + " שורות בכתיבה אחת.") + "</p>" : "") +
-        "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
+          ": בלחיצה נוספת אחרי השמירה, עד " + BATCH_MAX + " שורות בשמירה אחת.") + "</p>" : "") +
+        "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">שמירה</button>" +
         "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
     }
     if (b.phase === "writing") {
-      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי" +
+      return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">מעדכן במאנדיי" +
         (b.total > 1 ? ", שורה " + NF.format(b.at) + " מתוך " + NF.format(b.total) : "") + "...</p></div>";
     }
     /* done: every row of the batch, by what happened to it */
@@ -3135,16 +3143,16 @@
     var failed = writes.filter(function (it) { return it.result === "failed"; });
     var later = writes.filter(function (it) { return it.result === "skipped"; });
     /* D4: a proposal written moves no row; its document leaves the books' list with the next reading */
-    var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
-      (books ? ". המסך מתעדכן." : ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן.") : "לא נכתב כלום.";
+    var head = done.length ? "נשמר במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
+      (books ? ". התצוגה מתעדכנת." : ". התצוגה והשיבוץ מתעדכנים.") : "לא נשמרו שינויים.";
     return "<div class=\"fin-batch fin-batch-done fin-pop\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
       esc(head) + " " + close + "</p>" +
-      (done.length && books ? "<p>נכתב:</p><ul>" + done.map(function (it) { return batchLine(it, writtenWords(it.plan)); }).join("") +
+      (done.length && books ? "<p>נשמר:</p><ul>" + done.map(function (it) { return batchLine(it, writtenWords(it.plan)); }).join("") +
         "</ul>" : "") +
-      (done.length && !books ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
+      (done.length && !books ? "<p>נשמר " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
         done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
       (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
-      (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
+      (later.length || skips.length ? "<p>לא נשמר:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
         "</ul>" : "") + "</div>";
   }
   /* the bar: the rows picked in this list, and one button per action they offer. QA 1 (24.11): wherever the list offers a
@@ -3310,19 +3318,19 @@
   var ID_ERRORS = {
     /* D2: no longer "(ת.ז נמצאת גם בקובץ האקסל)" - this service's server never reads an ID number, so its file has none */
     denied: "אין לך גישה ללוח הלידים במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח הלידים",
-    columns_changed: "העמודה ת.ז לא נמצאה בלוח הלידים; נדב צריך לבדוק", not_found: "הליד לא נמצא בלוח הלידים",
-    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראה ממאנדיי"
+    columns_changed: "העמודה ת.ז לא נמצאה בלוח הלידים. יש לפנות לנדב", not_found: "הליד לא נמצא בלוח הלידים",
+    rate_limited: "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראה ממאנדיי"
   };
   var BANK_ERRORS = {
     denied: "אין לך גישה לפרטי החשבון במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח Student Charge",
-    columns_changed: "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge; נדב צריך לבדוק",
+    columns_changed: "עמודה של פרטי החשבון לא נמצאה בלוח Student Charge. יש לפנות לנדב",
     not_found: "התקבול לא נמצא בלוח Student Charge",
-    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראו ממאנדיי"
+    rate_limited: "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקראו ממאנדיי"
   };
   var VAT_ERRORS = {
     denied: "אין לך גישה ללוח החברות במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח החברות",
-    columns_changed: "העמודה ח.פ לא נמצאה בלוח החברות; נדב צריך לבדוק", not_found: "החברה לא נמצאה בלוח החברות",
-    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקרא ממאנדיי"
+    columns_changed: "העמודה ח.פ לא נמצאה בלוח החברות. יש לפנות לנדב", not_found: "החברה לא נמצאה בלוח החברות",
+    rate_limited: "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה", timeout: "מאנדיי לא ענתה בזמן", monday: "לא נקרא ממאנדיי"
   };
   /* the cells of `ids` on `board`, read as the person: {item id: {column: text}} for the items monday returned on that
      board. A board that answers nothing is "denied" (the Leads board without a CRM seat answers nothing), a column it
@@ -3412,10 +3420,10 @@
      first monday.api() of the visit (tests/test_desk_browser.py holds that nothing of the page covers the desk then). What
      the page does: a read on its way shows a small spinner of its own, in its cell, where the value will show */
   var READING = "<span class=\"fin-reading\" role=\"status\"><span class=\"fin-spin\" aria-hidden=\"true\"></span>" +
-    subtle("קורא ממאנדיי...") + "</span>";
+    subtle("טוען נתונים ממאנדיי...") + "</span>";
   function liveFailed(words, code, attr, key) {
     return "<span class=\"fin-badtext\">" + esc(words[code] || words.monday) + "</span> <button type=\"button\" class=\"fin-linkbtn\" " +
-      attr + "=\"" + esc(key) + "\">לנסות שוב</button>";
+      attr + "=\"" + esc(key) + "\">ניסיון חוזר</button>";
   }
   function idSaid(e) {
     if (e.phase === "ok") { use(e.value ? "id_shown" : "id_empty"); }
@@ -3497,22 +3505,22 @@
     bad_invoice_name: "חשבונית על שם: עד 120 תווים, בשורה אחת.",
     bad_terms: "תנאי תשלום: לבחור אחד מהרשימה.",
     nothing: "אין שינוי: כל הפרטים כבר כך.",
-    changed_since_read: "בינתיים פרטי החברה השתנו במאנדיי. הערכים שמוצגים עכשיו הם העדכניים: לבדוק, ולשמור שוב.",
-    labels_drift: "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נכתב כלום. נדב צריך לבדוק."
+    changed_since_read: "פרטי החברה השתנו במאנדיי. מוצגים הערכים העדכניים. יש לבדוק אותם לפני שמירה נוספת.",
+    labels_drift: "התוויות של תנאי תשלום השתנו במאנדיי, ולכן לא נשמרו שינויים. יש לפנות לנדב."
   };
   /* why a company's details cannot be edited from here, by CAN's reason */
   var BILL_WHY = {
-    outside: "עריכת פרטי החיוב נכתבת במאנדיי בשמך, ולכן היא זמינה רק כשהתצוגה פתוחה מתוך מאנדיי.",
+    outside: "כדי לערוך את פרטי החיוב במאנדיי בשמך, יש לפתוח את התצוגה מתוך מאנדיי.",
     view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אי אפשר לערוך מכאן.",
     approve: ABILITY.approve.replace("עד אז אין כאן פעולות.", "עד אז אין כאן עריכה."),
     no_scope: "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אי אפשר לערוך מכאן."
   };
   /* a read or a write of the details that failed, in words: what monday refused, by mondayErr's code */
   var BILL_ERRORS = {
-    denied: "מאנדיי לא מרשה לך לכתוב בלוח החברות", no_scope: "לאפליקציה אין הרשאה לכתוב בלוח החברות",
-    rate_limited: "מאנדיי ביקשה להאט; לנסות שוב בעוד דקה", not_found: "החברה לא נמצאה בלוח החברות (אולי נמחקה)",
-    columns_changed: "עמודה של פרטי החיוב לא נמצאה בלוח החברות; נדב צריך לבדוק", timeout: "מאנדיי לא ענתה בזמן",
-    write_refused: "הכתיבה הזאת מחוץ לעמודות שהמסך רשאי לכתוב, ולכן לא נשלחה", monday: "מאנדיי לא קיבלה את הכתיבה"
+    denied: "אין לך הרשאה לעדכן את לוח החברות במאנדיי", no_scope: "לאפליקציה אין הרשאה לעדכן את לוח החברות",
+    rate_limited: "יותר מדי בקשות למאנדיי. אפשר לנסות שוב בעוד דקה", not_found: "החברה לא נמצאה בלוח החברות (אולי נמחקה)",
+    columns_changed: "עמודה של פרטי החיוב לא נמצאה בלוח החברות. יש לפנות לנדב", timeout: "מאנדיי לא ענתה בזמן",
+    write_refused: "העדכון הזה מחוץ לעמודות שהמסך רשאי לעדכן, ולכן לא נשלח", monday: "מאנדיי לא קיבלה את בקשת העדכון"
   };
   var BILL_READ_ERRORS = { denied: "אין לך גישה ללוח החברות במאנדיי", no_scope: "לאפליקציה אין הרשאה לקרוא את לוח החברות",
     monday: "פרטי החברה לא נקראו ממאנדיי" };
@@ -3570,7 +3578,7 @@
       if (BILL !== bill) { return; }
       bill.phase = "failed";
       bill.error = "פרטי החברה לא נקראו ממאנדיי: " + (BILL_READ_ERRORS[e && e.code] || BILL_ERRORS[e && e.code] || BILL_READ_ERRORS.monday) +
-        ". לא נכתב כלום.";
+        ". לא נשמרו שינויים.";
       bill.detail = (e && e.text) || "";
       use("bill", { phase: "failed", code: useWord(e && e.code) || "monday" });
       landed();
@@ -3698,9 +3706,9 @@
       b.outcome = outcome;
       use("bill", { phase: "done", fields: Math.min(Object.keys(b.plan.fields).length, 10), code: outcome === "posted" ? "" : outcome });
       landed();
-      flash(outcome === "posted" ? "פרטי החיוב נכתבו בלוח החברות, ועל החברה נכתב עדכון."
-        : outcome === "update_failed" ? "פרטי החיוב נכתבו בלוח החברות, אבל העדכון על החברה לא נכתב."
-          : "פרטי החיוב נכתבו בלוח החברות בשמך.");
+      flash(outcome === "posted" ? "פרטי החיוב נשמרו בלוח החברות, ועל החברה נכתב עדכון."
+        : outcome === "update_failed" ? "פרטי החיוב נשמרו בלוח החברות, אבל העדכון על החברה לא נכתב."
+          : "פרטי החיוב נשמרו בלוח החברות בשמך.");
       refreshAfterWrite(0);
     }, function (e) {
       e = e || {};
@@ -3711,9 +3719,9 @@
          "nothing was written" (review 11.11), and what it holds is read again */
       var maybe = e.code === "unverified" || (sent && e.code === "timeout");
       b.error = e.code === "labels_drift" ? ACCOUNT_ERRORS.labels_drift
-        : e.code === "unverified" ? "מאנדיי ענתה, אבל הערך שנשמר אינו מה שנשלח. לבדוק את החברה במאנדיי."
-          : maybe ? "מאנדיי לא ענתה על הכתיבה בזמן, ולכן לא ידוע אם נכתב. לבדוק את החברה במאנדיי לפני שמנסים שוב."
-            : (BILL_ERRORS[e.code] || BILL_ERRORS.monday) + ". לא נכתב כלום.";
+        : e.code === "unverified" ? "הערך שנמצא במאנדיי שונה מהערך שנשלח. יש לבדוק את החברה במאנדיי."
+          : maybe ? "מאנדיי לא הגיבה בזמן לבקשת העדכון. לא ידוע אם השינוי נשמר. יש לבדוק את החברה במאנדיי לפני ניסיון נוסף."
+            : (BILL_ERRORS[e.code] || BILL_ERRORS.monday) + ". לא נשמרו שינויים.";
       b.detail = e.text || "";
       use("bill", { phase: "failed", code: useWord(e.code) || "monday" });
       landed();
@@ -3723,9 +3731,9 @@
   }
   function billStatus(b, mine) {
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-bill-close=\"1\">סגירה</button>";
-    if (b.phase === "reading") { return "<p class=\"fin-act-msg\" role=\"status\">קורא את פרטי החברה במאנדיי...</p>"; }
+    if (b.phase === "reading") { return "<p class=\"fin-act-msg\" role=\"status\">טוען את פרטי החברה ממאנדיי...</p>"; }
     if (b.phase === "confirm") {
-      return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\"><p>ייכתב בלוח החברות, בחברה " +
+      return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה יעודכן\" tabindex=\"-1\"><p>יעודכן בלוח החברות, בחברה " +
         esc("\"" + (b.live.name || mine.name || "") + "\"") + ", בשמך:</p><ul>" + b.plan.lines.join("") + "</ul><p class=\"fin-subtle\">" +
         esc(CAN_UPDATE ? "על החברה ייכתב גם עדכון בשמך: מה היה ומה נכתב."
           : "יומן הפעילות של לוח החברות שומר מי כתב, מה היה ומה נכתב. עדכון על החברה לא ייכתב: לאפליקציה אין הרשאה לכתוב עדכונים.") +
@@ -3736,9 +3744,9 @@
     if (b.phase === "done") {
       var ok = b.outcome !== "update_failed";
       return "<p class=\"fin-act-msg " + (ok ? "ok\" role=\"status\">" : "bad\" role=\"alert\">") + esc(
-        b.outcome === "posted" ? "נכתב בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב."
-          : b.outcome === "update_failed" ? "נכתב בלוח החברות בשמך, אבל העדכון על החברה לא נכתב. יומן הפעילות של הלוח שומר מה היה ומה נכתב."
-            : "נכתב בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב.") + " " + close + "</p>" +
+        b.outcome === "posted" ? "נשמר בלוח החברות בשמך, ועל החברה נכתב עדכון: מה היה ומה נכתב."
+          : b.outcome === "update_failed" ? "נשמר בלוח החברות בשמך, אבל העדכון על החברה לא נכתב. יומן הפעילות של הלוח שומר מה היה ומה נכתב."
+            : "נשמר בלוח החברות בשמך. יומן הפעילות של הלוח שומר מה היה ומה נכתב.") + " " + close + "</p>" +
         (!ok && b.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(b.detail) + "</p>" : "");
     }
     if (b.phase === "failed") {
@@ -3803,7 +3811,7 @@
   function legendHtml() {
     var parts = ((VIEW[state.tab] && VIEW[state.tab].legend) || []).concat(state.tab === "b2c" && cohortsPart() ? [cohortsPart().legend] : []);
     return "<section class=\"fin-legend\" id=\"fin-legend\" aria-label=\"מקרא\"><div class=\"fin-legend-head\"><h2>מקרא</h2>" +
-      "<span class=\"fin-subtle\">המילים שהמסך מחשב בעצמו, השיבוצים, הסימונים, ומאיפה באות עמודות של מאנדיי. כל השאר נקרא " +
+      "<span class=\"fin-subtle\">המונחים והחישובים של המסך, השיבוצים, הסימונים, ומקור הנתונים במאנדיי. כל השאר נקרא " +
       "כאן בשם שלו במאנדיי.</span></div>" + parts.map(function (p) {
         return "<h3 class=\"fin-legend-part\">" + esc(p.title) + "</h3><dl>" + p.items.map(function (x) {
           return "<div><dt>" + esc(x.term) + "</dt><dd>" + esc(x.text) + "</dd></div>";
@@ -3829,11 +3837,11 @@
       if (VIEW.tabs.b2b) { read.push(NF.format(c.b2b_items_count) + " החיובים העסקיים"); }
       line = "נקראו כל " + read.join(" ו-") + ".";
     } else {
-      line = "<b class=\"fin-badtext\">הקריאה לא שלמה, ולכן אין להסתמך על הסכומים. רענון יקרא שוב.</b>";
+      line = "<b class=\"fin-badtext\">הנתונים ממאנדיי חלקיים. אין להסתמך על הסכומים. אפשר לרענן ולנסות שוב.</b>";
     }
-    if (BODY && BODY.stale) { line += " <span class=\"fin-badtext\">הנתונים ישנים: הקריאות האחרונות נכשלו.</span>"; }
+    if (BODY && BODY.stale) { line += " <span class=\"fin-badtext\">מוצגים נתונים לא עדכניים: ניסיונות העדכון האחרונים נכשלו.</span>"; }
     else if (BODY && BODY.last_attempt && BODY.last_attempt.ok === false) {
-      line += " <span class=\"fin-badtext\">הקריאה האחרונה נכשלה, ומוצגים הנתונים הקודמים.</span>";
+      line += " <span class=\"fin-badtext\">עדכון הנתונים האחרון נכשל, ומוצגים הנתונים הקודמים.</span>";
     }
     /* D3: which copy of the books the marks and the lists are of, or why there is none */
     var books = booksSaid();
@@ -3896,7 +3904,7 @@
   /* QA2 3 (24.11): a batch's box (fin-pop) floats in the view beside what was pressed - the row whose button it was, or the
      bar - and follows it: placed after every drawing, on a scroll (the page's, or a table frame's) and on a resize. Above
      it where the view has room, below it otherwise; where neither side holds it, on the side with more, cut to that
-     height (its own scroll). Never over what was pressed, so the pointer that pressed is never on "כתיבה". When the row
+     height (its own scroll). Never over what was pressed, so the pointer that pressed is never on "שמירה". When the row
      has left the list (a reading moved it), beside the bar */
   var POP_GAP = 6, POP_EDGE = 8;
   function popAnchor(pop) {
@@ -3922,7 +3930,7 @@
       /* D4: the button pressed - in the row's details, on its document's line in the books' list (beside which the
          document's row is never covered), or above that list */
       h = panel.querySelector(b.from === "all" ? "[data-books-all]" : "[data-books-fill=\"" + quote(b.items[0].key) + "\"]");
-      /* QA 26.11 (1): once written, the line's button gives way to "נכתב, מתעדכן" and the line stays; the report of the
+      /* QA 26.11 (1): once written, the line's button gives way to "נשמר, מתעדכן" and the line stays; the report of the
          write floats beside it. A line or a button that left the page (a newer reading took the document off the list)
          is where placePop last put the box, never the list's head, which may be far above the view */
       if (!h && b.from === "list") { h = panel.querySelector("[data-books-at=\"" + quote(b.items[0].key) + "\"]"); }
@@ -3947,7 +3955,7 @@
     return { top: p.top - window.scrollY, bottom: p.bottom - window.scrollY, left: p.left - window.scrollX, width: p.width };
   }
   /* QA 26.11 (A): a table's header sticks at the top of the view as the page scrolls, and a box placed above a row near
-     the top went under it - its first line ("ייכתב במאנדיי בשורה...") cut, seen in "הוחזר חלקי" and in "חויב": a row's
+     the top went under it - its first line ("יעודכן במאנדיי בשורה...") cut, seen in "הוחזר חלקי" and in "חויב": a row's
      action floats inside its details, which paint under the header. The room for a box starts below the header stuck at
      the top of the view, if any */
   function stuckHeads() {
@@ -4030,13 +4038,13 @@
      keeps nothing, it stays closed for the visit); from WHATS_NEW_UNTIL on it is not shown at all */
   var WHATS_NEW_KEY = "fin-whats-new-2026-11", WHATS_NEW_UNTIL = "2026-12-24";
   var WHATS_NEW = [
-    "סימון אדום \"חשבשבת: ...\" ליד תקבול: חשבשבת אומרת אחרת ממאנדיי. המשפט המלא כשמצביעים עליו, ובפרטים.",
-    "ב\"לטיפול\": \"" + "מסמכים בחשבשבת בלי חיוב במאנדיי" + "\", ולכל מסמך השורות ששמן כשם בכרטיס.",
-    "\"רישום מחשבשבת\": מספר החשבונית ותאריך התקבול שחשבשבת מציעה נכתבים במאנדיי בשמך, אחרי אישור.",
+    "סימון אדום \"חשבשבת: ...\" ליד תקבול מציין פער בין מאנדיי לחשבשבת. הפירוט מופיע בהצבעה על הסימון ובפרטי התקבול.",
+    "ב\"לטיפול\" מוצגים \"" + "מסמכי חשבשבת ללא התאמה במאנדיי" + "\", ולצד כל מסמך שורות בעלות שם תואם לשם בכרטיס.",
+    "\"רישום מחשבשבת\": השולחן מציע את מספר החשבונית ואת תאריך התקבול לפי נתוני חשבשבת. הערכים נשמרים במאנדיי בשמך לאחר אישור.",
     "\"לפי מחזור\" בלשונית הסטודנטים: לכל מחזור שוברים צפי, שולם ויתרה לגבייה לפי סטטוס השובר.",
     /* the UX review of 26.11: what came with the move after these four, each where she meets it */
     "\"לא פער\" ליד סימון או מסמך של חשבשבת, ו\"לא להציע\" ליד הצעה: מסתירים לכולם, אחרי אישור, עד שמשהו בהם משתנה.",
-    "\"שולם, שליחת קבלה: טרם\": הוותיק ראשון, ליד כל תקבול כמה ימים הוא ממתין, ולאילו מהם הקבלה כבר הופקה בחשבשבת.",
+    "\"שולם, קבלה לטיפול\": הוותיק ראשון, ליד כל תקבול כמה ימים הוא ממתין, ולאילו מהם הקבלה כבר הופקה בחשבשבת.",
     "\"ייצוא לאקסל עם ת.ז\" ליד \"ייצוא לאקסל\" ברשימת התקבולים: אותו קובץ, עם עמודת ת.ז."];
   var whatsNewShut = false;
   function whatsNewClosed() {
@@ -4066,16 +4074,16 @@
   }
   function message(text) {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">" + esc(text) + "</p>" +
-      "<button class=\"fin-btn\" type=\"button\" data-retry=\"1\">לנסות שוב</button></div></div>";
+      "<button class=\"fin-btn\" type=\"button\" data-retry=\"1\">ניסיון חוזר</button></div></div>";
   }
   /* D2: an answer with no view - the server has not read the boards yet (its first open, or an instance that has not
      read) - says so, with the refresh that reads them; a failed last attempt is said under it. An answer whose boards
      WERE read but whose view could not be built (`view_error`, app/desk/routes.py _view_of: a crash in the build) is
      another thing: a refresh reads the boards again and crashes the same way, so it is said as the server's fault, with
      no refresh offered as its fix (the adversarial review of 62fd993) */
-  var VIEW_ERROR = "הנתונים נקראו ממאנדיי, אבל השולחן לא נבנה מהם. זו תקלה בשרת, ונדב צריך לבדוק אותה.";
-  var VIEW_ERROR_KEPT = "הנתונים החדשים נקראו ממאנדיי, אבל השולחן לא נבנה מהם, ולכן מוצגים הנתונים הקודמים. זו תקלה בשרת, " +
-    "ונדב צריך לבדוק אותה.";
+  var VIEW_ERROR = "הנתונים נטענו ממאנדיי, אך תצוגת הכספים לא נוצרה. יש לפנות לנדב לבדיקת התקלה בשרת.";
+  var VIEW_ERROR_KEPT = "נתונים חדשים נטענו ממאנדיי, אך תצוגת הכספים לא נוצרה מהם, ולכן מוצגים הנתונים הקודמים. " +
+    "יש לפנות לנדב לבדיקת התקלה בשרת.";
   function noReading() {
     if (BODY && BODY.view_error) {
       root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\">" +
@@ -4084,7 +4092,7 @@
     }
     var failed = BODY && BODY.last_attempt && BODY.last_attempt.ok === false;
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">הנתונים עוד לא נקראו</p>" +
-      (failed ? "<p class=\"fin-msg\">הקריאה האחרונה נכשלה.</p>" : "") +
+      (failed ? "<p class=\"fin-msg\">עדכון הנתונים האחרון נכשל.</p>" : "") +
       "<button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div></div>";
   }
 
@@ -4253,7 +4261,7 @@
     });
   }
   /* QA 24.11, left for D4 (its review, 4c): two flashes within their time stacked in the same corner, one drawn over the
-     other - a write's "נכתב במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at
+     other - a write's "נשמר במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at
      a time: a new one takes the place of the one on the screen, and the time of the one it replaced ends with it */
   var TOAST = null;
   function flash(text, ms) {
@@ -4289,8 +4297,7 @@
      card in this tab keeps what it read before the write, and the write was right (read back from monday's answer), so
      whoever checks the card would think it failed. Opening over the view the card of a row written in this visit says so,
      once for that row, never with the write itself; for long enough to be read once the card over the view is closed */
-  var CARD_NOTE = "נכתב במאנדיי, כפי שמוצג כאן. כרטיס הפריט בלשונית הזאת עשוי להציג את הערך שלפני הכתיבה, עד שהדף ייטען " +
-    "מחדש בדפדפן.";
+  var CARD_NOTE = "הערך במאנדיי עודכן. כרטיס הפריט עשוי להציג את הערך הקודם עד לטעינה מחדש של הדף.";
   var CARD_NOTE_MS = 12000;
   function cardNote(id) {
     if (WROTE[id] !== "written") { return; }
@@ -4307,7 +4314,7 @@
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask],[data-whats-new]");
     if (!el || !root.contains(el)) { return; }
-    /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "כתיבה", its close */
+    /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "שמירה", its close */
     if (el.dataset.pick || el.dataset.pickAll || el.dataset.pickClear) {
       if (busy()) { redraw(); return; }
       /* another pick: a batch's confirmation or report on the screen gives way to the bar of what is picked now */
@@ -4316,7 +4323,7 @@
       else if (el.dataset.pickClear) { PICKED = {}; }
       else if (PICKED[el.dataset.pick]) { delete PICKED[el.dataset.pick]; }
       else if (pickedIn(scRows()).length < BATCH_MAX) { PICKED[el.dataset.pick] = true; }
-      else { flash("אפשר לבחור עד " + BATCH_MAX + " שורות לכתיבה אחת."); }
+      else { flash("אפשר לבחור עד " + BATCH_MAX + " שורות לשמירה אחת."); }
       redraw(); return;
     }
     if (el.dataset.rowAct) {

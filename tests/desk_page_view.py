@@ -17,8 +17,8 @@ TAKEN = "2026-11-24T08:00:00+00:00"
 B2C_STATES = [
     ("exception", "חריג, לבדיקה", True, "תקבולים שהמסך לא יכול לשבץ. ליד כל שורה כתוב מה לבדוק."),
     ("refund_to_execute", "החזר לביצוע", True, "החזרים שאושרו והכסף עוד לא יצא: יש סכום לזיכוי, ואין סכום החזר או תאריך החזר."),
-    ("receipt_pending", "שולם, שליחת קבלה: טרם", True, "נכנס כסף, והקבלה עליו עוד לא יצאה."),
-    ("refund_asked", "ביקש החזר, טרם אושר", False, "סטטוס תשלום \"ביקש החזר\", בלי סכום לזיכוי."),
+    ("receipt_pending", "שולם, קבלה לטיפול", True, "נכנס כסף, והקבלה עליו עוד לא יצאה."),
+    ("refund_asked", "החזר ממתין לאישור", False, "סטטוס תשלום \"ביקש החזר\", בלי סכום לזיכוי."),
     ("done", "הושלם", False, "הכסף נכנס, הקבלה יצאה, ואין החזר פתוח."),
     ("refunded", "החזר בוצע", False, "סטטוס תשלום \"תשלום הוחזר\" או \"הוחזר חלקי\"."),
     ("no_money", "ללא תקבול", False, "שורות שלא נכנס בהן כסף."),
@@ -28,7 +28,7 @@ B2B_STATES = [
     ("to_bill", "לחיוב החודש", True, "מצב חיוב \"מאושר לחיוב\", ומועד דרישת התשלום עד סוף החודש."),
     ("overdue", "בפיגור", True, "מצב חיוב \"חויב\", סטטוס תשלום \"לא שולם\", ומועד הפירעון עבר."),
     ("partial", "שולם חלקית", True, "מצב חיוב \"חויב\" וסטטוס תשלום \"שולם חלקית\"."),
-    ("open", "חויב, טרם הגיע מועד הפירעון", False, "מצב חיוב \"חויב\", ומועד הפירעון עוד לא הגיע."),
+    ("open", "חויב, ממתין לפירעון", False, "מצב חיוב \"חויב\", ומועד הפירעון עוד לא הגיע."),
     ("planned", "לחיוב בחודש הבא ואילך", False, "מועד דרישת התשלום אחרי סוף החודש."),
     ("pending", "ממתין לנתונים", False, "החיוב עוד לא הגיע לאישור."),
     ("paid", "שולם", False, "מצב חיוב \"חויב\" וסטטוס תשלום \"שולם\"."),
@@ -38,7 +38,7 @@ B2B_STATES = [
 SC_ACTIONS = [
     {"key": "refund_done", "board": "sc", "button": "סימון \"תשלום הוחזר\"",
      "steps": [[{"column": "color_mm1kxpvt", "title": "סטטוס תשלום", "kind": "status", "index": "4", "label": "תשלום הוחזר"}]],
-     "after": "אחרי הכתיבה אפליקציית ההחזרים סוגרת את הבקשה."},
+     "after": "אחרי השמירה אפליקציית ההחזרים סוגרת את הבקשה."},
     {"key": "receipt_sent", "board": "sc", "button": "שליחת קבלה: \"יצאה\"",
      "steps": [[{"column": "color_mm4cq1hw", "title": "שליחת קבלה", "kind": "status", "index": "1", "label": "יצאה"}]]},
 ]
@@ -144,7 +144,7 @@ def view() -> dict:
         by_customer[aid]["numbers"]["partial"].update(balance=c["partial_balance"], balance_unknown=0)
 
     band_heads = [("current", "לא בפיגור", "לא בפיגור"), ("d1_30", "1-30", "1-30 ימים"), ("d31_60", "31-60", "31-60 ימים"),
-                  ("d61_90", "61-90", "61-90 ימים"), ("d90", "90+", "90+ ימים"),
+                  ("d61_90", "61-90", "61-90 ימים"), ("d90", "91+", "91+ ימים"),
                   ("no_due", "ללא מועד פירעון", "ללא מועד פירעון")]
     aging_columns = [
         {"key": "name", "header": "חברה", "group": "", "kind": "text", "shown_when": ""},
@@ -157,7 +157,7 @@ def view() -> dict:
     aging_columns.append({"key": "open", "header": "סה\"כ יתרה פתוחה (ללא מע\"מ)", "group": "", "kind": "money", "shown_when": ""})
 
     def legend(tab_words):
-        return [{"title": "מילים שהמסך מחשב", "items": [{"term": t, "text": x} for t, x in tab_words]}]
+        return [{"title": "מונחים וחישובים", "items": [{"term": t, "text": x} for t, x in tab_words]}]
 
     return {
         "schema": "finance/3", "read_at": TAKEN, "today": TODAY, "tabs": {"b2c": True, "b2b": True},
@@ -168,7 +168,7 @@ def view() -> dict:
                 "tasks_about": "כל מה שמחכה לפעולה, יחד.", "periods": periods, "rows": sc_rows,
                 "count": 5, "students": 5, "money_in": "18450", "refunded": "4000", "net": "14450", "since": "2026-10-01",
                 "dated_by_payment": 5, "actions": {"board": SC_BOARD, "list": SC_ACTIONS},
-                "legend": legend([("תקבול", "שורה בלוח Student Charge."), ("שיבוץ", "המשבצת שהמסך שם בה את התקבול.")])},
+                "legend": legend([("תקבול", "שורה בלוח Student Charge."), ("שיבוץ", "הרשימה שהמסך שם בה את התקבול.")])},
         "b2b": {"states": [{"key": k, "label": label, "task": task, "about": about} for k, label, task, about in B2B_STATES],
                 "tasks_about": "כל מה שמחכה לפעולה, יחד.", "numbers": numbers, "count": 3, "open": "22627.12",
                 "overdue": "15000", "overdue_no_terms": "0", "customers": customers, "by_customer": by_customer,
