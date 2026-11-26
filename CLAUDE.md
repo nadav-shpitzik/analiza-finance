@@ -156,8 +156,11 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   sums (`checks.ties`). The reading reads the enrollments of the cohorts with a price through `board_relation_mm1hetrb`
   (step 5, `roster_ids`), and a refresh reads those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
   file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
-  cohort, every student under the same money columns so they sum to their line, the cohorts without a price). Tests:
-  `tests/test_desk_cohorts.py`.
+  cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
+  "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first
+  figure and the one tinted column, a cohort row opening to its students, the price and the count under the cohort's name
+  and agorot only where an amount has them (the table fits 1280 and 1400), its legend part the server's; its clicks on
+  `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

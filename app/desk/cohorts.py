@@ -18,6 +18,10 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    - One student per person: a person's enrollments in the cohort (their Directory link, `board_relation_mm0spa0g`) are one
      student, as the helper counts; an enrollment without the link is a student of its own.
    - An enrollment linked to two cohorts is in neither count: it is listed in both, out, with why.
+   - An archived enrollment or cohort is read as any other (the reader keeps it, its `state` saying so): a refresh cannot
+     see an item archived - its time does not move - and the desk lays a refresh over a full reading the same either way.
+     An archived enrollment is counted until its Status says otherwise, as the helper's count keeps it until the cohort
+     is touched (knowledge backlog 0157).
 3. WHAT A STUDENT PAID: the Student Charge rows linked to their enrollments in the cohort, each row's `net` - what the desk
    counts as "התקבלו" less "הוחזרו" (app/desk/view.py `_b2c_row`, its money reused, never forked: only a status that brought
    money in, a refund netted, never above what came in). The deposit, and the balance row the helper opens when sales mark
@@ -99,7 +103,8 @@ UNPRICED_WHY = OrderedDict([("empty", "אין מחיר"), ("unreadable", "המח
 
 # what the page says above the table, and the legend's part on the students' tab
 ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים), %s, ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
-         "כסף שכבר היה צריך להיכנס. לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה."
+         "כסף שכבר היה צריך להיכנס. לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה. "
+         "הקוד של מחזור והשם של סטודנט/ית פותחים אותם במאנדיי."
          % (EXPECTED_WORD, PAID_WORD, BALANCE_WORD, _q(VOUCHER["1"])))
 LEGEND_TITLE = VIEW_WORD
 LEGEND = [
@@ -115,8 +120,9 @@ LEGEND = [
 ] + [(p["label"], p["about"]) for p in PARTS.values()] + [
     (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר בצפי."
                   % (_q(VOUCHER["2"]), _q(VOUCHER["3"]))),
-    (OUT_WORD, "%s, %s או %s, הרשמה שה-Status שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, ולא "
-               "נספרת בצפי וביתרה." % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), _IN_LABELS)),
+    (OUT_WORD, "%s, %s או %s, הרשמה שה-Status שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, "
+               "ולא נספרת בצפי וביתרה." % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]),
+                                           _IN_LABELS)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
     ("סכום מחוק", "ב%s: מה ששילם/ה סטודנט/ית עם ויתור או מחוץ לחשבון. מוצג, ולא נספר בשורת המחזור." % PAID_WORD),
     (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה: לא נספרים לאף סטודנט/ית."),
@@ -128,20 +134,31 @@ LEGEND = [
     ("Status", "עמודה בלוח ההרשמות: מצב ההרשמה, למשל %s או %s." % (_q("נרשם"), _q("ביטל השתתפות"))),
 ]
 
-# A student's chips: the server's words, the page draws them as sent
+# A student's chips: the server's words, the page draws them as sent; each is in the legend (NOTES_SAID)
 NOTES = {"voucher_conflict": "בהרשמות של הסטודנט/ית שני סטטוסי שובר",
          "voucher_unknown": "תווית שובר שהמסך לא מכיר",
          "payment_uncounted": "תקבול שהמסך לא סופר בכסף",
          "overpaid": OVERPAID_WORD,
          "enrollments": "כמה הרשמות במחזור"}
+NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במחזור, ובכל אחת סטטוס שובר אחר: היתרה ב%s, עד שיתוקן בהרשמה."
+                                  % _q(NO_STATUS_LABEL),
+              "voucher_unknown": "בסטטוס השובר תווית שנוספה במאנדיי אחרי שהמסך נבנה: היתרה ב%s." % _q(NO_STATUS_LABEL),
+              "payment_uncounted": "לסטודנט/ית תקבול שסכום ששולם בו לא הוקלד, או שבסטטוס התשלום שלו תווית שהמסך לא מכיר: "
+                                   "הוא לא נספר ב%s, ולכן היתרה גדולה ממה שבאמת חסר." % _q(PAID_WORD),
+              "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד."}
+# said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
+NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
 OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
-# (a part's key) is drawn only when a cohort shown has money in it - on the page and in the file alike
+# (a part's key) is drawn only when a cohort shown has money in it - on the page and in the file alike. The page says the
+# price and the students counted under the cohort's name (FOLDED), so its table fits monday's widths of 1280 and 1400 with
+# sums as long as real ones (QA 4 of 24.11); the file keeps them as columns
 COLUMNS = [("cohort", "מחזור", "text", ""), ("price", PRICE_WORD, "amount", ""), ("students", STUDENTS_WORD, "int", ""),
            ("expected", EXPECTED_WORD, "money", ""), ("paid", PAID_WORD, "money", "")] + \
           [("part_" + k, p["label"], "money", k if k in PART_OPTIONAL else "") for k, p in PARTS.items()] + \
           [("balance", BALANCE_WORD, "money", "")]
+FOLDED = ("price", "students")
 # what a cohort's line and the totals sum (a part as part_<key>)
 SUM_FIELDS = ("expected", "paid", "balance", "overpaid", "waived_paid", "out_paid")
 COUNT_FIELDS = ("students", "waived", "out")
@@ -345,8 +362,14 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     unpriced.sort(key=lambda x: x["start"], reverse=True)
     return {"cohorts": lines, "unpriced": unpriced, "totals": cohort_totals(lines),
             "parts": [{"key": k, "label": p["label"], "about": p["about"]} for k, p in PARTS.items()],
-            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when} for k, h, kind, when in COLUMNS],
-            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]},
+            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when, "folded": k in FOLDED}
+                        for k, h, kind, when in COLUMNS],
+            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]
+                                       + [{"term": NOTES[k], "text": NOTES_SAID[k]} for k in NOTES_SAID]},
+            # the view's own words, which the page draws beside the server's numbers
+            "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
+                      "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
+                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
             "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()],
             "checks": {"ties": all(_ties(x) for x in lines)
                        and cohort_totals(lines) == _totals_by_student(lines)}}
@@ -369,7 +392,7 @@ def _totals_by_student(lines: list) -> dict:
 
 def columns_for(lines: list) -> list:
     """The table's columns for these cohorts: an optional part only when one of them has money in it (the page drops it
-    exactly so: frontend/finance.js cohortCols)."""
+    exactly so, frontend/finance.js cohortCols, and says the FOLDED two under the cohort's name instead of as columns)."""
     return [{"key": k, "header": h, "kind": kind} for k, h, kind, when in COLUMNS
             if not when or any(x["part_" + when] for x in lines)]
 

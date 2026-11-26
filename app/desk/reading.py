@@ -258,7 +258,8 @@ COHORT_CANCELLED = "2"  # Cohorts' Status "בוטל" (color_mkzh250v, by index; 
 
 def roster_cohort(row: dict) -> bool:
     """A cohort whose enrollments the reading reads: its "מחיר" holds text, and its Status is not "בוטל" (a cancelled
-    cohort's students owe it nothing, app/desk/cohorts.py)."""
+    cohort's students owe it nothing, app/desk/cohorts.py). Whether it is archived is not asked: a refresh cannot see an
+    item archived (its time does not move), and the desk reads a linked item the same, archived or not."""
     return bool(str(row.get(CO["price"]) or "").strip()) and str(row.get(CO["status"] + "#") or "") != COHORT_CANCELLED
 
 

@@ -167,6 +167,16 @@ def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_sum(how):
         assert s["said"] == "%s: Status %s" % (ch.OUT_WORD, label)
 
 
+def test_an_archived_enrollment_or_cohort_is_read_as_any_other_since_a_refresh_cannot_see_an_archive():
+    # the reader keeps an archived item, its `state` saying so; a refresh cannot see it archived (its time does not move),
+    # so the desk, built the same from a refresh and from a full reading, never asks
+    rows = [dict(enr("E1", voucher="1"), state="archived"), enr("E2", voucher="1")]
+    ln = line(part_of([sc(1, paid="4000", enr=["E1"])], [coh(roster=["E1", "E2"])], rows))
+    assert student(ln, "E1")["standing"] == "counted" and ln["students"] == 2
+    part = part_of([], [dict(coh(roster=["E2"]), state="archived")], [enr("E2", voucher="1")])
+    assert [x["id"] for x in part["cohorts"]] == ["C1"] and rd.roster_cohort(dict(coh(), state="archived"))
+
+
 def test_the_enrollment_statuses_in_the_count_are_the_helpers_in_set():
     assert list(ch.ENROLLMENT_IN) == ["1", "2", "3", "4"]
     assert list(ch.ENROLLMENT_IN.values()) == ["נרשם", "פעיל", "At Risk", "סיים"]
@@ -618,7 +628,15 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
         p = rng.choice([100 + i for i in range(1, 9)])
         w.set(p, enrollment=rel(*rng.sample(enrollments(), rng.choice([0, 1, 1]))), paid=str(rng.randint(10, 60) * 100))
 
-    edits = [voucher, standing, moved, joined, price, cancelled, paid]
+    def archived():
+        # an enrollment archived: its time does not move, and whether the cohort's link still names it is monday's - here it
+        # does not; a refresh and a full reading must agree either way
+        if rng.random() < 0.25:                          # rarely: the world is small
+            w.items[str(rng.choice(enrollments()))]["state"] = "archived"
+            if rng.random() < 0.5:
+                sync_rosters(w)
+
+    edits = [voucher, standing, moved, joined, price, cancelled, paid, archived]
     students = 0
     for _ in range(80):
         for edit in rng.sample(edits, rng.choice([1, 2, 3])):
