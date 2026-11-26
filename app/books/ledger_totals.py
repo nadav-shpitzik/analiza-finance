@@ -20,17 +20,27 @@ line goes into the merged line when
    listing), never guessed by a name. Until the list is set, a run stores nothing (`salary_codes_not_set`);
 2. it has fewer than MIN_ACCOUNTS (3) distinct accounts (`small`): a code that holds one person's account exposes their
    monthly amount (ADR-0187 "שארית ידועה");
-3. its debit or its credit is filled by fewer than MIN_ACCOUNTS accounts (`side`): with one account debited and others
-   credited, the debit total is that one account's own. A side is filled by the accounts whose sum on it is not zero; an
-   empty side exposes no one. The whole line moves.
-The merged line is kept only when it has MIN_ACCOUNTS accounts or more and neither of its sides is filled by fewer (the
-same rule a line stands by); otherwise it is withheld whole and counted (`merged: "withheld"`).
+3. its debit or its credit is thin (`side`, `_thin`), and the whole line moves. A side is filled by the accounts whose sum
+   on it is not zero, and it is thin when
+   (a) one or two accounts fill it: with one account debited and others credited, the debit total is that one account's
+       own; or
+   (b) its total T is not zero and one account's sum, or two accounts' sum, lies strictly within REST_SHARE (a tenth) of
+       it, |T - s| < REST_SHARE * |T|: the other accounts move the total by less than a tenth of it. Counting accounts is
+       not enough: two accounts that cancel (+X and -X, a reclassification) fill a side and leave its total one account's
+       own. This is the (2, 90%) dominance rule of statistical disclosure control, searched over every one and every two
+       accounts (`_dominated`), not only the largest, because a sum here can be negative.
+   An empty side, or one whose total is zero, exposes no one.
+The merged line stands on the same terms as a line: MIN_ACCOUNTS accounts or more, and neither of its sides thin. While it
+does not, the lines that stand are folded into it one at a time, the fewest accounts first and then the lowest sort code,
+each counted as `balance`, until it stands. When no standing line is left and it still does not stand, the month keeps no
+line at all (`merged: "withheld"`, `kept_lines` 0).
 
-**What the balance still reveals.** A month's lines net to zero: every transaction balances, the date cut takes whole
-transactions, and batch 9998 balances on its own and is kept apart. So the one cell a month can withhold - the merged
-line - has as its net minus the kept lines' nets, and the balance reveals that withheld aggregate and nothing finer: a
-multi-person sum, except in a month with fewer than 3 such accounts, when it is those one or two accounts' own. And a
-multi-person sum can still be almost one account's (there is no dominance rule).
+**What the balance still reveals: nothing.** A month's lines net to zero: every transaction balances, the date cut takes
+whole transactions, and batch 9998 balances on its own and is kept apart. So a month that withheld one cell and kept the
+rest would give the withheld cell away, as minus the kept lines' nets: a merged line of one person's account, withheld,
+would be that person's monthly money again (ADR-0187's addendum: a hidden line is derived from the rest). That is why the
+merged line is never withheld while another line stands: a month keeps every line, and their nets sum to zero and reveal
+nothing that is not kept, or it keeps none, and there is nothing to derive from.
 
 **Batch 9998** (the income and expense transfer at the end of a year or a quarter, which zeroes the expense cards) never
 enters a line: its rows and totals are counted apart, per month (ADR-0187 §5), even though the report is defined without
@@ -38,16 +48,23 @@ income transfers. Its debit equals its credit.
 
 **A run recomputes whole months and replaces them** (ADR-0187 §4), one transaction per month (LedgerStore.replace_month).
 A month is replaced only when it was read whole:
-1. every part answered under the report's `limit`. A part that reaches it (`hit_limit`) is split in two by sort code, at
-   the median of the codes it carried, until every part is under the limit; a part of one sort code at the limit, or more
-   than MAX_PARTS calls, is `cut`. The sort-code cut narrower than the whole range is unverified live (only the whole
-   range was sent, 26.11), so a part whose rows fall outside its range is `outside`, never summed.
+1. every part answered under SPLIT_AT (900) rows and under the report's `limit`. The External file's `limit` (10000) is
+   not sent (app/books/ledger.py), so a cap of the vendor's own would cut an answer at exactly that cap, between two rows
+   ordered by date, and a cut between two whole transactions leaves the month balanced: rule 3 cannot see it. October
+   2026 came back whole in one answer of 902 rows (26.11, spec §4.4), so no fixed cap of the vendor's is under 902; and a
+   part of SPLIT_AT rows or more is split exactly as a part at the limit is (`hit_limit`), so a cap at SPLIT_AT or above
+   can never cut a part that is summed. A part is split in two by sort code, at the median of the codes it carried, until
+   every part is under both; a part of one sort code at SPLIT_AT rows or more (or at the limit), or more than MAX_PARTS
+   calls, is `cut`. No split by date is made: it would be the next step if one sort code ever carries that many rows in a
+   month, and until then such a month is refused. The sort-code cut narrower than the whole range is unverified live
+   (only the whole range was sent, 26.11), so a part whose rows fall outside its range is `outside`, never summed. A
+   month of October's size is now read in parts, so the first run tries that cut: ignored, it refuses the month.
 2. every row readable: a date in the month asked, a sort code in its part's range (never MERGED_CODE), a key, numeric
    debit and credit, a batch that is a whole number when it is there (`unreadable`, `outside`); and the rows carry every
    column the totals read (`columns`).
-3. the month balances: its debits equal its credits (`unbalanced`). This is the one check that does not depend on knowing
-   the cap the vendor applies: the External file's `limit` is not sent (app/books/ledger.py), so an answer cut by a lower
-   cap of the server's would pass `hit_limit`. A hypothesis the first run settles.
+3. the month balances: its debits equal its credits (`unbalanced`). Every transaction balances and the date cut takes
+   whole transactions, so this catches a row lost or misread inside a transaction; it is no guard against a cut between
+   two whole transactions (rule 1 is).
 4. an answer of no rows ("data not found") for a month the store holds rows of is doubted, not trusted (`emptied`).
 
 **The dry listing** (`listing`) reads the same months the same way and stores nothing: per sort code its name and its
@@ -64,6 +81,7 @@ import math
 import re
 import time
 import unicodedata
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -82,15 +100,19 @@ BATCH_CAPTION = "מספר מנה"
 NEEDED = (DATE_CAPTION, KEY_CAPTION, SORT_CAPTION, DEBIT_CAPTION, CREDIT_CAPTION, BATCH_CAPTION)
 TRANSFER_BATCH = 9998
 MIN_ACCOUNTS = 3  # a line, or a side of one, filled by fewer accounts never stands alone (the owner, 26.11)
+REST_SHARE = Decimal("0.1")  # a side's total one or two accounts hold to within this share of it is theirs: thin (b)
 MERGED_CODE = -1  # the merged line's sort code: never a real one (a row that carries it is unreadable)
 MERGED_NAME = "שכר ונלווים וקודים קטנים"
-MERGE_WHY = ("salary", "small", "side")  # why a line went into the merged line, in the order they are asked
-MERGED_STATES = ("none", "kept", "withheld")
+MERGE_WHY = ("salary", "small", "side", "balance")  # why a line went into the merged line, in the order they are asked
+MERGED_STATES = ("none", "kept", "withheld")  # "withheld": no line of the month is kept
 KEY_DIGITS_MAX = 5  # a key with more digits is never stored, whatever shape the cleaning gave it
 MAX_KEY = 64
 MAX_NAME = 200
 MAX_MONTHS = 12
 MAX_PARTS = 16  # report calls for one month: a split that needs more is `cut`
+# A part of this many rows or more is split as a part at the limit is: the file's limit is not sent, and a fixed cap of the
+# vendor's own is not under 902 (October 2026 came whole at 902 rows, 26.11), so it can never cut a part that is summed.
+SPLIT_AT = 900
 MARGIN_S = 1.0
 # The salary list's states (/health says them, never the list).
 SALARY_STATES = ("set", "missing", "bad")
@@ -329,14 +351,50 @@ class _Reader:
         return None if read is None else read(row)
 
 
-def _thin(accounts: dict) -> bool:
-    """Whether a side - the debit or the credit - is filled by some accounts but fewer than MIN_ACCOUNTS. An account fills
-    a side when its sum on that side is not zero; a side no account fills is empty and exposes no one."""
-    for index in (0, 1):
-        filled = sum(1 for sums in accounts.values() if sums[index] != 0)
-        if 0 < filled < MIN_ACCOUNTS:
+def _dominated(sums: list) -> bool:
+    """Rule (b) of a thin side: its total T is not zero, and one account's sum, or the sum of two accounts, lies strictly
+    within REST_SHARE of it, |T - s| < REST_SHARE * |T|. `sums` are the side's non-zero sums, one per account. Every one
+    and every two accounts are searched, not only the largest: a sum can be negative, so two accounts that cancel can
+    stand between the largest and the total. Sorted once: the singles in one pass, and for each account the partners that
+    bring it into the window by bisection, O(n log n)."""
+    total = sum(sums, Decimal(0))
+    if total == 0:
+        return False
+    room = REST_SHARE * abs(total)
+    low, high = total - room, total + room  # s is near when low < s < high
+    values = sorted(sums)
+    if any(low < value < high for value in values):
+        return True
+    for index, value in enumerate(values):
+        first = bisect_right(values, low - value)  # the partners w with low - value < w < high - value
+        end = bisect_left(values, high - value)
+        if end - first > 1 or (end - first == 1 and first != index):  # a partner that is another account
             return True
     return False
+
+
+def _thin(accounts: dict) -> bool:
+    """Whether a side - the debit or the credit - is thin: (a) filled by some accounts but fewer than MIN_ACCOUNTS, or (b)
+    held by one or two of them to within REST_SHARE of its total (`_dominated`). An account fills a side when its sum on
+    that side is not zero; a side no account fills is empty and exposes no one."""
+    for index in (0, 1):
+        sums = [held[index] for held in accounts.values() if held[index] != 0]
+        if 0 < len(sums) < MIN_ACCOUNTS or _dominated(sums):
+            return True
+    return False
+
+
+def _stands(accounts: dict) -> bool:
+    """Whether a line of these accounts may be kept: MIN_ACCOUNTS accounts or more, and neither side thin."""
+    return len(accounts) >= MIN_ACCOUNTS and not _thin(accounts)
+
+
+def _fold(into: dict, accounts: dict) -> None:
+    """Add a line's accounts' own sums into the merged line's, account by account."""
+    for who, sums in accounts.items():
+        held = into.setdefault(who, [Decimal(0), Decimal(0)])
+        held[0] += sums[0]
+        held[1] += sums[1]
 
 
 def _total(accounts: dict, index: int) -> Decimal:
@@ -441,30 +499,44 @@ class _Month:
         return result
 
     def finish(self, result: MonthResult, salary: frozenset) -> MonthResult:
-        """The lines to keep: each line that stands on its own, and the merged line (the module's docstring)."""
+        """The lines to keep: each line that stands on its own and the merged line, or no line at all (the module's
+        docstring)."""
         self.counts(result)
-        lines, merged, merged_rows, why_counts = [], {}, 0, Counter()
+        standing, merged, merged_rows, why_counts = [], {}, 0, Counter()
         for code in sorted(self.lines):
             rows, accounts = self.lines[code]
             why = ("salary" if code in salary else "small" if len(accounts) < MIN_ACCOUNTS
                    else "side" if _thin(accounts) else None)
             if why is None:
-                lines.append(Line(code, _total(accounts, 0), _total(accounts, 1), rows, len(accounts),
-                                  sum(1 for who in accounts if who in self.masked)))
+                standing.append(code)
                 continue
             why_counts[why] += 1
             merged_rows += rows
-            for who, sums in accounts.items():
-                into = merged.setdefault(who, [Decimal(0), Decimal(0)])
-                into[0] += sums[0]
-                into[1] += sums[1]
+            _fold(merged, accounts)
+        stands = True
+        if why_counts:
+            # the merged line withheld beside lines kept would be minus their nets: while it does not stand, the standing
+            # lines go into it, the fewest accounts first, then the lowest code; none left, the month keeps nothing
+            standing.sort(key=lambda code: (len(self.lines[code][1]), code))
+            stands = _stands(merged)
+            while not stands and standing:
+                rows, accounts = self.lines[standing.pop(0)]
+                why_counts["balance"] += 1
+                merged_rows += rows
+                _fold(merged, accounts)
+                stands = _stands(merged)
+        lines = []
+        for code in sorted(standing):
+            rows, accounts = self.lines[code]
+            lines.append(Line(code, _total(accounts, 0), _total(accounts, 1), rows, len(accounts),
+                              sum(1 for who in accounts if who in self.masked)))
         if not why_counts:
             result.merged = "none"
-        elif len(merged) >= MIN_ACCOUNTS and not _thin(merged):
+        elif stands:
             result.merged = "kept"
             lines.append(Line(MERGED_CODE, _total(merged, 0), _total(merged, 1), merged_rows, len(merged),
                               sum(1 for who in merged if who in self.masked)))
-        else:
+        else:  # every standing line went in, and it still does not stand
             result.merged = "withheld"
         result.lines = lines
         result.kept_lines = len(lines)
@@ -490,7 +562,8 @@ def read_month(call: Call, definition: Definition, month: str, deadline: float,
                clock: Callable[[], float] = time.monotonic) -> tuple:
     """(MonthResult, _Month): one month read whole, balanced and summed in memory - or (refused MonthResult, None).
     `call(parameters, deadline)` runs the report (WizClient.export_report with the definition's datafile). A part that
-    reaches the limit is split by sort code (the module's docstring); every answer is summed and dropped as it comes."""
+    reaches the limit, or SPLIT_AT rows, is split by sort code (the module's docstring, rule 1); every answer is summed and
+    dropped as it comes."""
     result = MonthResult(month)
     acc = _Month(month)
     pending = [WHOLE_SORT]
@@ -522,7 +595,7 @@ def read_month(call: Call, definition: Definition, month: str, deadline: float,
         reader = _Reader(rows, definition)
         if reader.missing():
             return result.refuse("columns"), None
-        if len(rows) >= definition.limit:  # hit_limit: this part may be cut
+        if len(rows) >= min(definition.limit, SPLIT_AT):  # at the limit, or at a cap of the vendor's own: may be cut
             codes = acc.codes_in(rows, reader, low, high)
             del rows, reader
             if len(codes) < 2:

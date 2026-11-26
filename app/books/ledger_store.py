@@ -186,8 +186,9 @@ def _money(value) -> Optional[str]:
 def read_totals(url: str, company: str, first: str, last: str, connect_timeout_s: int = CONNECT_TIMEOUT_S) -> dict:
     """The kept lines of the months from `first` to `last` ("YYYY-MM"), each with its sort code's name, and each month's
     counts and batch 9998 - in ONE repeatable-read transaction, on a connection of its own (a read never waits for a run's
-    lock). Category totals only: a line of fewer than three accounts, or a side fewer fill, was folded into the merged line
-    (MERGED_CODE, named MERGED_NAME), and a merged line of fewer was never stored."""
+    lock). Category totals only: a line of fewer than three accounts, or with a side one or two accounts hold, was folded
+    into the merged line (MERGED_CODE, named MERGED_NAME), and a month whose merged line could not stand, even with the
+    other lines folded into it, kept no line at all."""
     with _guard():
         conn = _connect(url, autocommit=True, connect_timeout_s=connect_timeout_s)
         try:

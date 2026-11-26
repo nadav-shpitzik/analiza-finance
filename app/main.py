@@ -667,7 +667,9 @@ def salary_state(text: str) -> str:
 @app.post("/api/books/ledger/run")
 async def ledger_run(request: Request) -> JSONResponse:
     """B3 (backlog 0301; ADR-0187 §2-§5): the ledger report run for whole months, each summed by sort code, its salary codes
-    and its thin lines merged into one line, and replaced in one transaction (app/books/ledger_totals.py). Behind the sync
+    and its thin lines (fewer than three accounts, or a side one or two accounts hold to within a tenth) merged into one
+    line, that line grown by the fewest-account lines until it stands too or the month keeps none (the review of 26.11),
+    and replaced in one transaction (app/books/ledger_totals.py). Behind the sync
     key, checked before the body is read. The body is `{"months": ["YYYY-MM", ...], "dry": false}` (1 to 12 months), or
     nothing for the previous and the current month in Israel time. Always 200 after the key, boxed like a tick
     (REQUEST_BOX_S from the request's arrival): `ok`, `skipped`, `reasons` (closed: ledger_totals.RUN_REASONS), and per
