@@ -271,6 +271,26 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-seg .fin-btn:first-child { border-start-start-radius: 8px; border-end-start-radius: 8px; }
 #screen-finance .fin-seg .fin-btn:last-child { border-start-end-radius: 8px; border-end-end-radius: 8px; margin-inline-start: -1px; }
 #screen-finance .fin-btn.on { background: var(--fin-sel); border-color: var(--fin-focus); font-weight: 600; position: relative; }
+/* D4, "לפי מחזור" (knowledge backlog 0313): "אושר - ממתין לתשלום", money that should already have come in, is the view's one
+   accent - its figure first, in a light amber, and its column lightly tinted, its amounts heavier. A cohort's students sit
+   under it on the page's grey, indented, a student out of the count quieter; what is said of a cohort closes its list */
+#screen-finance .fin-figs .fin-hi { padding: 4px 10px 5px; border-radius: 8px; background: color-mix(in srgb, var(--fin-wait) 16%, var(--fin-panel)); }
+#screen-finance table.fin-cohorts-t .fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-panel)); }
+#screen-finance table.fin-cohorts-t th.fin-hi { color: var(--fin-ink); }
+#screen-finance table.fin-cohorts-t tr.fin-rowbtn td.fin-hi, #screen-finance table.fin-cohorts-t tfoot td.fin-hi { font-weight: 600; }
+#screen-finance table.fin-cohorts-t td.k-cohort { min-width: 170px; }
+/* sums of six figures in seven columns: a little less room around each, and its digits a touch smaller, so the table fits
+   monday's widths of 1280 and 1400 (QA 4 of 24.11) */
+#screen-finance table.fin-cohorts-t td.n, #screen-finance table.fin-cohorts-t th.n { padding-inline: 7px; }
+#screen-finance table.fin-cohorts-t td.n { font-size: 13.5px; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td { background: var(--fin-soft); font-size: 13px; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td.fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-soft)); }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td.k-cohort { padding-inline-start: 28px; white-space: normal; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow-off td { color: var(--fin-muted); }
+#screen-finance .fin-sub-said { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance table.fin-cohorts-t td.fin-subnote { color: var(--fin-muted); font-size: 12.5px; padding-inline-start: 28px; white-space: normal; }
+#screen-finance .fin-unpriced { padding: 10px 16px 12px; border-top: 1px solid var(--fin-line); font-size: 13px; color: var(--fin-muted); }
+#screen-finance .fin-unpriced ul { margin: 6px 0 0; padding-inline-start: 18px; }
 
 /* a row's details (10.11, Nadav: "בטוח אפשר לשפר פה את הUI"): the situation in one line with the way to monday beside it,
    then only what the row does not show, two pairs a line, then the warnings as sentences */

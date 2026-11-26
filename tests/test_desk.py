@@ -152,7 +152,10 @@ class World:
     `window_error` answers the windows' request with a GraphQL error, `window_item` reshapes each item of a window, and
     `window_states` says which items a window answers (whether monday's answers archived ones is not verified). An item
     `leave`s its charge board archived or deleted, as monday's items_page and items_count stop holding it; state "gone"
-    is an id monday no longer answers at all."""
+    is an id monday no longer answers at all.
+
+    D4 (26.11): a status filter (`any_of` on a status column, alias `t0`) beside the columns check and beside the windows -
+    the active items whose cell holds one of the indexes, `track_page` at a time (`tracked`: what each asked)."""
 
     def __init__(self):
         self.items: dict = {}
@@ -175,6 +178,8 @@ class World:
         self.window_states = ("active",)
         self.windows: list = []  # the days each windows' request asked for
         self.windowed: list = []  # every board a window was answered for
+        self.track_page = None  # D4: a status filter's page size (None: one page)
+        self.tracked: list = []  # D4: (board, column, indexes) of every status filter answered
         self._lock = threading.Lock()
 
     def add(self, board: str, item_id: int, name: str, state: str = "active", **cells) -> None:
@@ -271,7 +276,34 @@ class World:
                 "cursor": None if nxt is None else "w|%s|%d|%d" % (board, days, nxt), "items": items}}]
         for alias, n in re.findall(r"(l(\d+)): items\(", query):
             data[alias] = self.answer_by_id(var["li" + n], var["lc"])
+        data.update(self.answer_track(query, var))
         return httpx.Response(200, json={"data": data})
+
+    # ---- D4: a status filter, monday's any_of on a status column ----
+    _TRACK = re.compile(r't0: boards\(ids: \$t0\) \{ items_page\(limit: \$limit, query_params: \{rules: \[\{column_id: '
+                        r'"([a-z0-9_]+)", compare_value: \[([0-9, ]+)\], operator: any_of\}\]\}\) \{ cursor items \{ id \} \} \}')
+
+    def tracked_items(self, board: str, column: str, indexes: list) -> list:
+        return [i for i, x in self.items.items() if x["board"] == board and x["state"] == "active"
+                and isinstance(x["cells"].get(column), dict) and x["cells"][column].get("index") in indexes]
+
+    def track_page_of(self, board: str, column: str, indexes: list, at: int) -> dict:
+        ids = self.tracked_items(board, column, indexes)
+        size = self.track_page or len(ids) or 1
+        nxt = at + size if at + size < len(ids) else None
+        cursor = None if nxt is None else "t|%s|%s|%s|%d" % (board, column, ",".join(map(str, indexes)), nxt)
+        return {"cursor": cursor, "items": [{"id": i} for i in ids[at:at + size]]}
+
+    def answer_track(self, query: str, var: dict) -> dict:
+        """The alias `t0` when the request carries one: the first page of the board's items the rule names."""
+        m = self._TRACK.search(query)
+        if not m:
+            assert "any_of" not in query, "a status filter of another shape: " + query[-200:]
+            return {}
+        board, column = var["t0"][0], m.group(1)
+        indexes = [int(x) for x in m.group(2).split(",")]
+        self.tracked.append((board, column, indexes))
+        return {"t0": [] if board in self.hidden else [{"items_page": self.track_page_of(board, column, indexes, 0)}]}
 
     def own_columns(self, board: str) -> set:
         key = board_key(board)
@@ -310,8 +342,12 @@ class World:
             return httpx.Response(200, json={"data": {"boards": [
                 {"id": self.subscribers_of.get(board, board),
                  "subscribers": [{"id": u} for u in sorted(self.members.get(board, ()))]}]}})
-        if "query_params" in query:  # D2: the refresh's one request
+        if "within_the_last" in query:  # D2: the refresh's one request
             return self.answer_windows(query, var)
+        if "next_items_page" in query and str(var["c"]).startswith("t|"):  # D4: a status filter's next page
+            _t, board, column, indexes, at = var["c"].split("|")
+            return httpx.Response(200, json={"data": {"next_items_page": self.track_page_of(
+                board, column, [int(x) for x in indexes.split(",")], int(at))}})
         if "next_items_page" in query and str(var["c"]).startswith("w|"):  # D2: a window's next page
             _w, board, days, at = var["c"].split("|")
             items, nxt = self.page(self.window(board, int(days)), int(at))
@@ -325,6 +361,7 @@ class World:
             for k in [k for k in var if k.startswith("b")]:
                 board, cols = var[k][0], var["c" + k[1:]]
                 data[k] = [] if board in self.hidden else [{"columns": [{"id": c} for c in cols if c in self.own_columns(board)]}]
+            data.update(self.answer_track(query, var))  # D4: beside the columns check
             return httpx.Response(200, json={"data": data})
         if "next_items_page" in query:
             board, start = var["c"].split(":")

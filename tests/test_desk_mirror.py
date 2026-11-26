@@ -92,9 +92,10 @@ class MemoryStore:
 
 
 def desk_of(snapshot: dict) -> tuple:
-    """What the page is shown of a reading: both tabs' rows, the view's checks and its notes - not its time."""
+    """What the page is shown of a reading: both tabs' rows, the view's checks and its notes - not its time - and since D4
+    the students by cohort (app/desk/cohorts.py)."""
     v = fd.build_view(snapshot, TODAY)
-    return v["b2c"]["rows"], v["b2b"]["rows"], v["checks"], v["data_notes"]
+    return v["b2c"]["rows"], v["b2b"]["rows"], v["checks"], v["data_notes"], v["b2c"]["cohorts"]
 
 
 def view_row(snapshot: dict, item_id) -> dict:
@@ -908,7 +909,9 @@ def test_a_refresh_never_asks_leads_for_a_window_and_a_quiet_one_is_three_reques
     # one request: the six boards' windows, Leads' columns, and the deciding leads by id - 301 is never read; and the two
     # charge boards' ids, a page each (D2's review)
     assert kept["kind"] == "delta" and len(w.queries) - before == 3 and h.health()["last_delta"]["calls"] == 3
-    assert h.health()["last_delta"]["id_pages"] == 2 and len(w.queries_of("query_params")) == 1
+    # (the windows' request is the one that asks "within_the_last": since D4 a reading's columns check carries a status
+    # filter, query_params too)
+    assert h.health()["last_delta"]["id_pages"] == 2 and len(w.queries_of("within_the_last")) == 1
     assert lead_ids_read(w, reads) == ["302", "303"] and rd.LEADS_BOARD not in w.windowed
     assert sorted(w.windowed[-6:]) == sorted(rd.BOARDS[k] for k in rd.DELTA_KEYS)
     q = monday.window_query(6, 1, 1, 2)

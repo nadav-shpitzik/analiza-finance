@@ -82,10 +82,12 @@ B_APPROVAL, B_APPROVED, B_CANCELLED, B_BILLED = "0", "1", "2", "6"
 B2B_PAY = {"0": "שולם חלקית", "1": "שולם", "2": "לא שולם"}
 BP_PARTIAL, BP_PAID, BP_UNPAID = "0", "1", "2"
 STAGE_NO_CONTRACT = "160"   # "בהרצה ללא חוזה" (app/pipeline.py DEAL_STAGES)
-# Enrollments' "סטטוס שובר משה"ע" (color_mm5fr6d6), read live 2026-11-10. 5 is the grey empty label.
+# Enrollments' "סטטוס שובר משה"ע" (color_mm5fr6d6), read live 2026-11-10. 5 is the grey empty label. 8 and 9 were added
+# in monday since (knowledge b2c-flow, read against settings_str 2026-11-24), and D4's students by cohort place them
+# (app/desk/cohorts.py): until then the desk counted them as labels it does not know
 VOUCHER = {"0": "הוגש – ממתין להחלטה", "1": "אושר - ממתין לתשלום", "2": "נדחה", "3": "נדחה - קיבל מלגה מאנליזה",
            "4": "אושר - יתרה שולמה", "5": "", "6": "ביטל השתתפות - דחייה", "7": "ביטל השתתפות - אחר",
-           "10": "לא רלוונטי", "17": "טרם הוגש"}
+           "8": "בטיפול מטה", "9": "ממתין לתקציב", "10": "לא רלוונטי", "17": "טרם הוגש"}
 LABELS = {SC["status"]: PAY, SC["receipt"]: RECEIPT, B2["billing"]: BILLING, B2["payment"]: B2B_PAY,
           EN["voucher"]: VOUCHER}
 # the status cells a row shows, by the row's field name: one that holds a value with no label is said, not shown empty
@@ -1097,7 +1099,9 @@ def build_b2c(sc_rows: list[dict], cohort_rows: list[dict], enrollments: list[di
             notes["cohort_" + how] += 1
         m = meta.get(cid) if cid else None
         row.update({"cohort_code": m["code"] if m else "", "cohort_title": (m["title"] or m["name"]) if m else "",
-                    "flow": m["flow"] if m else "", "cohort_from": how})
+                    "flow": m["flow"] if m else "", "cohort_from": how,
+                    # D4: the cohort by id, which the students by cohort file a payment under (app/desk/cohorts.py)
+                    "cohort_id": cid or ""})
         row["voucher_idx"], row["voucher"] = next(
             (voucher_of[str(e)] for e in r.get(SC["enrollment"]) or [] if voucher_of.get(str(e), ("", ""))[0]), ("", ""))
         row["person"] = uf.find(key)
@@ -1575,6 +1579,14 @@ def legend_terms(tab: str) -> set[str]:
     return {w for part in _legend_out(tab) for x in part["items"] for w in x["term"].split(" · ")}
 
 
+def _cohorts_of(snapshot: dict, rows: list[dict]) -> dict:
+    """D4's students by cohort (app/desk/cohorts.py) of this snapshot and its built payments. Imported here, when a view is
+    built: cohorts.py builds on this module's money and labels, so it imports this module, never the other way at load."""
+    from .cohorts import build_cohorts
+
+    return build_cohorts(snapshot, rows)
+
+
 def build_view(snapshot: dict, today: date) -> dict:
     """snapshot: {'read_at', 'student_charge': {'items_count','rows'}, 'b2b_charge': {...}, and the items read by id:
     'enrollments', 'leads' (the deciding ones, since 12.11), 'cohorts', 'deals', 'accounts' (lists), 'lead_names'
@@ -1593,8 +1605,10 @@ def build_view(snapshot: dict, today: date) -> dict:
     whole = periods[0]["states"]   # every payment is in exactly one state
     raw_b2c = [_b2c_row(r, today, Counter()) for r in sc["rows"]]
     asked = snapshot.get("asked") or {}
-    # what was asked for, by the same definitions the reader uses (a snapshot without `asked` derives them)
-    enr_ids = {str(x) for x in asked.get("enrollments", [])} or set(enrollment_ids(sc["rows"]))
+    # what was asked for, by the same definitions the reader uses (a snapshot without `asked` derives them). The
+    # enrollments the payments link to, always from the payments: since D4 the reading asks the enrollments of the cohorts
+    # with a price too, and those no payment links to (app/desk/reading.py `roster_ids`)
+    enr_ids = set(enrollment_ids(sc["rows"]))
     if names is not None:
         # every lead a payment links to is asked for its name, so the check counts them all by name, as before 12.11 -
         # `asked["leads"]` is the deciding ones since, the rows a reading keeps
@@ -1668,7 +1682,9 @@ def build_view(snapshot: dict, today: date) -> dict:
                 "money_in": periods[0]["money_in"], "refunded": periods[0]["refunded"],
                 "net": periods[0]["money_in"] - periods[0]["refunded"], "students": len({x["person"] for x in srows}),
                 "count": len(srows), "since": min((x["date"] for x in srows if x["date"]), default=""),
-                "dated_by_payment": sum(1 for x in srows if x["date_from"] == "paid")},
+                "dated_by_payment": sum(1 for x in srows if x["date_from"] == "paid"),
+                # D4 (backlog 0313): the students by cohort, from this reading and these very payments
+                "cohorts": _cohorts_of(snapshot, srows)},
         "b2b": {"rows": brows, "states": _states_out(B2B_STATES), "legend": _legend_out("b2b"), "tasks_about": TASKS_ABOUT["b2b"],
                 "actions": actions_out("b2"),
                 # the ledger's form for a customer's billing details, written by the person in the browser (ADR-0188)

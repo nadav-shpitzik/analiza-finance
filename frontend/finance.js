@@ -265,7 +265,7 @@
   var ROWS = { sc: [], b2: [] };
   var state = { tab: "b2c", query: "", notes: false, legend: false,
     /* the students list: a state ("tasks", "" for all, or a state key), a period key, the payments opened */
-    sc: { state: "tasks", period: "", open: {} },
+    sc: { state: "tasks", period: "", open: {}, view: "list", cohorts: {}, unpriced: false },
     /* the companies list: a state, a customer (account id), the list or the customers, the charges opened */
     b2: { state: "tasks", customer: "", view: "list", open: {}, back: null } };
 
@@ -890,6 +890,7 @@
   }
 
   function b2cHtml() {
+    if (state.sc.view === "cohorts" && cohortsPart()) { return cohortsHtml(); }   /* D4: the students by cohort */
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
     OUTSIDE = null;
@@ -910,7 +911,7 @@
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
-      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" +
+      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" + scViews() +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button></div></div>";
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
@@ -934,10 +935,185 @@
     var books = key === "tasks" && !q ? booksHtml("b2c") : "";
     return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + books;
   }
+  /* ---------- D4: the students by cohort ("לפי מחזור", knowledge backlog 0313; Chava 26.11) ----------
+     A view of the students' tab beside its list, as "לפי לקוח" is of the companies': for each cohort with a price, what its
+     students should pay ("צפי תשלום"), what came in ("שולם בפועל") and the balance in Chava's parts by the voucher status,
+     "אושר - ממתין לתשלום" - money that should already have come in - its figure first and its column the one tinted; a
+     cohort opens to its students, each balance in its part's column, so a column of students sums to its cohort's cell.
+     Every word, number and column is the server's (app/desk/cohorts.py, view.b2c.cohorts); the totals of the cohorts a
+     search leaves are GET /api/desk/totals's (the list b2c_cohorts) - nothing is added up here. */
+  var COHORTS_WORD = "לפי מחזור";
+  /* where a cohort and a student (an enrollment) open in monday: their boards, Cohorts and Enrollments */
+  var ITEM_BOARD = { co: "5089806632", en: "5092151346" };
+  function cohortsPart() { return (VIEW && VIEW.b2c && VIEW.b2c.cohorts) || null; }
+  /* the search on the view: the same rule as app/desk/cohorts.py cohort_matches - its code, its name, a student's name */
+  function cohortMatch(x, q) {
+    q = String(q || "").trim().toLowerCase();
+    if (!q) { return true; }
+    return [x.code || "", x.title || "", x.name || ""].concat((x.students_list || []).map(function (s) { return s.name; }))
+      .join(" ").toLowerCase().indexOf(q) !== -1;
+  }
+  function cohortsShown() { var c = cohortsPart(); return c ? c.cohorts.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
+  function unpricedShown() { var c = cohortsPart(); return c ? c.unpriced.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
+  /* the table's columns: the server's, an optional part only when a cohort shown has money in it (cohorts.py columns_for);
+     the price and the students counted are said under the cohort's name (`folded`), so the table fits monday's widths */
+  function cohortCols(c, shown) {
+    return c.columns.filter(function (col) {
+      return !col.folded && (!col.shown_when || shown.some(function (x) { return num(x["part_" + col.shown_when]); }));
+    });
+  }
+  function header(c, key) { return (c.columns.filter(function (col) { return col.key === key; })[0] || {}).header || ""; }
+  /* an amount as it is: in whole shekels when it has no agorot, with them when it has - never rounded (the cohorts' sums
+     are six figures long, and agorot on every one of them pushed the table past monday's width) */
+  function cash(v) { var n = num(v); return Math.round(n * 100) % 100 === 0 ? money(n) : money2(n); }
+  function scViews() {
+    var on = state.sc.view === "cohorts";
+    return cohortsPart() ? "<div class=\"fin-seg\" role=\"group\" aria-label=\"תצוגה\">" +
+      "<button type=\"button\" class=\"fin-btn" + (on ? "" : " on") + "\" aria-pressed=\"" + !on + "\" data-scview=\"list\">רשימה</button>" +
+      "<button type=\"button\" class=\"fin-btn" + (on ? " on" : "") + "\" aria-pressed=\"" + on + "\" data-scview=\"cohorts\">" +
+      esc(COHORTS_WORD) + "</button></div>" : "";
+  }
+  function itemLink(board, id, cls, inner, label) {
+    return "<a class=\"" + cls + "\" data-open=\"" + esc(id) + "\" href=\"" + esc(ACCOUNT_URL + "/boards/" + ITEM_BOARD[board] + "/pulses/" + id) +
+      "\" target=\"_blank\" rel=\"noopener\"" + (label ? " aria-label=\"" + esc(label) + "\" title=\"" + esc(label) + "\"" : "") + ">" + inner + "</a>";
+  }
+  function hi(col) { return col.key === "part_approved" ? " fin-hi" : ""; }
+  function cohortCell(col, x) {
+    var k = col.key;
+    if (k === "cohort") {
+      var c = cohortsPart();
+      return itemLink("co", x.id, "fin-name", "<bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi>") + " " + esc(x.title) +
+        "<span class=\"fin-sub-said\">" +
+        esc(header(c, "price")) + " " + cash(x.price) + " · " + NF.format(x.students) + " " + esc(header(c, "students")) +
+        (x.status ? " · " + esc(x.status) : "") + "</span>";
+    }
+    return num(x[k]) ? cash(x[k]) : NOT_SET;
+  }
+  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid struck through,
+     as "סכום מחוק" is (shown, in no sum of the line) */
+  function studentCell(col, s) {
+    var k = col.key, counted = s.standing === "counted";
+    if (k === "cohort") {
+      return itemLink("en", s.id, "fin-name", esc(s.name)) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
+        (s.notes.length ? "<div class=\"fin-chips\">" + s.notes.map(function (t) { return "<span class=\"fin-chip\">" + esc(t) + "</span>"; }).join("") + "</div>" : "");
+    }
+    if (k === "expected") { return counted ? cash(s.price) : NOT_SET; }
+    if (k === "paid") {
+      if (!num(s.paid)) { return NOT_SET; }
+      return counted ? cash(s.paid) : "<s class=\"fin-subtle\" title=\"" + esc(s.said + ": לא נספר") + "\">" + cash(s.paid) + "</s>";
+    }
+    if (k === "balance") { return counted && num(s.balance) ? cash(s.balance) : NOT_SET; }
+    return counted && k === "part_" + s.part && num(s.balance) ? cash(s.balance) : NOT_SET;
+  }
+  /* what a cohort's line holds besides its students, said under them when it is open: the waived and the out with what
+     they paid, what was paid over the price, the payments no student holds, and its link to its enrollments where monday
+     disagrees with itself */
+  function cohortNotes(x) {
+    var c = cohortsPart(), w = c.words || {}, out = [];
+    if (x.waived) { out.push(w.waived + ": " + plural(x.waived, "סטודנט/ית אחד/ת", "סטודנטים") + (num(x.waived_paid) ? ", שילמו " + amountText(x.waived_paid) : "")); }
+    if (x.out) { out.push(w.out + ": " + plural(x.out, "סטודנט/ית אחד/ת", "סטודנטים") + (num(x.out_paid) ? ", שילמו " + amountText(x.out_paid) : "")); }
+    if (num(x.overpaid)) { out.push(w.overpaid + ": " + amountText(x.overpaid)); }
+    if (x.unlinked.count) { out.push(w.unlinked + ": " + plural(x.unlinked.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.unlinked.money)); }
+    if (x.shared.count) { out.push(w.shared + ": " + plural(x.shared.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.shared.money)); }
+    if (x.roster_missing) { out.push(plural(x.roster_missing, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, ומאנדיי לא החזיר אותן"); }
+    if (x.roster_elsewhere) { out.push(plural(x.roster_elsewhere, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, וההרשמה עצמה מקושרת למחזור אחר"); }
+    return out;
+  }
+  function cohortsTable(c, shown) {
+    /* no column "פתיחה במאנדיי" here: a cohort's code and a student's name open them in monday, and the narrower table fits
+       monday's widths with sums as long as real ones */
+    var cols = cohortCols(c, shown), span = cols.length + 1;
+    var head = "<tr><th class=\"k-more\"></th>" + cols.map(function (col) {
+      return "<th class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + esc(col.header) + "</th>";
+    }).join("") + "</tr>";
+    var body = shown.map(function (x) {
+      var open = !!state.sc.cohorts[x.id];
+      var row = "<tr class=\"fin-rowbtn" + (open ? " open" : "") + "\" data-cohort=\"" + esc(x.id) + "\" tabindex=\"0\" aria-expanded=\"" + open + "\">" +
+        "<td class=\"k-more\">" + MORE + "</td>" + cols.map(function (col) {
+          return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + cohortCell(col, x) + "</td>";
+        }).join("") + "</tr>";
+      if (!open) { return row; }
+      var notes = cohortNotes(x);
+      return row + (x.students_list.length ? x.students_list.map(function (s) {
+        return "<tr class=\"fin-subrow" + (s.standing === "counted" ? "" : " fin-subrow-off") + "\"><td class=\"k-more\"></td>" + cols.map(function (col) {
+          return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + studentCell(col, s) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") : "<tr class=\"fin-subrow\"><td colspan=\"" + span + "\" class=\"fin-subnote\">אין סטודנטים במחזור.</td></tr>") +
+        (notes.length ? "<tr class=\"fin-subrow\"><td colspan=\"" + span + "\" class=\"fin-subnote\">" + notes.map(esc).join(" · ") + "</td></tr>" : "");
+    }).join("");
+    /* the totals of the cohorts shown: the server's (GET /api/desk/totals, the list b2c_cohorts), of this reading only */
+    var t = exportable() ? totalsFor({ tab: "b2c_cohorts", q: state.query.trim() }) : null;
+    var foot = t && !t.failed && !t.other_reading && t.sums ? "<tfoot><tr class=\"fin-total\"><td class=\"k-more\"></td>" + cols.map(function (col) {
+      var k = col.key, v = t.sums[k];
+      if (k === "cohort") {
+        return "<td class=\"k-cohort\"><b>סה\"כ</b> <span class=\"fin-subtle fin-nw\">" + plural(t.count, "מחזור אחד", "מחזורים") +
+          " · " + NF.format(num(t.sums.students)) + " " + esc(header(c, "students")) + "</span></td>";
+      }
+      return "<td class=\"k-" + esc(k) + " n" + hi(col) + "\">" + (num(v) ? cash(v) : NOT_SET) + "</td>";
+    }).join("") + "</tr></tfoot>" : "";
+    return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t fin-cohorts-t\"><thead>" + head + "</thead><tbody>" + body +
+      "</tbody>" + foot + "</table></div>";
+  }
+  /* the cohorts with no price, or cancelled: listed with why, no money - under the table, opened on demand */
+  function unpricedHtml(c, list) {
+    if (!c.unpriced.length) { return ""; }
+    var open = state.sc.unpriced;
+    var why = {};
+    (c.unpriced_why || []).forEach(function (x) { why[x.key] = x.label; });
+    return "<div class=\"fin-unpriced\"><span>" + esc(c.words.unpriced) + ": " + NF.format(list.length) + "</span> " +
+      "<button class=\"fin-linkbtn\" type=\"button\" data-unpriced=\"1\" aria-expanded=\"" + open + "\">" + (open ? "הסתרה" : "הצגה") + "</button>" +
+      (open && list.length ? "<ul>" + list.map(function (x) {
+        return "<li><bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi> " + esc(x.title) + (x.status ? " · " + esc(x.status) : "") + " · " +
+          esc(why[x.why] || x.why_text) + (x.why === "unreadable" ? " <bdi class=\"fin-subtle\">(\"" + esc(x.price_text) + "\")</bdi>" : "") + "</li>";
+      }).join("") + "</ul>" : "") + "</div>";
+  }
+  function cohortsHtml() {
+    var c = cohortsPart(), shown = cohortsShown(), t = c.totals, w = c.words || {};
+    var ok = VIEW.checks.b2c_ok && c.checks.ties;
+    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי") */
+    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, money(t.part_approved), true], [w.balance, money(t.balance)],
+      [w.paid, money(t.paid)], [w.expected, money(t.expected)]].map(function (x) {
+      return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
+    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
+    var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +
+      plural(shown.length, "מחזור אחד", "מחזורים") + " עם מחיר" + (searching() ? " מתאימים לחיפוש" : "") + "</div>" +
+      "<p class=\"fin-about\">" + esc(c.about) + "</p>" +
+      (c.checks.ties ? "" : "<p class=\"fin-badtext\">" + esc(w.not_tied) + "</p>") + "</div><div class=\"fin-actions\">" + scViews() +
+      "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c_cohorts\"" + (shown.length && ok && exportable() ? "" : " disabled") +
+      exportTitle(ok) + ">ייצוא לאקסל</button></div></div>";
+    var list = shown.length ? cohortsTable(c, shown) : empty(searching() ? "אין מחזור עם מחיר שמתאים לחיפוש." : "אין מחזור עם מחיר.");
+    return figures + panel(head + list + unpricedHtml(c, unpricedShown()));
+  }
+  function onCohortClick(ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest("[data-scview],[data-cohort],[data-unpriced]") : null;
+    if (!el || !root.contains(el)) { return; }
+    if (el.dataset.scview) {
+      if (state.sc.view !== el.dataset.scview) {
+        state.sc.view = el.dataset.scview;
+        use("view", { view: state.sc.view === "cohorts" ? "cohorts" : "list" });
+        redraw();
+      }
+      return;
+    }
+    if (el.dataset.cohort) {
+      if (ev.target.closest("a,button,input,label")) { return; }
+      var open = state.sc.cohorts[el.dataset.cohort] = !state.sc.cohorts[el.dataset.cohort];
+      use("row", { state: "cohort", open: !!open });
+      redraw(); return;
+    }
+    if (el.dataset.unpriced) { state.sc.unpriced = !state.sc.unpriced; redraw(); }
+  }
+  function onCohortKey(ev) {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target && ev.target.matches && ev.target.matches("[data-cohort]") &&
+        root.contains(ev.target)) { ev.preventDefault(); ev.target.click(); }
+  }
+
   /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
      count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
-  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"] };
+  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"],
+    b2c_cohorts: ["מחזור אחד", "מחזורים"] };
   function exportedCount(tab) {
+    if (tab === "b2c_cohorts") { return cohortsShown().length; }   /* D4 */
     return tab === "b2b_customers" ? customersShown(VIEW.b2b).length : tab === "b2b" ? b2Rows().length : scRows().length;
   }
   function exportSaid(tab, n) {
@@ -952,8 +1128,10 @@
       var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
       /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
       var all = searching() && tab !== "b2b_customers";
-      var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" || all ? "" : f.state,
-        period: b2 || all ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
+      /* D4: the students by cohort take the search box only, like "לפי לקוח" */
+      var whole = tab === "b2b_customers" || tab === "b2c_cohorts";
+      var body = { tab: whole ? tab : b2 ? "b2b" : "b2c", state: whole || all ? "" : f.state,
+        period: b2 || all || whole ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
         q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
       /* D3: and the books' part on the screen, so a file built from another says so (as the totals are asked by it) */
       if (VIEW.books && VIEW.books.key) { body.books = VIEW.books.key; }
@@ -2359,6 +2537,7 @@
         unfiltered: b2Filter(ROWS.b2, VIEW.b2b, "", "", q).length };
     }
     if (!VIEW.b2c) { return { results: 0, unfiltered: 0 }; }
+    if (state.sc.view === "cohorts" && cohortsPart()) { var c = cohortsShown().length; return { results: c, unfiltered: c }; }
     return { results: scFilter(ROWS.sc, VIEW.b2c, state.sc.state, state.sc.period, q).length,
       unfiltered: scFilter(ROWS.sc, VIEW.b2c, "", "", q).length };
   }
@@ -2884,7 +3063,7 @@
   /* the legend ("מקרא", round 3): the words this desk computes, from the server, for the tab on the screen. monday's own
      columns and labels have no entry - they are called by their monday names */
   function legendHtml() {
-    var parts = (VIEW[state.tab] && VIEW[state.tab].legend) || [];
+    var parts = ((VIEW[state.tab] && VIEW[state.tab].legend) || []).concat(state.tab === "b2c" && cohortsPart() ? [cohortsPart().legend] : []);
     return "<section class=\"fin-legend\" id=\"fin-legend\" aria-label=\"מקרא\"><div class=\"fin-legend-head\"><h2>מקרא</h2>" +
       "<span class=\"fin-subtle\">המילים שהמסך מחשב בעצמו, השיבוצים, הסימונים, ומאיפה באות עמודות של מאנדיי. כל השאר נקרא " +
       "כאן בשם שלו במאנדיי.</span></div>" + parts.map(function (p) {
@@ -2932,7 +3111,7 @@
     return "<section class=\"fin-health\">" + line + more + list + "</section>";
   }
   function asOf() { return stamp((BODY && BODY.taken_at) || VIEW.read_at); }
-  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
+  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend", "scview", "cohort", "unpriced",
     "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
     "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
   function focusKey() {
@@ -2946,7 +3125,7 @@
   }
   /* which list a table shows: the same key after a redraw is the same list, so it keeps its own scroll */
   function listKey() {
-    return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.b2.state, state.b2.view, state.b2.customer, state.query]);
+    return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.sc.view, state.b2.state, state.b2.view, state.b2.customer, state.query]);
   }
   /* A table wider than its frame scrolls inside it (QA 2.8; since QA 9 only such a table, fitFrames), and a redraw builds it
      anew: opening a row's details, or a newer reading landing, must not throw the reader back to the box's top. Each list
@@ -3481,6 +3660,9 @@
     root.addEventListener("keydown", onKey);
     root.addEventListener("change", onChange);
     document.addEventListener("visibilitychange", onVisible);
+    /* D4: the students by cohort's own clicks and keys, beside the desk's (onCohortClick: inside the desk only) */
+    document.addEventListener("click", onCohortClick);
+    document.addEventListener("keydown", onCohortKey);
     /* the view's window taking the focus back: after monday's item card closes over it, the first click in the view */
     window.addEventListener("focus", onFocus);
     /* monday's sidebar opened or closed, the window resized: whether each table still fits its frame (QA 9) */

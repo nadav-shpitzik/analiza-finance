@@ -176,6 +176,24 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
   pressed. Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
   `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
+- **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
+  `b2c.cohorts` (Student Charge's members only). Only cohorts on the voucher track (Registration Flow `color_mm31k62f` index
+  3, `on_track`): one on another track is shown nowhere, priced or not. Per such cohort with one clean "מחיר" (`text_mm5fhydb`,
+  `price_of`; else listed with why and no money, and a cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
+  פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
+  money), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
+  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out, listed and in no sum. A line is its students'
+  sums (`checks.ties`). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
+  filter (`any_of` [3] on Registration Flow, `TRACK`, `app/monday/client.py status_rule`) rides on its columns check, and a
+  refresh's on its windows request - no request more but one per page of 500 after the first - and they join the payments'
+  cohorts. The enrollments of those with a price through `board_relation_mm1hetrb` (step 5, `roster_ids`); a refresh reads
+  those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
+  file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
+  cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
+  "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first
+  figure and the one tinted column, a cohort row opening to its students, the price and the count under the cohort's name
+  and agorot only where an amount has them (the table fits 1280 and 1400), its legend part the server's; its clicks on
+  `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
