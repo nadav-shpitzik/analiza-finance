@@ -205,6 +205,7 @@ def health(request: Request) -> dict:
     books = store.pop("books_glance", None)
     recon = store.pop("recon_glance", None)
     desk_stored = store.pop("desk_glance", None)
+    ledger = store.pop("ledger_glance", None)
     return {
         "service": SERVICE,
         "ok": True,
@@ -221,7 +222,8 @@ def health(request: Request) -> dict:
             "problems": list(cfg.problems),
         },
         "store": store,
-        "books": {"sync_key": sync_key_state(cfg), "ledger_report": ledger_state(cfg.ledger_report), **(books or {})},
+        "books": {"sync_key": sync_key_state(cfg), "ledger_report": ledger_state(cfg.ledger_report), **(books or {}),
+                  "ledger": {"salary_codes": salary_state(cfg.ledger_salary_codes), **(ledger or {})}},
         "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
         "desk": desk_health(state, cfg, desk_stored, now),
         "last_check": None
@@ -271,7 +273,16 @@ def _read_store(cfg: config.Config) -> dict:
                     desk = desk_glance(cur)
             except Exception as exc:  # noqa: BLE001 - the class only
                 desk = {"error": type(exc).__name__}
-    return {**state, "times": times, "books": books, "recon": recon, "desk": desk}
+        ledger = None
+        if state["tables"].get("ledger_runs") == "present" and state["tables"].get("ledger_months") == "present" and cfg.db:
+            try:  # its own try too: the ledger's last run and the months held (B3), never a total
+                from .books.ledger_store import glance as ledger_glance
+
+                with conn.transaction():
+                    ledger = ledger_glance(cur, cfg.db)
+            except Exception as exc:  # noqa: BLE001 - the class only
+                ledger = {"error": type(exc).__name__}
+    return {**state, "times": times, "books": books, "recon": recon, "desk": desk, "ledger": ledger}
 
 
 def _books_glance(cur, company: str) -> dict:
@@ -339,6 +350,7 @@ def store_health(cfg: config.Config, now: float) -> dict:
                 "books_glance": read.get("books"),
                 "recon_glance": read.get("recon"),
                 "desk_glance": read.get("desk"),
+                "ledger_glance": read.get("ledger"),
             }
     except Exception as exc:  # noqa: BLE001 - /health never raises
         out = {"configured": True, "ok": False, "error": type(exc).__name__}
@@ -588,6 +600,143 @@ async def ledger_probe(request: Request) -> JSONResponse:
         answer = await run_in_threadpool(work)
     return JSONResponse({**answer, "company": cfg.company, "month": month,
                          "request_s": round(time.monotonic() - started, 1)})
+
+
+# Israel's months: a run with no months asked recomputes the current one and the one before, as the books' people count them
+LEDGER_TZ = "Asia/Jerusalem"
+LEDGER_MAX_SPAN = 60  # months a totals read may cover
+_NOT_JSON = object()  # a body that is not JSON: refused as a bad request, never defaulted
+
+
+def default_months(now_ts: float) -> list:
+    """The previous and the current month in Israel time, "YYYY-MM"."""
+    from zoneinfo import ZoneInfo
+
+    local = datetime.fromtimestamp(now_ts, tz=ZoneInfo(LEDGER_TZ))
+    year, month = (local.year - 1, 12) if local.month == 1 else (local.year, local.month - 1)
+    return [f"{year:04d}-{month:02d}", f"{local.year:04d}-{local.month:02d}"]
+
+
+def _month_text(value: Any) -> Optional[str]:
+    """"YYYY-MM" as asked, or None: never said back (a body is not echoed)."""
+    from .books.ledger import month_bounds
+
+    if not isinstance(value, str):
+        return None
+    try:
+        month_bounds(value)
+    except ValueError:
+        return None
+    return value.strip()
+
+
+def _run_input(payload: Any, now_ts: float) -> tuple:
+    """(the months to run, dry, None), or (None, None, a fixed detail) for a bad request. No body, or a body without
+    `months`, is the previous and the current month (Israel time); otherwise `months` is 1 to MAX_MONTHS distinct
+    "YYYY-MM", run oldest first. `dry` (true or false, false by default) asks for the dry listing. Any other key is
+    refused: a body that names a company is never run on this deployment's instead."""
+    from .books.ledger_totals import MAX_MONTHS
+
+    shape = (f'the body is {{"months": ["YYYY-MM", ...], "dry": true|false}} with 1 to {MAX_MONTHS} months, both '
+             'optional: the last two months, stored')
+    if payload is None:
+        return default_months(now_ts), False, None
+    if not isinstance(payload, dict) or set(payload) - {"months", "dry"}:
+        return None, None, shape
+    dry = payload.get("dry", False)
+    if not isinstance(dry, bool):
+        return None, None, shape
+    if "months" not in payload:
+        return default_months(now_ts), dry, None
+    asked = payload["months"]
+    if not isinstance(asked, list) or not 1 <= len(asked) <= MAX_MONTHS:
+        return None, None, shape
+    months = [_month_text(m) for m in asked]
+    if None in months or len(set(months)) != len(months):
+        return None, None, shape
+    return sorted(months), dry, None
+
+
+def salary_state(text: str) -> str:
+    """What /health says of LEDGER_SALARY_CODES: "set", "missing" or "bad". Never the list."""
+    from .books.ledger_totals import salary_codes
+
+    return salary_codes(text)[0]
+
+
+@app.post("/api/books/ledger/run")
+async def ledger_run(request: Request) -> JSONResponse:
+    """B3 (backlog 0301; ADR-0187 §2-§5): the ledger report run for whole months, each summed by sort code, its salary codes
+    and its thin lines merged into one line, and replaced in one transaction (app/books/ledger_totals.py). Behind the sync
+    key, checked before the body is read. The body is `{"months": ["YYYY-MM", ...], "dry": false}` (1 to 12 months), or
+    nothing for the previous and the current month in Israel time. Always 200 after the key, boxed like a tick
+    (REQUEST_BOX_S from the request's arrival): `ok`, `skipped`, `reasons` (closed: ledger_totals.RUN_REASONS), and per
+    month its counts - rows, sort_codes, kept_lines, merged_codes, merged, merged_by, masked_keys, batch_9998_rows, cut,
+    parts, stored and why not. Without LEDGER_SALARY_CODES nothing is stored (`salary_codes_not_set`). `"dry": true` is
+    the dry listing instead: per sort code its name and its distinct accounts in those months, nothing stored - how the
+    salary codes are chosen. Never a value of a row, never a total: the totals are read behind the same key
+    (GET /api/books/ledger/totals). Make will call it nightly."""
+    started = time.monotonic()
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    state = request.app.state
+    raw = await request.body()
+    try:
+        payload = json.loads(raw) if raw.strip() else None
+    except (ValueError, RecursionError):  # not JSON, or not UTF-8
+        payload = _NOT_JSON
+    months, dry, problem = _run_input(payload, state.clock())
+    if problem is not None:
+        answer = {"ok": False, "skipped": False, "reasons": ["bad_request"], "months": {}, "detail": problem}
+    else:
+        deadline = started + REQUEST_BOX_S - FINISH_RESERVE_S
+
+        def work() -> dict:
+            from .books import ledger_totals
+            from .books.ledger_store import LedgerStore
+
+            try:
+                if dry:
+                    return ledger_totals.listing(get_client(state, cfg), months, cfg.ledger_report, deadline,
+                                                 salary_text=cfg.ledger_salary_codes)
+                return ledger_totals.run(get_client(state, cfg), LedgerStore(cfg.database_url), cfg.db, months,
+                                         cfg.ledger_report, deadline, salary_text=cfg.ledger_salary_codes)
+            except Exception as exc:  # noqa: BLE001 - by class, never the text: a message could carry what a row held
+                return {"ok": False, "skipped": False, "reasons": ["crashed"], "months": {}, "error": type(exc).__name__,
+                        "detail": getattr(exc, "detail", None)}
+
+        answer = await run_in_threadpool(work)
+    return JSONResponse({**answer, "company": cfg.company, "request_s": round(time.monotonic() - started, 1)})
+
+
+@app.get("/api/books/ledger/totals")
+def ledger_totals_read(request: Request) -> JSONResponse:
+    """The kept lines of the ledger (B3; ADR-0187 §2), `?from=YYYY-MM&to=YYYY-MM` (`to` defaults to `from`, at most
+    LEDGER_MAX_SPAN months): per month and sort code its name, debit, credit, rows, accounts and masked keys - category
+    totals, never a person's: the salary codes and every line fewer than three accounts fill are the month's one merged
+    line (sort code -1, `merged: true`), itself never stored with fewer. And per month its counts and batch 9998 apart.
+    Money as exact text. Behind the sync key: no total is anyone's business on a public URL."""
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    first = _month_text(request.query_params.get("from"))
+    last = _month_text(request.query_params.get("to") or request.query_params.get("from"))
+    span = None
+    if first and last:
+        span = (int(last[:4]) * 12 + int(last[5:])) - (int(first[:4]) * 12 + int(first[5:])) + 1
+    if span is None or not 1 <= span <= LEDGER_MAX_SPAN:
+        return JSONResponse({"ok": False, "error": "bad_request",
+                             "detail": f"from=YYYY-MM, and to=YYYY-MM at or after it, {LEDGER_MAX_SPAN} months at most"})
+    try:
+        from .books.ledger_store import read_totals
+
+        totals = read_totals(cfg.database_url, cfg.db, first, last)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
+    return JSONResponse({"ok": True, "company": cfg.company, "from": first, "to": last, **totals})
 
 
 # ---- the reconciliation's reading of monday (backlog 0301 R0): behind the sync key --------------------------------

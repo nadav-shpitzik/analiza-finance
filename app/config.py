@@ -47,6 +47,10 @@ class Config:
     # The ledger report's External file (B3, ADR-0187 §6): the whole JSON of "כרטסת לאנליזה" as one Replit Secret, never in
     # git. Its `datafile` is the report itself. /health says set, missing or bad (app/books/ledger.py), never a field of it.
     ledger_report: str = field(default="", repr=False)
+    # The ledger's salary codes (B3, the owner's decision of 26.11): a comma list of sort codes, chosen by a person from the
+    # dry listing and never guessed by a name. Their lines go into the month's merged line (app/books/ledger_totals.py);
+    # until it is set a run stores nothing. /health says set, missing or bad, never the list.
+    ledger_salary_codes: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -80,5 +84,6 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
         # trimmed: a newline pasted with a secret is a 401 on every open with nothing on screen to say why
         monday_client_secret=(env.get("MONDAY_CLIENT_SECRET") or "").strip(),
         ledger_report=(env.get("WIZ_LEDGER_REPORT") or "").strip(),
+        ledger_salary_codes=(env.get("LEDGER_SALARY_CODES") or "").strip(),
     )
 
