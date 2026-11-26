@@ -328,23 +328,29 @@ def test_the_page_never_calls_a_path_under_api_finance():
     assert not [p for p in paths if p.startswith("/api/finance")]
 
 
-def test_the_unfilter_button_and_the_link_to_ask_nadav_are_gone():
-    """D2, 2.1 and 2.2 (the desk move plan §1b, 24.11): "חיפוש ללא סינון" (pressed 0 times; since 1.2 a search looks at every
-    row by itself) and "חסר כאן משהו? פנייה לנדב" (no request came through its form since the desk was built) are gone -
-    their words, their code, their hook and their style."""
+def test_the_unfilter_button_is_gone_and_the_link_to_ask_nadav_is_back():
+    """D2, 2.1 (the desk move plan §1b, 24.11): "חיפוש ללא סינון" (pressed 0 times; since 1.2 a search looks at every row by
+    itself) is gone - its words, its code, its hook. D2's 2.2 took "חסר כאן משהו? פנייה לנדב" out too; changed deliberately
+    with the QA of 26.11 (G): it is back at the foot of the desk, her way to report a problem, as analiza-metrics' desk had
+    it at da671b2 - the same words, the same form on the technical board (backlog 0273), a new tab, and a press counted as
+    the usage word `ask`, nothing else."""
     page = code_of(PAGE)
-    for gone in ("data-unfilter", "unfilter(", "UNFILTER", "_unfilter", "data-ask", "fin-ask", "ASK_URL", "5098225215",
-                 "51829235", "חסר כאן משהו", "פנייה לנדב", "חיפוש ללא סינון"):
+    for gone in ("data-unfilter", "unfilter(", "UNFILTER", "_unfilter", "חיפוש ללא סינון"):
         assert gone not in page, gone
-    assert "fin-ask" not in (FRONT / "finance.css").read_text(encoding="utf-8")
     assert "_unfilter" not in node(LOAD + "console.log(JSON.stringify(Object.keys(F)));", None)
+    link = ('<a class="fin-ask" data-ask="1" href="https://analiza-college-group.monday.com/boards/5098225215/views/51829235" '
+            'target="_blank" rel="noopener">חסר כאן משהו? פנייה לנדב</a></div></div>')
+    assert ".fin-ask { text-decoration: none; white-space: nowrap; }" in (FRONT / "finance.css").read_text(encoding="utf-8")
     got = drive(answer(), [
         {"show": {"tab": "b2c", "query": "zzz", "sc": {"state": "tasks", "period": "2026-11", "open": {}}}},
-        {"show": {"tab": "b2b", "query": "zzz", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}}],
-        monday=world())
+        {"show": {"tab": "b2b", "query": "zzz", "b2": {"state": "overdue", "view": "list", "customer": "7701", "open": {}}}},
+        {"click": [{"ask": "1"}]}],
+        monday=world(), useFlushMs=0)
     for html in [got["first"]] + [s["html"] for s in got["steps"]]:
-        assert "פנייה לנדב" not in html and "data-ask" not in html and "data-unfilter" not in html
+        assert "data-unfilter" not in html and html.endswith(link)
         assert '<div class="fin-foot"><section class="fin-health">' in html
+    events = [e["k"] for b in got["usage"] for e in b["body"]["events"]]
+    assert events.count("ask") == 1 and got["executed"] == []          # counted; the link itself opens the form
 
 
 def test_a_searchs_excel_file_and_totals_are_asked_with_no_tile_period_or_company():

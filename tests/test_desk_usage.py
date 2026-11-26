@@ -118,10 +118,11 @@ def test_a_page_left_open_for_weeks_keeps_its_age_capped():
 
 # --- the page against the vocabulary (static; the page driven in node is tests/test_desk_page.py) ----------------------
 
-# The kinds the server keeps and the page no longer sends: the two buttons the D2 list retired (the desk move plan §1b, 2.1
-# "חיפוש ללא סינון" and 2.2 "חסר כאן משהו?"). They stay in the vocabulary: analiza-metrics' history holds them, and D5
-# imports it into this table. The billing edit is back from the browser (ADR-0188), so `bill` is sent again.
-NOT_SENT = {"unfilter", "ask"}
+# The kinds the server keeps and the page no longer sends: the button the D2 list retired (the desk move plan §1b, 2.1
+# "חיפוש ללא סינון"). It stays in the vocabulary: analiza-metrics' history holds it, and D5 imports it into this table. The
+# billing edit is back from the browser (ADR-0188), so `bill` is sent again; and "חסר כאן משהו?" (2.2) is back with the QA
+# of 26.11 (G), so `ask` is sent again too.
+NOT_SENT = {"unfilter"}
 
 
 def _object_body(code: str, start: int) -> str:

@@ -32,7 +32,8 @@
  *     found rows without its filters. Its Excel file and totals are asked with no tile, period or company, so the
  *     server's filters pick what the screen shows.
  * 2.1 "חיפוש ללא סינון" went out (pressed 0 times; 1.2 made it the default), with its helpers and its test hook.
- * 2.2 "חסר כאן משהו? פנייה לנדב" went out with its link: no request came through its form since the desk was built.
+ * 2.2 "חסר כאן משהו? פנייה לנדב" went out with its link: no request came through its form since the desk was built. Back
+ *     since the QA of 26.11 (G), the same words, form and count: her way to report a problem.
  * 4   A company's billing details are edited again, FROM THE BROWSER, AS THE PERSON (ADR-0188), where analiza-metrics'
  *     server wrote them: "עריכה" reads the four live, "המשך" checks what changed by that server's rules and shows
  *     before and after, "שמירה" reads them again, writes only when monday still holds what was shown, and checks the
@@ -225,6 +226,8 @@
  *      the cohorts drew the list while the choice stayed theirs. It follows what is shown now (b2cHtml).
  * F  A "סכום ששולם" struck through - not counted - said on hover only its status. It says why: "לא נספר: הסטטוס לא מכניס
  *      כסף" and the status (a label the desk does not know, in its chip's words; uncountedWhy).
+ * G  "חסר כאן משהו? פנייה לנדב" at the foot of the desk, which D2's 2.2 took out, is back as analiza-metrics' desk had it
+ *      (da671b2): the same words, the same form on the technical board (ASK_URL), the usage word `ask`.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -242,6 +245,9 @@
   var NF2 = new Intl.NumberFormat("he-IL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   var ACCOUNT_URL = "https://analiza-college-group.monday.com";
   var BOARD = { sc: "5093448677", b2: "5097721228" };
+  /* the request form on the technical board (knowledge backlog 0273) - the desk's way to ask for more. Back since the QA of
+     26.11 (G), as analiza-metrics' desk had it (da671b2): her way to report a problem */
+  var ASK_URL = ACCOUNT_URL + "/boards/5098225215/views/51829235";
 
   /* a refund's two dates, named as app/finance.py names them (tests/test_finance_js.py holds the two together):
      the transfer round set at approval, monday's own title since 11.11, and the legal day, request + 14 days */
@@ -3568,7 +3574,7 @@
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
       overviewHtml() + "<div class=\"fin-foot\">" + healthHtml() +
-      "</div></div>";
+      "<a class=\"fin-ask\" data-ask=\"1\" href=\"" + ASK_URL + "\" target=\"_blank\" rel=\"noopener\">חסר כאן משהו? פנייה לנדב</a></div></div>";
   }
   function message(text) {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1></div><div class=\"fin-panel fin-empty\"><p class=\"fin-msg\">" + esc(text) + "</p>" +
@@ -3810,7 +3816,7 @@
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
       "[data-books-fill],[data-books-all]," +
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
-      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
+      "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry],[data-ask]");
     if (!el || !root.contains(el)) { return; }
     /* 1.1: a row picked for a batch, every row, none; the row's own button; the batch's button, its "כתיבה", its close */
     if (el.dataset.pick || el.dataset.pickAll || el.dataset.pickClear) {
@@ -3871,6 +3877,8 @@
     if (el.dataset.idRetry) { delete IDS[el.dataset.idRetry]; redraw(); return; }
     if (el.dataset.bankRetry) { delete BANKS[el.dataset.bankRetry]; redraw(); return; }
     if (el.dataset.vatRetry) { delete VATS[el.dataset.vatRetry]; redraw(); return; }
+    /* "חסר כאן משהו? פנייה לנדב": the link opens the request form as it did; this only counts it (QA 26.11, G) */
+    if (el.dataset.ask) { use("ask"); flushUse(false); return; }
     /* a company's billing details (D2, ADR-0188): their edit, written as the person */
     if (el.dataset.billEdit) { startBill(el.dataset.billEdit); return; }
     if (el.dataset.billGo) { billGo(); return; }
