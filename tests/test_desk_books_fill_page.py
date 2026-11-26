@@ -6,6 +6,8 @@ The page proposes nothing of its own: each value is the server's, written only i
 cells are no longer what the desk read is skipped and said, never written over."""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.desk import books as db
@@ -16,6 +18,12 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 SC_BOARD = fd.STUDENT_CHARGE
 NUMBER_COL, DATE_COL = fd.SC["invoice"], fd.SC["paid_date"]
 
+
+
+def titled(before: str, after: str, html: str) -> bool:
+    """`before`, a press's title (what it does: the UX review of 26.11, tested in tests/test_desk_dismissals_page.py), then
+    `after`, in `html`."""
+    return re.search(re.escape(before) + r' title="[^"]+"' + re.escape(after), html) is not None
 
 def action() -> dict:
     return dict(fd.DESK_ACTIONS[db.FILL_ACTION], key=db.FILL_ACTION)
@@ -172,10 +180,11 @@ def test_the_list_says_each_proposal_with_its_button_and_offers_every_one_above_
                                 "62604": ("4", "עידו רז | השלמת תשלום")}.items():
         # (QA 26.11, 1: the line carries the row it proposes, `data-books-at`, where the report of its write floats)
         # R5: and "לא להציע" beside its button, naming the row's proposal
-        assert ('<div class="fin-fill" data-books-at="sc:%s">הצעה: לרשום בשורה של %s <button type="button" '
-                'class="fin-btn fin-fill-btn" data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button> '
-                '<button type="button" class="fin-linkbtn fin-nag" data-nag="books_ref_fill:%s" data-nag-from="list">לא להציע'
-                '</button></div>' % (rid, h.escape(name), rid, rid)) in rows[number]
+        # (the UX review of 26.11: the press's title says what it does, tests/test_desk_dismissals_page.py)
+        assert titled('<div class="fin-fill" data-books-at="sc:%s">הצעה: לרשום בשורה של %s <button type="button" '
+                      'class="fin-btn fin-fill-btn" data-books-fill="sc:%s" data-books-from="list">רישום מחשבשבת</button> '
+                      '<button type="button" class="fin-linkbtn fin-nag" data-nag="books_ref_fill:%s" data-nag-from="list"'
+                      % (rid, h.escape(name), rid, rid), '>לא להציע</button></div>', rows[number])
     assert "fin-fill" not in rows["62606"] + rows["62613"]
     # changed deliberately (QA 26.11, C): the button says what it writes - cells, rows, numbers and dates - not its rows
     assert 'data-books-all="1">לרשום את כל ההצעות <span class="fin-subtle">(%s)</span></button>' % ALL_SAID in part
@@ -226,8 +235,8 @@ def test_a_proposed_row_carries_its_chip_its_sentence_and_its_button_and_never_j
         mark = {r["id"]: r for r in merged["b2c"]["rows"]}[rid]["books"][0]
         # the server's sentence, quietly under the actions - a proposal is no warning
         # R5: and "לא להציע" beside it
-        assert ('<p class="fin-dx-books fin-fill-said">%s <button type="button" class="fin-linkbtn fin-nag" data-nag="%s:%s" '
-                'data-nag-from="detail">לא להציע</button></p>' % (h.escape(mark["text"]), mark["kind"], rid)) in detail
+        assert titled('<p class="fin-dx-books fin-fill-said">%s <button type="button" class="fin-linkbtn fin-nag" data-nag="%s:%s" '
+                      'data-nag-from="detail"' % (h.escape(mark["text"]), mark["kind"], rid), '>לא להציע</button></p>', detail)
         assert "fin-dx-warn" not in detail or h.escape(mark["text"]) not in detail[detail.index("fin-dx-warn"):]
         assert ('<button type="button" class="fin-btn" data-books-fill="sc:%s" data-books-from="detail">רישום מחשבשבת'
                 '</button>' % rid) in detail

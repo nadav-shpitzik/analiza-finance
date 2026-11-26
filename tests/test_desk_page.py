@@ -808,16 +808,21 @@ def whats_new(html: str) -> list:
     return re.findall(r"<li>(.*?)</li>", box.group(1)) if box else []
 
 
-def test_what_changed_shows_four_lines_under_the_top_bar_until_closed_and_stays_closed_in_this_browser():
-    """QA 26.11 (H): the legend is about 17,000 characters; for the first weeks, four lines under the top bar say what changed
-    with the move - the red marks, the books' list, "רישום מחשבשבת", "לפי מחזור" - in the legend's words. "סגירה" closes it
-    for good in this browser (its storage), and a visit after that opens without it."""
+def test_what_changed_shows_its_lines_under_the_top_bar_until_closed_and_stays_closed_in_this_browser():
+    """QA 26.11 (H): the legend is about 17,000 characters; for the first weeks, a few lines under the top bar say what
+    changed with the move - the red marks, the books' list, "רישום מחשבשבת", "לפי מחזור", and (the UX review of 26.11)
+    "לא פער", the receipts' queue and the Excel file with the ID number - in the legend's words. "סגירה" closes it for good
+    in this browser (its storage), and a visit after that opens without it."""
     import html as h
     got = drive(answer(), [{"click": [{"whatsNew": "close"}]}, {"show": {"tab": "b2b"}}])
     lines = [h.unescape(x) for x in whats_new(got["first"])]
-    assert len(lines) == 4 and got["first"].index('class="fin-new"') < got["first"].index('class="fin-tabbar"')
+    assert len(lines) == 7 and got["first"].index('class="fin-new"') < got["first"].index('class="fin-tabbar"')
     assert lines[0].startswith('סימון אדום "חשבשבת: ..."') and "מסמכים בחשבשבת בלי חיוב במאנדיי" in lines[1]
     assert lines[2].startswith('"רישום מחשבשבת"') and lines[3].startswith('"לפי מחזור"')
+    assert lines[4].startswith('"לא פער"') and '"לא להציע"' in lines[4]
+    assert lines[5].startswith('"שולם, שליחת קבלה: טרם"') and "הופקה בחשבשבת" in lines[5]
+    assert lines[6].startswith('"ייצוא לאקסל עם ת.ז"')
+    assert not any("—" in x or "–" in x for x in lines)
     assert 'data-whats-new="close">סגירה</button>' in got["first"]
     assert [whats_new(s["html"]) for s in got["steps"]] == [[], []] and got["stored"] == {WHATS_NEW_KEY: "closed"}
     again = drive(answer(), [], stored={WHATS_NEW_KEY: "closed"})
@@ -828,7 +833,7 @@ def test_what_changed_closes_for_the_visit_where_the_browser_keeps_nothing_and_e
     """Best effort: a browser that refuses its storage (a private window, blocked site data) shows the box until it is
     closed, and keeps it closed for the visit; from 24.12.2026, four weeks after the switch, it is not shown at all."""
     got = drive(answer(), [{"click": [{"whatsNew": "close"}]}, {"show": {"tab": "b2c"}}], storage="refuses")
-    assert len(whats_new(got["first"])) == 4 and [whats_new(s["html"]) for s in got["steps"]] == [[], []]
+    assert len(whats_new(got["first"])) == 7 and [whats_new(s["html"]) for s in got["steps"]] == [[], []]
     assert whats_new(drive(answer(), [], today="2026-12-23")["first"]) != []
     assert whats_new(drive(answer(), [], today="2026-12-24")["first"]) == []
 

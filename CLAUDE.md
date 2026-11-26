@@ -170,7 +170,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   1280 and 1400 (tests/test_desk_books_page.py); the line over the queue, its split, is GET /api/desk/totals `receipts`
   (`receipts_split`: issued, not, unknown), counted once. Tests: `tests/test_desk_receipts.py`, the page's in test_desk_page.py. At
   the desk's foot, "חסר כאן משהו? פנייה לנדב" is back as analiza-metrics' desk had it (`ASK_URL`, usage `ask`; QA 26.11).
-  Until 24.12.2026 a closable "מה השתנה" of four lines under the top bar (`WHATS_NEW`), closed for good in the browser
+  Until 24.12.2026 a closable "מה השתנה" of seven lines under the top bar (`WHATS_NEW`: the move's four, and since the UX
+  review of 26.11 "לא פער", the receipts' queue and the file with the ID number), closed for good in the browser
   (localStorage, best effort; QA 26.11); the browser tests open the desk as one who closed it (`qa_visit(whats_new=False)`). A row's action in its details floats beside its control, as a batch
   does (`actPop`), so no row moves, and the whole box stays in the view below a table header stuck at its top
   (`stuckHeads`, QA 26.11: a box above a row near the top went under the header). One flash shows at a time: a new one takes the place of the one on the screen. The root
@@ -316,9 +317,11 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   routes, membership per kind, a forged hash, undo by another, on Postgres too).
   **The page** (finance.js, its block "R5"): "לא פער" beside each mark's sentence in a row's details and on each document
   of the three lists (a column with no heading), "לא להציע" beside each proposal (its sentence in the details, its line in
-  the list); none for a viewer (`user.view_only`). One press opens a confirmation floating beside it (`nagBox`, `fin-pop`,
+  the list); none for a viewer (`user.view_only`); each press's title is its confirmation's own sentence (`NAG_SAID`, the UX
+  review of 26.11). One press opens a confirmation floating beside it (`nagBox`, `fin-pop`,
   placed by `placePop` as every box: below a table header stuck at the top, and beside its own remembered spot, `POP_AT`
-  owned by `NAG`, once its press left the page; one floating box at a time) that says what it does and what brings it
+  owned by `NAG`, once its press left the page; one floating box at a time; another tab closes it as "ביטול" would, unless it is being saved: the UX review of 26.11)
+  that says what it does and what brings it
   back, a mark in its whole words (`long`: the chip on the row is short since the QA of 26.11, D), as the list of what is
   hidden says it too; "הסתרה" sends the
   alert, the server's evidence, `taken_at` and `books.key`, and draws the desk the server answers (every count the

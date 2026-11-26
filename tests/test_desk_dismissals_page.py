@@ -44,8 +44,12 @@ def draw(b: dict, cases: list) -> list:
 
 
 def press_of(html: str, kind: str, subject: str, frm: str) -> str:
-    return ('<button type="button" class="fin-linkbtn fin-nag" data-nag="%s:%s" data-nag-from="%s">%s</button>'
-            % (kind, subject, frm, h.escape(dz.WORD[kind], quote=False)))
+    """The press as `html` draws it - its key, where it is drawn from, its title (what it does, the confirmation's own
+    sentence: the UX review of 26.11) and its word - or a text no drawing holds when it is not there."""
+    m = re.search(r'<button type="button" class="fin-linkbtn fin-nag" data-nag="%s:%s" data-nag-from="%s" title="[^"]+">%s'
+                  r'</button>' % (re.escape(kind), re.escape(subject), re.escape(frm),
+                                  re.escape(h.escape(dz.WORD[kind], quote=False))), html)
+    return m.group(0) if m else "<no press %s:%s from %s>" % (kind, subject, frm)
 
 
 def detail_of(html: str, rid: str) -> str:
@@ -428,3 +432,28 @@ def test_in_a_browser_the_confirmation_stays_below_a_stuck_header_and_where_it_w
         assert gone["inView"] and gone["firstSeen"], (size, gone)
         assert scrolled["head"] is None or scrolled["top"] >= scrolled["head"], (size, scrolled)
         assert scrolled["inView"] and scrolled["firstSeen"], (size, scrolled)
+
+
+def test_each_press_says_on_hover_what_it_does_in_the_confirmations_own_words():
+    """The UX review of 26.11: a document's line can carry two hiding words, "לא פער" and "לא להציע", and neither said what
+    it does until pressed. Each press's title is its confirmation's sentence: a mark's, a document's, a proposal's."""
+    tasks = draw(body(nag_view()), [TASKS])[0]
+    detail = draw(body(nag_view()), [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"9": True}}}])[0]
+    title = lambda press: h.unescape(re.search(r'title="([^"]+)"', press).group(1))
+    assert title(press_of(tasks, "books_doc_students", "62606", "list")).startswith("המסמך יוסתר מהרשימה לכולם")
+    assert title(press_of(tasks, "books_ref_fill", "1", "list")).startswith("ההצעה לא תוצג יותר, לאף אחד")
+    assert title(press_of(detail, "books_amount_differs", "9", "detail")).startswith("הסימון יוסתר לכולם")
+
+
+def test_a_confirmation_closes_when_another_tab_is_chosen_and_hides_nothing():
+    """The UX review of 26.11: a confirmation of "לא פער" opened on the students' tab stayed open, floating over the
+    companies' tab, about a student. Another tab closes it as its "ביטול" would; nothing is sent, and back on the students'
+    tab it is closed. One being saved is left to its answer (busyNag)."""
+    got = run([{"show": TASKS}, {"click": [{"nag": "books_doc_students:62606", "nagFrom": "list"}]},
+               {"click": [{"fintab": "b2b"}]}, {"click": [{"fintab": "b2c"}]}])
+    opened, other, back = (s["html"] for s in got["steps"][1:])
+    assert "fin-nag-box" in opened and "fin-nag-box" not in other and "fin-nag-box" not in back
+    assert got["posts"] == []
+    events = [(e["k"], e.get("d")) for b in got["usage"] for e in b["body"]["events"]]
+    assert ("not_a_gap", {"alert": "books_doc_students", "phase": "cancel"}) in events
+
