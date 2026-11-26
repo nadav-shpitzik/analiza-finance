@@ -160,7 +160,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). A pending
   receipt ("שולם, שליחת קבלה: טרם") is a queue: its list is the oldest first, on the page and in the file alike (view.py
   `B2C_SORT`, finance.js `SC_SORT`, held together by tests/test_desk_parity_js.py), and beside its date, in every list, and in its
-  details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים"; Nadav 26.11, receipts go out slowly),
+  details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים", red from a week on, `WAIT_LATE_DAYS`;
+  Nadav 26.11, receipts go out slowly),
   a line of its own under the date (9d4d5b8: on the date's line it widened the column). And what the books hold of each receipt
   (the same day; `receipt_books`, app/desk/books.py `receipt_in_books`, laid by `merge` only from a current part of this reading,
   as a proposal is): "הופקה בחשבשבת" when a number the row cites is an invoice-receipt A1 accepts, or FR-C2's analysis finds the
