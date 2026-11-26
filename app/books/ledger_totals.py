@@ -48,16 +48,23 @@ income transfers. Its debit equals its credit.
 
 **A run recomputes whole months and replaces them** (ADR-0187 §4), one transaction per month (LedgerStore.replace_month).
 A month is replaced only when it was read whole:
-1. every part answered under the report's `limit`. A part that reaches it (`hit_limit`) is split in two by sort code, at
-   the median of the codes it carried, until every part is under the limit; a part of one sort code at the limit, or more
-   than MAX_PARTS calls, is `cut`. The sort-code cut narrower than the whole range is unverified live (only the whole
-   range was sent, 26.11), so a part whose rows fall outside its range is `outside`, never summed.
+1. every part answered under SPLIT_AT (900) rows and under the report's `limit`. The External file's `limit` (10000) is
+   not sent (app/books/ledger.py), so a cap of the vendor's own would cut an answer at exactly that cap, between two rows
+   ordered by date, and a cut between two whole transactions leaves the month balanced: rule 3 cannot see it. October
+   2026 came back whole in one answer of 902 rows (26.11, spec §4.4), so no fixed cap of the vendor's is under 902; and a
+   part of SPLIT_AT rows or more is split exactly as a part at the limit is (`hit_limit`), so a cap at SPLIT_AT or above
+   can never cut a part that is summed. A part is split in two by sort code, at the median of the codes it carried, until
+   every part is under both; a part of one sort code at SPLIT_AT rows or more (or at the limit), or more than MAX_PARTS
+   calls, is `cut`. No split by date is made: it would be the next step if one sort code ever carries that many rows in a
+   month, and until then such a month is refused. The sort-code cut narrower than the whole range is unverified live
+   (only the whole range was sent, 26.11), so a part whose rows fall outside its range is `outside`, never summed. A
+   month of October's size is now read in parts, so the first run tries that cut: ignored, it refuses the month.
 2. every row readable: a date in the month asked, a sort code in its part's range (never MERGED_CODE), a key, numeric
    debit and credit, a batch that is a whole number when it is there (`unreadable`, `outside`); and the rows carry every
    column the totals read (`columns`).
-3. the month balances: its debits equal its credits (`unbalanced`). This is the one check that does not depend on knowing
-   the cap the vendor applies: the External file's `limit` is not sent (app/books/ledger.py), so an answer cut by a lower
-   cap of the server's would pass `hit_limit`. A hypothesis the first run settles.
+3. the month balances: its debits equal its credits (`unbalanced`). Every transaction balances and the date cut takes
+   whole transactions, so this catches a row lost or misread inside a transaction; it is no guard against a cut between
+   two whole transactions (rule 1 is).
 4. an answer of no rows ("data not found") for a month the store holds rows of is doubted, not trusted (`emptied`).
 
 **The dry listing** (`listing`) reads the same months the same way and stores nothing: per sort code its name and its
@@ -103,6 +110,9 @@ MAX_KEY = 64
 MAX_NAME = 200
 MAX_MONTHS = 12
 MAX_PARTS = 16  # report calls for one month: a split that needs more is `cut`
+# A part of this many rows or more is split as a part at the limit is: the file's limit is not sent, and a fixed cap of the
+# vendor's own is not under 902 (October 2026 came whole at 902 rows, 26.11), so it can never cut a part that is summed.
+SPLIT_AT = 900
 MARGIN_S = 1.0
 # The salary list's states (/health says them, never the list).
 SALARY_STATES = ("set", "missing", "bad")
@@ -552,7 +562,8 @@ def read_month(call: Call, definition: Definition, month: str, deadline: float,
                clock: Callable[[], float] = time.monotonic) -> tuple:
     """(MonthResult, _Month): one month read whole, balanced and summed in memory - or (refused MonthResult, None).
     `call(parameters, deadline)` runs the report (WizClient.export_report with the definition's datafile). A part that
-    reaches the limit is split by sort code (the module's docstring); every answer is summed and dropped as it comes."""
+    reaches the limit, or SPLIT_AT rows, is split by sort code (the module's docstring, rule 1); every answer is summed and
+    dropped as it comes."""
     result = MonthResult(month)
     acc = _Month(month)
     pending = [WHOLE_SORT]
@@ -584,7 +595,7 @@ def read_month(call: Call, definition: Definition, month: str, deadline: float,
         reader = _Reader(rows, definition)
         if reader.missing():
             return result.refuse("columns"), None
-        if len(rows) >= definition.limit:  # hit_limit: this part may be cut
+        if len(rows) >= min(definition.limit, SPLIT_AT):  # at the limit, or at a cap of the vendor's own: may be cut
             codes = acc.codes_in(rows, reader, low, high)
             del rows, reader
             if len(codes) < 2:

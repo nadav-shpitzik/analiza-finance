@@ -890,6 +890,64 @@ def test_an_answer_at_exactly_the_limit_is_cut_and_under_it_is_whole(pg):
     assert out["ok"] and out["months"]["2026-10"]["parts"] == 1
 
 
+def big_month(month: str, count: int) -> list:
+    """`count` supplier invoices, two rows each: the three suppliers in turn, each credited (942) and its expense account
+    debited (951) 12.34, 23.45 and 34.56 an invoice, on a day from the 1st to the 28th."""
+    out = []
+    for i in range(count):
+        expense, supplier = (("50120", "71884"), ("50121", "72005"), ("50122", "73010"))[i % 3]
+        amount = (D("12.34"), D("23.45"), D("34.56"))[i % 3]
+        out += tx(f"{month}-{i % 28 + 1:02d}", 90000 + i, 7001, [(expense, amount, None), (supplier, None, amount)],
+                  "חשבונית רכש")
+    return out
+
+
+def test_a_part_of_split_at_rows_is_never_summed_whole():
+    """The file's limit (10000) is not sent: an answer of SPLIT_AT rows may be one the vendor cut at a cap of its own, so
+    it is split as an answer at the limit is. Two rows fewer is one part, summed whole."""
+    definition = ledger.load_definition(SECRET)
+    assert (definition.limit, ledger_totals.SPLIT_AT) == (10000, 900)
+    for count, parts in ((450, 3), (449, 1)):  # 900 rows, then 898 (a transaction is two rows)
+        rows = big_month("2026-05", count)
+        asked = []
+
+        def call(parameters, deadline):
+            low, high = int(parameters[0]["defVal"]), int(parameters[1]["defVal"])
+            asked.append((low, high))
+            return {"repdata": [r for r in rows if low <= r["קוד מיון"] <= high]}
+
+        result, acc = ledger_totals.read_month(call, definition, "2026-05", time.monotonic() + 60)
+        assert (result.reason, result.parts, acc.rows) == (None, parts, 2 * count), count
+        assert asked == [(-999999999, 999999999), (-999999999, 942), (943, 999999999)][:parts], count
+
+
+@needs_pg
+def test_a_cap_of_the_vendors_own_never_cuts_a_month_silently(pg):
+    """The review's finding 3. A cap of the vendor's own cuts an answer at exactly the cap, between two rows ordered by
+    date; a cut between two whole transactions leaves the month balanced, and the month was stored as whole. October 2026
+    came back whole in one answer of 902 rows (26.11), so no fixed cap is under 902 (the review's 30 is ruled out). Here
+    the vendor caps at 1000 a month of 600 invoices, 1200 rows: its first answer is the first 500 invoices, balanced. It is
+    split at 942 (942 and 951 the codes it carried), and each half, 600 rows, is summed. By hand: each supplier has 200
+    invoices, 200 x 12.34 = 2468.00, 200 x 23.45 = 4690.00 and 200 x 34.56 = 6912.00, so 14070.00 on 942's credit and on
+    951's debit, 600 rows and three accounts each; the two largest 11602.00, the rest 2468.00 against a tenth of 1407.00."""
+    month = "2026-05"
+    books = Books(big_month(month, 600), cap=1000)
+    out = run(books, pg, [month])
+    assert out["ok"] is True and out["months"][month] == stored({
+        "parts": 3, "rows": 1200, "sort_codes": 2, "kept_lines": 2, "merged_codes": 0, "merged": "none",
+        "merged_by": {"salary": 0, "small": 0, "side": 0, "balance": 0}, "masked_keys": 0, "batch_9998_rows": 0})
+    assert [c[:2] for c in books.calls] == [(-999999999, 999999999), (-999999999, 942), (943, 999999999)]
+    assert lines(pg, month) == {942: (D("0"), D("14070.00"), 600, 3, 0), 951: (D("14070.00"), D("0"), 600, 3, 0)}
+    assert month_row(pg, month)[0] == 1200
+    # one sort code of SPLIT_AT rows or more in a month is `cut` (a split by date would be the next step): 900 invoices,
+    # 942's half alone is 900 rows. Nothing is stored and what was stays
+    books = Books(big_month(month, 900), cap=1000)
+    out = run(books, pg, [month])
+    assert (out["ok"], out["reasons"], out["months"][month]["cut"], out["months"][month]["parts"]) == (False, ["cut"], True, 2)
+    assert [c[:2] for c in books.calls] == [(-999999999, 999999999), (-999999999, 942)]
+    assert lines(pg, month) == {942: (D("0"), D("14070.00"), 600, 3, 0), 951: (D("14070.00"), D("0"), 600, 3, 0)}
+
+
 @needs_pg
 def test_a_date_cut_the_vendor_ignored_is_outside_and_never_summed(pg):
     books = Books()
