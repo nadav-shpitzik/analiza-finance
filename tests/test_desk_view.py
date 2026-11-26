@@ -767,7 +767,9 @@ def test_the_done_refunds_tile_and_the_refunded_figure_have_different_names():
 # and since D2 (ADR-0188, the desk move plan §1b item 4) a customer's four billing details on Accounts, which the person
 # writes from the browser where analiza-metrics' server wrote them
 ALLOWED = {
-    fd.STUDENT_CHARGE: {"color_mm1kxpvt", "numeric_mm62za1f", "text_mm8fjzfj", "text_mm6d6s97", "color_mm4cq1hw"},
+    # D4: "תאריך תקבול" (date_mm8yh4bn), written by "רישום מחשבשבת" only, only empty (spec §7.3: the list gains one column)
+    fd.STUDENT_CHARGE: {"color_mm1kxpvt", "numeric_mm62za1f", "text_mm8fjzfj", "text_mm6d6s97", "color_mm4cq1hw",
+                        "date_mm8yh4bn"},
     fd.B2B_CHARGE: {"color_mm3zx2n7", "text_mm3y6snz", "date_mm4a6y8y", "color_mm4bhvta", "numeric_mm8zqhag"},
     fd.ACCOUNTS_BOARD: {"text_mm3y3gm7", "text_mm3yprqa", "text_mm3yfrew", "dropdown_mm3yd36d"},
 }
@@ -900,7 +902,8 @@ def test_each_tab_carries_its_own_actions_and_a_tab_the_reader_may_not_see_carri
 
 def test_the_house_style_holds_in_every_word_an_action_shows():
     for a in fd.DESK_ACTIONS.values():
-        for text in [a["button"], a.get("after", "")] + [w["title"] for s in a["steps"] for w in s]:
+        for text in [a["button"], a.get("after", "")] + [w["title"] for s in a["steps"] for w in s] + [
+                c["title"] for c in a.get("rests_on", [])]:
             assert "\u2014" not in text and "\u2192" not in text and "->" not in text, text
     form = fd.account_form()
     for text in [form["mon43"]] + [f["title"] for f in form["fields"]] + [f["hint"] for f in form["fields"]]:

@@ -152,7 +152,12 @@ class World:
     `window_error` answers the windows' request with a GraphQL error, `window_item` reshapes each item of a window, and
     `window_states` says which items a window answers (whether monday's answers archived ones is not verified). An item
     `leave`s its charge board archived or deleted, as monday's items_page and items_count stop holding it; state "gone"
-    is an id monday no longer answers at all."""
+    is an id monday no longer answers at all.
+
+    D4 (26.11): a status filter (`any_of` on a status column, alias `t0`) in a request of its own - the active items whose
+    cell holds one of the indexes, `track_page` at a time (`tracked`: what each asked). Never beside the columns check or
+    the windows (the review of D4: monday refuses a request whole when one field is bad, so a refused filter took them
+    down): a filter there fails the test."""
 
     def __init__(self):
         self.items: dict = {}
@@ -175,6 +180,8 @@ class World:
         self.window_states = ("active",)
         self.windows: list = []  # the days each windows' request asked for
         self.windowed: list = []  # every board a window was answered for
+        self.track_page = None  # D4: a status filter's page size (None: one page)
+        self.tracked: list = []  # D4: (board, column, indexes) of every status filter answered
         self._lock = threading.Lock()
 
     def add(self, board: str, item_id: int, name: str, state: str = "active", **cells) -> None:
@@ -273,6 +280,30 @@ class World:
             data[alias] = self.answer_by_id(var["li" + n], var["lc"])
         return httpx.Response(200, json={"data": data})
 
+    # ---- D4: a status filter, monday's any_of on a status column ----
+    _TRACK = re.compile(r't0: boards\(ids: \$t0\) \{ items_page\(limit: \$limit, query_params: \{rules: \[\{column_id: '
+                        r'"([a-z0-9_]+)", compare_value: \[([0-9, ]+)\], operator: any_of\}\]\}\) \{ cursor items \{ id \} \} \}')
+
+    def tracked_items(self, board: str, column: str, indexes: list) -> list:
+        return [i for i, x in self.items.items() if x["board"] == board and x["state"] == "active"
+                and isinstance(x["cells"].get(column), dict) and x["cells"][column].get("index") in indexes]
+
+    def track_page_of(self, board: str, column: str, indexes: list, at: int) -> dict:
+        ids = self.tracked_items(board, column, indexes)
+        size = self.track_page or len(ids) or 1
+        nxt = at + size if at + size < len(ids) else None
+        cursor = None if nxt is None else "t|%s|%s|%s|%d" % (board, column, ",".join(map(str, indexes)), nxt)
+        return {"cursor": cursor, "items": [{"id": i} for i in ids[at:at + size]]}
+
+    def answer_track(self, query: str, var: dict) -> dict:
+        """The alias `t0` of a filter's own request: the first page of the board's items the rule names."""
+        m = self._TRACK.search(query)
+        assert m, "a status filter of another shape: " + query[-200:]
+        board, column = var["t0"][0], m.group(1)
+        indexes = [int(x) for x in m.group(2).split(",")]
+        self.tracked.append((board, column, indexes))
+        return {"t0": [] if board in self.hidden else [{"items_page": self.track_page_of(board, column, indexes, 0)}]}
+
     def own_columns(self, board: str) -> set:
         key = board_key(board)
         return set(rd.CHECKED_COLUMNS[key]) - set(self.columns_missing.get(board, ())) if key else set()
@@ -310,8 +341,16 @@ class World:
             return httpx.Response(200, json={"data": {"boards": [
                 {"id": self.subscribers_of.get(board, board),
                  "subscribers": [{"id": u} for u in sorted(self.members.get(board, ()))]}]}})
-        if "query_params" in query:  # D2: the refresh's one request
+        if "any_of" in query:  # D4: a status filter, in a request of its own and never beside another
+            assert "columns(ids:" not in query and "within_the_last" not in query and "items(ids:" not in query, (
+                "a status filter rides on a request the desk cannot do without: " + query[:120])
+            return httpx.Response(200, json={"data": self.answer_track(query, var)})
+        if "within_the_last" in query:  # D2: the refresh's one request
             return self.answer_windows(query, var)
+        if "next_items_page" in query and str(var["c"]).startswith("t|"):  # D4: a status filter's next page
+            _t, board, column, indexes, at = var["c"].split("|")
+            return httpx.Response(200, json={"data": {"next_items_page": self.track_page_of(
+                board, column, [int(x) for x in indexes.split(",")], int(at))}})
         if "next_items_page" in query and str(var["c"]).startswith("w|"):  # D2: a window's next page
             _w, board, days, at = var["c"].split("|")
             items, nxt = self.page(self.window(board, int(days)), int(at))
@@ -406,8 +445,9 @@ def test_the_reading_reads_both_chains_and_counts_every_board():
     assert set(r["checks"]) == set(rd.BOARDS)
     assert r["checks"]["leads"] == {"board_id": rd.LEADS_BOARD, "asked": 3, "rows": 3, "missing": 0, "strangers": 0,
                                     "archived": 0, "short_rows": 0, "ok": True}
-    # the cost: the columns, the two boards' ids and rows, then two rounds by id - and nothing else
-    assert r["calls"] == 10 and len(w.queries) == 10
+    # the cost: the columns, the cohorts on the voucher track (D4: a request of their own since the review of D4), the two
+    # boards' ids and rows, then two rounds by id - and nothing else
+    assert r["calls"] == 11 and len(w.queries) == 11
 
 
 def test_the_snapshot_has_the_shape_the_old_desk_builds_from():
@@ -522,12 +562,13 @@ def test_one_reading_serves_every_open_within_a_minute():
     first, _ = held.get()
     clock.t += 59
     again, _ = held.get()
-    assert again is first and len(w.queries) == 10
+    assert again is first and len(w.queries) == 11                       # one reading (test above: eleven requests)
     clock.t += 2
     newer, last = held.get()
-    # since D2 the reading after the minute is a refresh over the one held, nothing having changed: its one request and
-    # the two charge boards' ids (D2's review)
-    assert newer is not first and len(w.queries) == 13 and last["complete"] is True and newer["kind"] == "delta"
+    # since D2 the reading after the minute is a refresh over the one held, nothing having changed: its one request, the
+    # cohorts on the voucher track (D4, a request of their own since its review) and the two charge boards' ids (D2's
+    # review)
+    assert newer is not first and len(w.queries) == 15 and last["complete"] is True and newer["kind"] == "delta"
 
 
 def test_a_failed_reading_keeps_the_one_before_and_is_tried_again_only_after_the_gap():

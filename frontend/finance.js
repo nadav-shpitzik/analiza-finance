@@ -141,6 +141,42 @@
  *      and the Excel link carries it too, so a file built from another part says so.
  * D3 5 A number a row cites that is just past the end of its series is not yet in the copy (read every hour): the server
  *      gives no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
+ * D4 (26.11, "רישום מחשבשבת"): what the books propose to fill on a Student Charge row - FR-C2's invoice number and A1's
+ *      receipt date, of the desk's era, computed on the server (app/desk/books.py `proposals`) - written by the person.
+ *      A chip "בחשבשבת: N" (or "תאריך מחשבשבת: D" for the date alone) under the row's state and in "מה לבדוק", its
+ *      sentence and its button in the row's details; on the document's line in the books' list, "הצעה: לרשום בשורה של
+ *      ..." and the button; above that list, "לרשום את כל ההצעות (N)". Each is the batch of D2's 1.1 (one request reads the
+ *      rows, one confirmation, each row read again right before its write, the report row by row, one refresh), floating
+ *      beside what was pressed, so no row moves. A cell is written only empty, only with what the books propose (if_empty;
+ *      planAction), and a row whose cells are not what the desk read is skipped and said, never written over (fillMoved).
+ *      WRITABLE gained "תאריך תקבול" as a date, as the server's desk_writes did. A written date is shown on the row at once
+ *      (applyWritten), and the document leaves the list with the next reading.
+ * From the hostile review of D4 (26.11), by its numbers:
+ * 1  A newer reading that landed while a confirmation of the books' proposals was open (a refresh, or askAgain when the view
+ *      takes the focus back from monday's item card) left the batch on the rows it was pressed on, and "כתיבה" wrote a
+ *      proposal the reading on the screen had withdrawn. A proposal is now always the reading's on the screen: taken off the
+ *      current rows when the confirmation is made (settleFills), held to each newer reading while it is open (recheckBatch:
+ *      one withdrawn or changed leaves for "לא ייכתב" with why, the count follows, and with none left the confirmation
+ *      closes, said), and checked again right before each row's write (confirmBatch).
+ * 2  The legend promised "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת", and the batch read only the two cells it writes. What a
+ *      proposal rests on (the server's `rests_on`: "סטטוס תשלום" by its index and "סכום ששולם") is read with them, in the
+ *      same request, when the confirmation is made and again right before each write, and a row whose status or amount
+ *      moved is skipped and said (restsMoved). Right before a number is written, one read as the person (READ_CITING,
+ *      items_page_by_column_values) asks for the rows of Student Charge whose "אסמכתת חשבונית" is that number, and another
+ *      one stops it (citedElsewhere; a check that cannot be made fails the row, never passes it). The legend says exactly
+ *      what is checked.
+ * 3  A "תאריך תקבול" written from here was laid on the row as the day it is shown by, but not as its month, so the row stayed
+ *      under its old period until the next reading. applyWritten files it under the written date's month too.
+ * 4a "רענון" that failed with any error but a 429 replaced the whole desk with an error screen, and what was typed in the
+ *      search went with it (QA 24.11, left for D4). The desk stays, and the line beside the reading's time says the refresh
+ *      failed and why (REFRESH_FAILED), until a reading is taken or "רענון" is pressed again; only a page with no desk yet
+ *      says the error in its place.
+ * 4b The plan of an action in a row's details - QA2 3 had left it "as it was: under its button" - pushed every row below
+ *      it down, and so did its reading, its progress and its result. Each floats now beside the action's control (actPop,
+ *      fin-pop, placed by placePop, following a scroll), as a batch does beside what was pressed: never over the button or
+ *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
+ * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נכתב במאנדיי..." and the note
+ *      on monday's card of the row just written). One shows at a time: a new one takes the place of the one on the screen.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -180,6 +216,8 @@
     books_ref_invalid: "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
     books_amount_differs: "בשורה {row}, בחשבשבת {books}",
     books_receipt_unpaid: "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+    /* D4: what the books propose to fill on the row - the server fills each "{...}" (the row's `books`; booksMark) */
+    books_ref_fill: "בחשבשבת: {number}", books_date_fill: "תאריך מחשבשבת: {date}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -193,11 +231,12 @@
     receipt_no_money: 1, books_ref_invalid: 1, books_amount_differs: 1, books_receipt_unpaid: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
-    billed_no_invoice: 1, terms_missing: 1 };
+    billed_no_invoice: 1, terms_missing: 1, books_ref_fill: 1, books_date_fill: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
     "receipt_no_money", "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid", "refund_last_day_passed",
     "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
-    "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
+    "refund_last_day_unknown", "invoice_missing", "books_ref_fill", "books_date_fill", "billed_no_invoice",
+    "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
   var GROUP_NAME = { b2c: "סטודנטים", b2b: "לקוחות עסקיים" };
@@ -252,7 +291,7 @@
   var ROWS = { sc: [], b2: [] };
   var state = { tab: "b2c", query: "", notes: false, legend: false,
     /* the students list: a state ("tasks", "" for all, or a state key), a period key, the payments opened */
-    sc: { state: "tasks", period: "", open: {} },
+    sc: { state: "tasks", period: "", open: {}, view: "list", cohorts: {}, unpriced: false },
     /* the companies list: a state, a customer (account id), the list or the customers, the charges opened */
     b2: { state: "tasks", customer: "", view: "list", open: {}, back: null } };
 
@@ -778,6 +817,7 @@
     books_ref_invalid: function (r) { return booksText(r, "books_ref_invalid"); },
     books_amount_differs: function (r) { return booksText(r, "books_amount_differs"); },
     books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
+    /* D4: a proposal of the books is no warning - its sentence sits under its button, in the actions (fillSaid) */
   };
   function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
   /* D3 fix 2: a number the row cites that is just past the end of its series is not yet in the copy of the books (read
@@ -876,6 +916,7 @@
   }
 
   function b2cHtml() {
+    if (state.sc.view === "cohorts" && cohortsPart()) { return cohortsHtml(); }   /* D4: the students by cohort */
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
     OUTSIDE = null;
@@ -896,7 +937,7 @@
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
-      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" +
+      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" + scViews() +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button></div></div>";
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
@@ -915,12 +956,198 @@
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
     OUTSIDE = null;
-    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + (key === "tasks" && !q ? booksHtml("b2c") : "");
+    /* the books' list first: a batch pressed there floats in its panel, and the list's own box then draws none (D4) */
+    POP_IN_BOOKS = false;
+    var books = key === "tasks" && !q ? booksHtml("b2c") : "";
+    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + books;
   }
+  /* ---------- D4: the students by cohort ("לפי מחזור", knowledge backlog 0313; Chava 26.11) ----------
+     A view of the students' tab beside its list, as "לפי לקוח" is of the companies': for each cohort with a price, what its
+     students should pay ("צפי תשלום"), what came in ("שולם בפועל") and the balance in Chava's parts by the voucher status,
+     "אושר - ממתין לתשלום" - money that should already have come in - its figure first and its column the one tinted; a
+     cohort opens to its students, each balance in its part's column, so a column of students sums to its cohort's cell.
+     Every word, number and column is the server's (app/desk/cohorts.py, view.b2c.cohorts); the totals of the cohorts a
+     search leaves are GET /api/desk/totals's (the list b2c_cohorts) - nothing is added up here. */
+  var COHORTS_WORD = "לפי מחזור";
+  /* where a cohort and a student (an enrollment) open in monday: their boards, Cohorts and Enrollments */
+  var ITEM_BOARD = { co: "5089806632", en: "5092151346" };
+  function cohortsPart() { return (VIEW && VIEW.b2c && VIEW.b2c.cohorts) || null; }
+  /* the search on the view: the same rule as app/desk/cohorts.py cohort_matches - its code, its name, a student's name */
+  function cohortMatch(x, q) {
+    q = String(q || "").trim().toLowerCase();
+    if (!q) { return true; }
+    return [x.code || "", x.title || "", x.name || ""].concat((x.students_list || []).map(function (s) { return s.name; }))
+      .join(" ").toLowerCase().indexOf(q) !== -1;
+  }
+  function cohortsShown() { var c = cohortsPart(); return c ? c.cohorts.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
+  function unpricedShown() { var c = cohortsPart(); return c ? c.unpriced.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
+  /* the table's columns: the server's, an optional part only when a cohort shown has money in it (cohorts.py columns_for);
+     the price and the students counted are said under the cohort's name (`folded`), so the table fits monday's widths */
+  function cohortCols(c, shown) {
+    return c.columns.filter(function (col) {
+      return !col.folded && (!col.shown_when || shown.some(function (x) { return num(x["part_" + col.shown_when]); }));
+    });
+  }
+  function header(c, key) { return (c.columns.filter(function (col) { return col.key === key; })[0] || {}).header || ""; }
+  /* an amount as it is: in whole shekels when it has no agorot, with them when it has - never rounded (the cohorts' sums
+     are six figures long, and agorot on every one of them pushed the table past monday's width) */
+  function cash(v) { var n = num(v); return Math.round(n * 100) % 100 === 0 ? money(n) : money2(n); }
+  function scViews() {
+    var on = state.sc.view === "cohorts";
+    return cohortsPart() ? "<div class=\"fin-seg\" role=\"group\" aria-label=\"תצוגה\">" +
+      "<button type=\"button\" class=\"fin-btn" + (on ? "" : " on") + "\" aria-pressed=\"" + !on + "\" data-scview=\"list\">רשימה</button>" +
+      "<button type=\"button\" class=\"fin-btn" + (on ? " on" : "") + "\" aria-pressed=\"" + on + "\" data-scview=\"cohorts\">" +
+      esc(COHORTS_WORD) + "</button></div>" : "";
+  }
+  function itemLink(board, id, cls, inner, label) {
+    return "<a class=\"" + cls + "\" data-open=\"" + esc(id) + "\" href=\"" + esc(ACCOUNT_URL + "/boards/" + ITEM_BOARD[board] + "/pulses/" + id) +
+      "\" target=\"_blank\" rel=\"noopener\"" + (label ? " aria-label=\"" + esc(label) + "\" title=\"" + esc(label) + "\"" : "") + ">" + inner + "</a>";
+  }
+  function hi(col) { return col.key === "part_approved" ? " fin-hi" : ""; }
+  function cohortCell(col, x) {
+    var k = col.key;
+    if (k === "cohort") {
+      var c = cohortsPart();
+      /* the review of D4: money filed here by its lead that no student holds is said on the line itself, shut or open - it
+         left no balance smaller, so the line's balance may be more than is really missing */
+      return itemLink("co", x.id, "fin-name", "<bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi>") + " " + esc(x.title) +
+        "<span class=\"fin-sub-said\">" +
+        esc(header(c, "price")) + " " + cash(x.price) + " · " + NF.format(x.students) + " " + esc(header(c, "students")) +
+        (x.status ? " · " + esc(x.status) : "") +
+        (x.unlinked && x.unlinked.count ? " · " + esc(c.words.unlinked) + " " + cash(x.unlinked.money) : "") + "</span>";
+    }
+    return num(x[k]) ? cash(x[k]) : NOT_SET;
+  }
+  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid is in the
+     line's "שולם בפועל" and is their expected (the review of D4: everything that came in) */
+  function studentCell(col, s) {
+    var k = col.key, counted = s.standing === "counted";
+    if (k === "cohort") {
+      return itemLink("en", s.id, "fin-name", esc(s.name)) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
+        (s.notes.length ? "<div class=\"fin-chips\">" + s.notes.map(function (t) { return "<span class=\"fin-chip\">" + esc(t) + "</span>"; }).join("") + "</div>" : "");
+    }
+    if (k === "expected") { return num(s.expected) ? cash(s.expected) : NOT_SET; }
+    if (k === "paid") { return num(s.paid) ? cash(s.paid) : NOT_SET; }
+    if (k === "balance") { return counted && num(s.balance) ? cash(s.balance) : NOT_SET; }
+    return counted && k === "part_" + s.part && num(s.balance) ? cash(s.balance) : NOT_SET;
+  }
+  /* what a cohort's line holds besides its students, said under them when it is open: the waived and the out with what
+     they paid, what was paid over the price, the payments no student holds, and its link to its enrollments where monday
+     disagrees with itself */
+  function cohortNotes(x) {
+    var c = cohortsPart(), w = c.words || {}, out = [];
+    if (x.waived) { out.push(w.waived + ": " + plural(x.waived, "סטודנט/ית אחד/ת", "סטודנטים") + (num(x.waived_paid) ? ", שילמו " + amountText(x.waived_paid) : "")); }
+    if (x.out) { out.push(w.out + ": " + plural(x.out, "סטודנט/ית אחד/ת", "סטודנטים") + (num(x.out_paid) ? ", שילמו " + amountText(x.out_paid) : "")); }
+    if (num(x.overpaid)) { out.push(w.overpaid + ": " + amountText(x.overpaid)); }
+    if (x.unlinked.count) { out.push(w.unlinked + ": " + plural(x.unlinked.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.unlinked.money)); }
+    if (x.shared.count) { out.push(w.shared + ": " + plural(x.shared.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.shared.money)); }
+    if (x.roster_missing) { out.push(plural(x.roster_missing, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, ומאנדיי לא החזיר אותן"); }
+    if (x.roster_elsewhere) { out.push(plural(x.roster_elsewhere, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, וההרשמה עצמה מקושרת למחזור אחר"); }
+    return out;
+  }
+  function cohortsTable(c, shown) {
+    /* no column "פתיחה במאנדיי" here: a cohort's code and a student's name open them in monday, and the narrower table fits
+       monday's widths with sums as long as real ones */
+    var cols = cohortCols(c, shown), span = cols.length + 1;
+    var head = "<tr><th class=\"k-more\"></th>" + cols.map(function (col) {
+      return "<th class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + esc(col.header) + "</th>";
+    }).join("") + "</tr>";
+    var body = shown.map(function (x) {
+      var open = !!state.sc.cohorts[x.id];
+      var row = "<tr class=\"fin-rowbtn" + (open ? " open" : "") + "\" data-cohort=\"" + esc(x.id) + "\" tabindex=\"0\" aria-expanded=\"" + open + "\">" +
+        "<td class=\"k-more\">" + MORE + "</td>" + cols.map(function (col) {
+          return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + cohortCell(col, x) + "</td>";
+        }).join("") + "</tr>";
+      if (!open) { return row; }
+      var notes = cohortNotes(x);
+      return row + (x.students_list.length ? x.students_list.map(function (s) {
+        return "<tr class=\"fin-subrow" + (s.standing === "counted" ? "" : " fin-subrow-off") + "\"><td class=\"k-more\"></td>" + cols.map(function (col) {
+          return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + studentCell(col, s) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") : "<tr class=\"fin-subrow\"><td colspan=\"" + span + "\" class=\"fin-subnote\">אין סטודנטים במחזור.</td></tr>") +
+        (notes.length ? "<tr class=\"fin-subrow\"><td colspan=\"" + span + "\" class=\"fin-subnote\">" + notes.map(esc).join(" · ") + "</td></tr>" : "");
+    }).join("");
+    /* the totals of the cohorts shown: the server's (GET /api/desk/totals, the list b2c_cohorts), of this reading only */
+    var t = exportable() ? totalsFor({ tab: "b2c_cohorts", q: state.query.trim() }) : null;
+    var foot = t && !t.failed && !t.other_reading && t.sums ? "<tfoot><tr class=\"fin-total\"><td class=\"k-more\"></td>" + cols.map(function (col) {
+      var k = col.key, v = t.sums[k];
+      if (k === "cohort") {
+        return "<td class=\"k-cohort\"><b>סה\"כ</b> <span class=\"fin-subtle fin-nw\">" + plural(t.count, "מחזור אחד", "מחזורים") +
+          " · " + NF.format(num(t.sums.students)) + " " + esc(header(c, "students")) + "</span></td>";
+      }
+      return "<td class=\"k-" + esc(k) + " n" + hi(col) + "\">" + (num(v) ? cash(v) : NOT_SET) + "</td>";
+    }).join("") + "</tr></tfoot>" : "";
+    return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t fin-cohorts-t\"><thead>" + head + "</thead><tbody>" + body +
+      "</tbody>" + foot + "</table></div>";
+  }
+  /* the cohorts with no price, or cancelled: listed with why, no money - under the table, opened on demand */
+  function unpricedHtml(c, list) {
+    if (!c.unpriced.length) { return ""; }
+    var open = state.sc.unpriced;
+    var why = {};
+    (c.unpriced_why || []).forEach(function (x) { why[x.key] = x.label; });
+    return "<div class=\"fin-unpriced\"><span>" + esc(c.words.unpriced) + ": " + NF.format(list.length) + "</span> " +
+      "<button class=\"fin-linkbtn\" type=\"button\" data-unpriced=\"1\" aria-expanded=\"" + open + "\">" + (open ? "הסתרה" : "הצגה") + "</button>" +
+      (open && list.length ? "<ul>" + list.map(function (x) {
+        return "<li><bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi> " + esc(x.title) + (x.status ? " · " + esc(x.status) : "") + " · " +
+          esc(why[x.why] || x.why_text) + (x.why === "unreadable" ? " <bdi class=\"fin-subtle\">(\"" + esc(x.price_text) + "\")</bdi>" : "") + "</li>";
+      }).join("") + "</ul>" : "") + "</div>";
+  }
+  function cohortsHtml() {
+    var c = cohortsPart(), shown = cohortsShown(), t = c.totals, w = c.words || {};
+    if (c.state && c.state !== "ok") {
+      /* the review of D4: the view not read in this reading, or not computed - no cohort and no money, and why in the
+         server's words where the table would be; the list and the rest of the desk are as they are */
+      return panel("<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><p class=\"fin-badtext\">" +
+        esc(c.said) + "</p></div><div class=\"fin-actions\">" + scViews() + "</div></div>");
+    }
+    var ok = VIEW.checks.b2c_ok && c.checks.ties;
+    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount
+       as the table writes it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel
+       while the table under them was not) */
+    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, cash(t.part_approved), true], [w.balance, cash(t.balance)],
+      [w.paid, cash(t.paid)], [w.expected, cash(t.expected)]].map(function (x) {
+      return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
+    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
+    var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +
+      plural(shown.length, "מחזור אחד", "מחזורים") + " עם מחיר" + (searching() ? " מתאימים לחיפוש" : "") + "</div>" +
+      "<p class=\"fin-about\">" + esc(c.about) + "</p>" +
+      (c.checks.ties ? "" : "<p class=\"fin-badtext\">" + esc(w.not_tied) + "</p>") + "</div><div class=\"fin-actions\">" + scViews() +
+      "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c_cohorts\"" + (shown.length && ok && exportable() ? "" : " disabled") +
+      exportTitle(ok) + ">ייצוא לאקסל</button></div></div>";
+    var list = shown.length ? cohortsTable(c, shown) : empty(searching() ? "אין מחזור עם מחיר שמתאים לחיפוש." : "אין מחזור עם מחיר.");
+    return figures + panel(head + list + unpricedHtml(c, unpricedShown()));
+  }
+  function onCohortClick(ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest("[data-scview],[data-cohort],[data-unpriced]") : null;
+    if (!el || !root.contains(el)) { return; }
+    if (el.dataset.scview) {
+      if (state.sc.view !== el.dataset.scview) {
+        state.sc.view = el.dataset.scview;
+        use("view", { view: state.sc.view === "cohorts" ? "cohorts" : "list" });
+        redraw();
+      }
+      return;
+    }
+    if (el.dataset.cohort) {
+      if (ev.target.closest("a,button,input,label")) { return; }
+      var open = state.sc.cohorts[el.dataset.cohort] = !state.sc.cohorts[el.dataset.cohort];
+      use("row", { state: "cohort", open: !!open });
+      redraw(); return;
+    }
+    if (el.dataset.unpriced) { state.sc.unpriced = !state.sc.unpriced; redraw(); }
+  }
+  function onCohortKey(ev) {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target && ev.target.matches && ev.target.matches("[data-cohort]") &&
+        root.contains(ev.target)) { ev.preventDefault(); ev.target.click(); }
+  }
+
   /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
      count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
-  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"] };
+  var EXPORT_WHAT = { b2c: ["תקבול אחד", "תקבולים"], b2b: ["חיוב אחד", "חיובים"], b2b_customers: ["חברה אחת", "חברות"],
+    b2c_cohorts: ["מחזור אחד", "מחזורים"] };
   function exportedCount(tab) {
+    if (tab === "b2c_cohorts") { return cohortsShown().length; }   /* D4 */
     return tab === "b2b_customers" ? customersShown(VIEW.b2b).length : tab === "b2b" ? b2Rows().length : scRows().length;
   }
   function exportSaid(tab, n) {
@@ -935,8 +1162,10 @@
       var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
       /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
       var all = searching() && tab !== "b2b_customers";
-      var body = { tab: tab === "b2b_customers" ? tab : b2 ? "b2b" : "b2c", state: tab === "b2b_customers" || all ? "" : f.state,
-        period: b2 || all ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
+      /* D4: the students by cohort take the search box only, like "לפי לקוח" */
+      var whole = tab === "b2b_customers" || tab === "b2c_cohorts";
+      var body = { tab: whole ? tab : b2 ? "b2b" : "b2c", state: whole || all ? "" : f.state,
+        period: b2 || all || whole ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
         q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
       /* D3: and the books' part on the screen, so a file built from another says so (as the totals are asked by it) */
       if (VIEW.books && VIEW.books.key) { body.books = VIEW.books.key; }
@@ -979,11 +1208,37 @@
   function booksCalm() { var b = VIEW.books; return !b || b.state === "ok" || b.state === "off"; }
   function candidatesHtml(e) {
     var c = e.candidates || [];
-    if (!c.length) { return NOT_SET; }
+    if (!c.length) { return NOT_SET + proposalHtml(e); }
     return c.map(function (x) {
       return "<div class=\"fin-cand\">" + nameLink({ board: "sc", id: x.id }, esc(x.name)) + " " + stateChip(x.state) +
         " <span class=\"fin-subtle\">" + esc(x.status || "ריק") + "</span></div>";
-    }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "");
+    }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "") +
+      proposalHtml(e);
+  }
+  /* D4: under a document's candidates, the row the books propose to write its number in (the server's `proposal`: one
+     document, one row, of the era) and the button that writes it, as the person - or that it was just written */
+  var PROPOSAL_SAID = "הצעה: לרשום בשורה של ";
+  function proposalHtml(e) {
+    var p = e.proposal, r = p ? rowByKey("sc:" + p.item_id) : null, a = r ? rowFill(r) : null;
+    if (!p) { return ""; }
+    return "<div class=\"fin-fill\">" + esc(PROPOSAL_SAID + p.name) + (r && r.written ? writtenMark(r)
+      : a && fillable(r) ? " <button type=\"button\" class=\"fin-btn fin-fill-btn\" data-books-fill=\"" + esc(rowKey(r)) +
+        "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" : "") + "</div>";
+  }
+  /* above the students' list: every proposal at once, its count (the documents' and the dates alone, allFills), and under
+     the list how many of them are a date alone, whose rows already cite their number and are not on it */
+  var FILL_ALL = "לרשום את כל ההצעות";
+  function fillAllHtml(fills) {
+    return fills.length ? "<div class=\"fin-actions\"><button type=\"button\" class=\"fin-btn\" data-books-all=\"1\"" +
+      (busy() ? " disabled" : "") + ">" + esc(FILL_ALL) + " <span class=\"fin-subtle\">(" + NF.format(fills.length) +
+      ")</span></button></div>" : "";
+  }
+  function datesAloneSaid(fills) {
+    var n = fills.filter(function (r) { return !(r.books_fill || {}).number; }).length;
+    return !n ? "" : "<p class=\"fin-listnote\">" + esc(n === 1
+      ? "ועוד הצעה אחת לתאריך תקבול בלבד, בתקבול שכבר יש בו אסמכתת חשבונית: היא ליד השורה שלו, ו\"" + FILL_ALL + "\" כותב גם אותה."
+      : "ועוד " + NF.format(n) + " הצעות לתאריך תקבול בלבד, בתקבולים שכבר יש בהם אסמכתת חשבונית: הן ליד השורות שלהם, ו\"" +
+        FILL_ALL + "\" כותב גם אותן.") + "</p>";
   }
   function booksCell(k, e) {
     if (k === "number") { return ltr(e.number) || NOT_SET; }
@@ -1007,14 +1262,18 @@
   /* one list: its title, how many, its sentence and the books' state; its table, or that it is empty; the vouchers' line */
   function booksPanel(kind, part) {
     var docs = part.documents || [], none = VIEW.books.state === "none";
-    var said = booksSaid();
+    var said = booksSaid(), fills = kind === "b2c" ? allFills() : [];
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(part.title) + "</h2>" +
       (none ? "" : "<div class=\"fin-subtle\">" + plural(docs.length, "מסמך אחד", "מסמכים") + "</div>") +
       "<p class=\"fin-about\">" + esc(part.about) + "</p>" +
-      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div></div>";
+      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div>" +
+      fillAllHtml(fills) + "</div>";
     var body = docs.length ? booksTable(kind, docs) : none ? "" : "<div class=\"fin-empty\"><p>אין מסמכים כאלה.</p></div>";
-    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body +
-      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + "</div>";
+    /* D4: a batch pressed in this list floats here, beside what was pressed */
+    var pop = kind === "b2c" && popInBooks(BATCH) ? batchBox(BATCH) : "";
+    if (pop) { POP_IN_BOOKS = true; }
+    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body + datesAloneSaid(fills) +
+      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + pop + "</div>";
   }
   /* under "לטיפול" of a tab: its list, and the unclear documents when the server sent them (a member of both boards) */
   function booksHtml(tab) {
@@ -1263,7 +1522,7 @@
      and only on an account the desk shows (ITEM_GUARD). */
   var WRITABLE = {
     "5093448677": { color_mm1kxpvt: [4, 5], numeric_mm62za1f: "number", text_mm8fjzfj: "text", text_mm6d6s97: "text",
-      color_mm4cq1hw: [1] },
+      color_mm4cq1hw: [1], date_mm8yh4bn: "date" },
     "5097721228": { color_mm3zx2n7: [6], text_mm3y6snz: "text", date_mm4a6y8y: "date", color_mm4bhvta: [0, 1],
       numeric_mm8zqhag: "number" },
     "5089697343": { text_mm3y3gm7: "vat_id", text_mm3yprqa: "hash_key", text_mm3yfrew: "invoice_name",
@@ -1293,13 +1552,18 @@
     CELL + " } boards(ids: $b) { columns(ids: $c) { id type settings_str } } }";
   var WRITE_ROW = "mutation ($b: ID!, $i: ID!, $v: JSON!, $c: [String!]) { change_multiple_column_values(board_id: $b, " +
     "item_id: $i, column_values: $v, create_labels_if_missing: false) { id column_values(ids: $c) " + CELL + " } }";
+  /* D4's review: the rows of a board whose cell in one column is a value, by monday's own search (read only, as the
+     person) - before the books' number is written, the rows that already cite it (citedElsewhere). That the search matches
+     a text cell by its whole value is the documented behaviour, not yet seen in a live answer */
+  var READ_CITING = "query ($b: ID!, $c: String!, $v: [String]!) { items_page_by_column_values(board_id: $b, limit: 10, " +
+    "columns: [{ column_id: $c, column_values: $v }]) { items { id name } } }";
   /* the page's one other write (D2, ADR-0188): an Update on an item, a billing edit's before and after (MON-41) - sent by
      mondayUpdate only */
   var WRITE_UPDATE = "mutation ($i: ID!, $body: String!) { create_update(item_id: $i, body: $body) { id } }";
   /* a written column on the row the page shows: its label and index, or its value (the row is patched until a reading
      shows the same) */
   var ROW_FIELD = { color_mm1kxpvt: ["status", "status_idx"], color_mm4cq1hw: ["receipt", "receipt_idx"],
-    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"],
+    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"], date_mm8yh4bn: ["paid_date"],
     color_mm3zx2n7: ["billing", "billing_idx"], color_mm4bhvta: ["payment", "payment_idx"], text_mm3y6snz: ["invoice"],
     date_mm4a6y8y: ["demand"], numeric_mm8zqhag: ["paid_so_far"] };
   var NUMERIC_FIELD = { refund_typed: 1, paid_so_far: 1 };
@@ -1508,6 +1772,14 @@
           if (cell.index === String(w.index)) { line.same = true; lines.push(line); return; }
           values[w.column] = { index: Number(w.index) };
           line.to = w.label;
+        } else if (w.books) {
+          /* D4: what the books propose for the row (the server's `books_fill`, given here in `typed` by column) - never
+             typed by the person, never today: not proposed, not written; an empty cell only (if_empty) */
+          var proposed = typed[w.column];
+          if (proposed === undefined || proposed === "") { return; }
+          if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
+          values[w.column] = w.kind === "date" ? { date: proposed } : proposed;
+          line.to = proposed;
         } else if (w.kind === "date") {
           if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
           values[w.column] = { date: today };
@@ -1609,6 +1881,11 @@
       /* column by column: one still behind is covered, one that shows a third value saw a later change and stays the
          truth (review 11.11: a status behind covered a "סכום החזר" changed after the write) */
       keys.forEach(function (f) { if (!sameField(f, row[f], w.fields[f]) && sameField(f, row[f], w.before[f])) { row[f] = w.fields[f]; } });
+      /* D4: a "תאריך תקבול" written from here is the day the row is shown by, as the next reading will file it - and its
+         month the period it is listed under (D4's review: it stayed under the old period until that reading) */
+      if (w.fields.paid_date && row.paid_date === w.fields.paid_date) {
+        row.date = row.paid_date; row.date_from = "paid"; row.month = row.paid_date.slice(0, 7);
+      }
       row.written = true;
     });
   }
@@ -1697,10 +1974,11 @@
     act.phase = plan.steps.length ? "confirm" : "nothing";
     /* the plan on the screen ("shown"), or nothing to write since monday already holds it */
     use("act", { action: act.action, phase: plan.steps.length ? "shown" : "nothing" });
-    /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write) */
+    /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write).
+       It floats in the view (D4's review, 4b), so the focus scrolls nothing */
     landed(function () {
-      var box = root && root.querySelector ? root.querySelector(".fin-act-plan") : null;
-      if (box && box.focus) { box.focus(); }
+      var box = root && root.querySelector ? root.querySelector(".fin-act-box.fin-act-plan") : null;
+      if (box && box.focus) { box.focus({ preventScroll: true }); }
     });
     return true;
   }
@@ -1772,23 +2050,29 @@
       }
     });
   }
+  /* QA 24.11, left for D4 (its review, 4b): what a row's action shows - its reading, its plan, its progress, its result -
+     opened inside the row's details, under its button, and pushed every row below it down. It floats now beside the
+     action's control (fin-pop, placed by placePop as a batch is), so nothing of the list moves; it stays the details' own,
+     and closes with them */
+  function actPop(inner) { return "<div class=\"fin-act-box fin-pop\">" + inner + "</div>"; }
   function actStatus(act) {
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-act-close=\"1\">סגירה</button>";
     switch (act.phase) {
-      case "invalid": return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + "</p>";
-      case "reading": return "<p class=\"fin-act-msg\" role=\"status\">קורא את השורה במאנדיי...</p>";
-      case "nothing": return (act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
-        "<p class=\"fin-act-msg\" role=\"status\">הכל כבר כך במאנדיי: אין מה לכתוב. " + close + "</p>";
-      case "writing": return "<p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי...</p>";
+      /* floating, it can be closed: it no longer sits in the details out of the way */
+      case "invalid": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>");
+      case "reading": return actPop("<p class=\"fin-act-msg\" role=\"status\">קורא את השורה במאנדיי...</p>");
+      case "nothing": return actPop((act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
+        "<p class=\"fin-act-msg\" role=\"status\">הכל כבר כך במאנדיי: אין מה לכתוב. " + close + "</p>");
+      case "writing": return actPop("<p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי...</p>");
       /* a status written moves the row to its state once the server reads it; a reference typed does not move it */
-      case "done": return "<p class=\"fin-act-msg ok\" role=\"status\">נכתב במאנדיי בשמך. המסך מתעדכן" +
+      case "done": return actPop("<p class=\"fin-act-msg ok\" role=\"status\">נכתב במאנדיי בשמך. המסך מתעדכן" +
         (act.plan.lines.some(function (l) { return l.kind === "status" && !l.same; }) ? ", והשורה תעבור לשיבוץ שלה. " : ". ") +
-        close + "</p>";
-      case "failed": return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>" +
-        (act.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(act.detail) + "</p>" : "");
+        close + "</p>");
+      case "failed": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>" +
+        (act.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(act.detail) + "</p>" : ""));
       case "confirm": {
         var p = act.plan, two = p.steps.length > 1;
-        return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        return "<div class=\"fin-act-plan fin-act-box fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
           (act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
           "<p>ייכתב במאנדיי בשורה " + esc("\"" + act.live.name + "\"") +
           ", בשמך" + (two ? ", בשני שלבים" : "") + ":</p><ul>" + p.lines.map(planLine).join("") + "</ul>" +
@@ -1825,8 +2109,21 @@
     var off = CAN.state === "no" || busy() || (!!act && act.phase === "confirm");
     return "<section class=\"fin-dx-block fin-acts\" aria-label=\"פעולות\"><h3 class=\"fin-dx-h\">פעולות <span class=\"fin-dx-name\">" +
       "נכתבות במאנדיי בשמך</span></h3>" + (CAN.state === "no" ? "<p class=\"fin-act-why\">" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "</p>" : "") +
-      "<div class=\"fin-act-row\">" + list.map(function (a) { return actionControl(r, a, off); }).join("") + "</div>" +
-      (act ? actStatus(act) : "") + "</section>";
+      "<div class=\"fin-act-row\">" + list.map(function (a) {
+        return fillAction(a) ? fillControl(r, a, off) : actionControl(r, a, off);
+      }).join("") + "</div>" + fillSaid(r) + (act ? actStatus(act) : "") + "</section>";
+  }
+  /* D4: what the books propose for the row, in the server's sentence (the document, its day and total, what is written),
+     quietly under the actions: a proposal, never a warning */
+  function fillSaid(r) {
+    var m = booksMark(r, "books_ref_fill") || booksMark(r, "books_date_fill");
+    return m && rowFill(r) ? "<p class=\"fin-dx-books fin-fill-said\">" + esc(m.text) + "</p>" : "";
+  }
+  /* D4: "רישום מחשבשבת" in a row's details - nothing to type: the batch of one row, floating beside this button */
+  function fillControl(r, a, off) {
+    return "<div class=\"fin-act\"><button type=\"button\" class=\"fin-btn\" data-books-fill=\"" + esc(rowKey(r)) +
+      "\" data-books-from=\"detail\"" + (off || !fillable(r) ? " disabled" : "") +
+      (CAN.state === "no" ? " title=\"" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "\"" : "") + ">" + esc(a.button) + "</button></div>";
   }
   function writtenMark(r) { return r.written ? " <span class=\"fin-written\">נכתב, מתעדכן</span>" : ""; }
   /* whether this person may write, from monday's context: read once at mount (an app version's new permission is approved
@@ -1885,34 +2182,203 @@
      written from here (its new value waits for a reading) */
   function pickable(r) { return CAN.state !== "no" && !r.written && !!rowAction(r); }
   function pickedIn(rows) { return rows.filter(function (r) { return PICKED[rowKey(r)] && pickable(r); }); }
-  /* `from`: what was pressed - "row", the row's own button, or "bar", the bar's - beside which the batch floats (QA2 3) */
+
+  /* ---------- D4 (26.11): "רישום מחשבשבת" - what the books propose for a row, written as the person ----------
+     The server proposes (app/desk/books.py `proposals`: FR-C2's number and A1's date, the desk's era only) and sends, on
+     the row, its values (`books_fill`) and the action that writes them (DESK_ACTIONS `books_fill`: each write is the
+     proposal's value under its `books` key, only into an empty cell, if_empty). The page proposes nothing. From the row's
+     details, from its document in the books' list ("הצעה: לרשום בשורה של ..."), or every proposal at once ("לרשום את כל
+     ההצעות", above the list), it is the batch of 1.1: the rows read live as the person in one request, one confirmation
+     of what each row will be written, each row read again right before its write and checked after, the result said row
+     by row, one refresh after. A row whose cells are not what the desk read is skipped and said, never written over - but
+     a cell written since with the very value the books propose, which is not written again - and its box floats beside
+     what was pressed (QA2 3), so no row moves. */
+  function fillAction(a) {
+    var ws = a ? stepWrites(a) : [];
+    return !!ws.length && a.steps.length === 1 && ws.every(function (w) { return !!w.books && !w.input; });
+  }
+  function rowFill(r) { return rowActions(r).filter(fillAction)[0] || null; }
+  /* a row whose proposal may be written from here now: the person may write, it was not just written, the books propose */
+  function fillable(r) { return CAN.state !== "no" && !r.written && !!r.books_fill && !!rowFill(r); }
+  /* the books' proposal for a row, by column: what the batch writes in place of what a box would hold */
+  function proposalOf(r, a) {
+    var out = {};
+    stepWrites(a).forEach(function (w) { var v = (r.books_fill || {})[w.books]; if (v) { out[w.column] = String(v); } });
+    return out;
+  }
+  /* a cell's text as the desk's reading holds it and as monday holds it now: a date by its day */
+  function cellText(kind, text) { text = String(text == null ? "" : text); return kind === "date" ? text.slice(0, 10) : text; }
+  function shownField(r, w) { var f = (ROW_FIELD[w.column] || [])[0]; return cellText(w.kind, f ? r[f] : ""); }
+  /* why a row is not planned (""; when it may be): a cell that is not what the desk read - unless it holds now the very
+     value the books propose - or a cell the books propose a value for that is not empty (a mark a right-to-left editor
+     leaves reads as empty to the rules, never here) */
+  function fillMoved(a, r, live, typed) {
+    var why = "";
+    stepWrites(a).forEach(function (w) {
+      var cell = live.cells[w.column] || { text: "", index: null, label: "" }, now = cellText(w.kind, cell.text);
+      if (why || (typed[w.column] !== undefined && now === typed[w.column])) { return; }
+      if (now !== shownField(r, w)) { why = "השתנתה במאנדיי מאז הקריאה, ועכשיו " + w.title + " " + shownCell(w.kind, cell); }
+      else if (typed[w.column] !== undefined && now !== "") { why = "יש כבר ערך ב" + w.title + " במאנדיי: " + shownCell(w.kind, cell); }
+    });
+    return why;
+  }
+  /* The hostile review of D4 (26.11): a batch kept the rows of the reading it was pressed on, so a newer reading that landed
+     while its confirmation was open - a refresh, or the view taking the focus back from monday's item card (askAgain) -
+     withdrew a proposal on the screen and "כתיבה" still wrote it. A proposal is now always the reading's on the screen: read
+     off the current rows by id when the confirmation is made (settleFills), checked again when a newer reading lands while
+     it is open (recheckBatch), and once more right before each row's write (confirmBatch). A row whose proposal left or
+     changed is not written, and the confirmation and the report say so in one of these closed words */
+  var FILL_GONE = "בקריאה החדשה של הלוחות כבר אין הצעה לשורה הזאת";
+  var FILL_CHANGED = "ההצעה השתנתה מאז שנפתח האישור, בקריאה החדשה של הלוחות";
+  var FILL_CLOSED = "קריאה חדשה של הלוחות נחתה בזמן שהאישור היה פתוח, ואין בה עוד מה לכתוב מההצעות שבו. האישור נסגר.";
+  /* the row on the screen now offers a proposal: the server's values, and the action that writes them */
+  function offersFill(r) { return !!r && !!r.books_fill && !!rowFill(r); }
+  /* why a row's confirmed proposal may no longer be written ("" when it may): the reading on the screen holds none for it,
+     or another one */
+  function proposalMoved(a, it) {
+    var r = rowByKey(it.key);
+    if (!offersFill(r)) { return FILL_GONE; }
+    return JSON.stringify(proposalOf(r, a)) === JSON.stringify(it.typed || {}) ? "" : FILL_CHANGED;
+  }
+  /* The same review: the legend promised that a row changed in monday since the reading is not written, and the batch read
+     only the two cells it writes. What a proposal rests on besides them (the server's `rests_on`: "סטטוס תשלום" by its index
+     and "סכום ששולם", FR-C2's conditions 1 and 3) is read with them, in the same request, and held to the reading - when the
+     confirmation is made (settleFills) and again right before each write (confirmBatch, against what the confirmation
+     showed); and before a number is written, no other row may cite it (citedElsewhere, FR-C2's condition 6). Never written */
+  function restsOn(a) { return (a && a.rests_on) || []; }
+  /* the columns a batch reads, in one request: what it writes, then what its proposals rest on */
+  function batchCols(a) { return stepWrites(a).concat(restsOn(a)).map(function (w) { return w.column; }); }
+  /* two amounts as monday and the reading hold them, in whole agorot: "3517" and "3517.00" are one amount, empty is empty */
+  function sameAmount(x, y) {
+    x = String(x == null ? "" : x).trim(); y = String(y == null ? "" : y).trim();
+    if (x === "" || y === "") { return x === y; }
+    var a = agorot(x), b = agorot(y);
+    return a !== null && b !== null ? a === b : x === y;
+  }
+  /* why a row is not planned for what its proposal rests on ("" when it may be): the first such cell whose value in monday is
+     not the row's in the reading - a status by its index, an amount by its value - said as monday holds it now */
+  function restsMoved(a, r, live) {
+    var x = restsOn(a).filter(function (c) {
+      var cell = live.cells[c.column] || { text: "", index: null, label: "" }, shown = r[c.field];
+      if (c.kind === "status") { return (cell.index == null ? "" : cell.index) !== String(shown == null ? "" : shown); }
+      return c.kind === "number" ? !sameAmount(cell.text, shown) : cell.text !== String(shown == null ? "" : shown);
+    })[0];
+    return x ? "השתנתה במאנדיי מאז הקריאה, ועכשיו " + x.title + " " +
+      shownCell(x.kind, live.cells[x.column] || { text: "", index: null, label: "" }) : "";
+  }
+  /* the number a row's plan writes, under the books' "number" key: { column, title, value }, or null (the date alone) */
+  function numberWritten(a, plan) {
+    var w = stepWrites(a).filter(function (x) { return x.books === "number"; })[0], v;
+    (plan.steps || []).forEach(function (s) { if (w && s[w.column] !== undefined) { v = String(s[w.column]); } });
+    return v ? { column: w.column, title: w.title, value: v } : null;
+  }
+  /* right before a row is written the books' number: the rows of the board whose cell already holds it, read as the person
+     in one request (READ_CITING). "" when none but this row; else why, naming the other row as monday does. An answer of
+     another shape fails the row - it is never taken as "none" */
+  var CITED_UNCHECKED = "לא נבדק במאנדיי אם שורה אחרת כבר מפנה למספר הזה";
+  function citedElsewhere(boardId, a, it) {
+    var n = fillAction(a) ? numberWritten(a, it.plan) : null;
+    if (!n) { return Promise.resolve(""); }
+    return mondayCall(READ_CITING, { b: String(boardId), c: n.column, v: [n.value] }).then(function (data) {
+      var page = data && data.items_page_by_column_values;
+      if (!page || !Array.isArray(page.items)) { throw { code: "monday", text: "items_page_by_column_values" }; }
+      var others = page.items.filter(function (x) { return x && x.id != null && String(x.id) !== String(it.row.id); });
+      if (!others.length) { return ""; }
+      return "כבר יש \"" + n.value + "\" ב" + n.title + " של שורה אחרת במאנדיי: \"" + (others[0].name || others[0].id) + "\"" +
+        (others.length > 1 ? " ועוד " + NF.format(others.length - 1) : "");
+    }).catch(function (e) { e = e || {}; e.unchecked = true; throw e; });
+  }
+  /* a row whose check could not be made: not written, and why (a timeout or monday asking to slow down said as such) */
+  function uncheckedWords(e) {
+    var why = e.code === "timeout" || e.code === "rate_limited" ? WRITE_ERRORS[e.code] : "";
+    return CITED_UNCHECKED + (why ? " (" + why + ")" : "") + ". לא נכתב כלום.";
+  }
+  function settleFills(batch, got) {
+    batch.items.forEach(function (it) {
+      var live = got[String(it.row.id)];
+      it.live = live || null;
+      if (!live) { it.verdict = "skip"; it.why = WRITE_ERRORS.not_found; return; }
+      it.name = live.name || it.name;
+      /* the row as the reading on the screen holds it now: a newer one may have landed while the rows were read */
+      var r = rowByKey(it.key);
+      if (!offersFill(r)) { it.verdict = "skip"; it.why = FILL_GONE; return; }
+      it.row = r;
+      it.typed = proposalOf(r, batch.a);
+      var why = fillMoved(batch.a, it.row, live, it.typed) || restsMoved(batch.a, it.row, live);
+      var plan = planAction(batch.a, live, it.typed, israelToday(), {});
+      if (why) { it.verdict = "skip"; it.why = why; return; }
+      if (!plan.steps.length) { it.verdict = "skip"; it.why = "כבר כך במאנדיי"; return; }
+      it.verdict = "write";
+      it.plan = plan;
+    });
+  }
+  /* a newer reading landed (index) while a confirmation of the books' proposals is open: each row it would write is held
+     to the reading now on the screen. A proposal that left or changed moves to "לא ייכתב" with why, the count follows, and
+     what waits for the next press is counted again; with nothing left to write, the confirmation closes and says why */
+  function recheckBatch() {
+    var b = BATCH;
+    if (!b || b.phase !== "confirm" || !fillAction(b.a)) { return; }
+    b.items.forEach(function (it) {
+      if (it.verdict !== "write") { return; }
+      var why = proposalMoved(b.a, it);
+      if (why) { it.verdict = "skip"; it.why = why; it.plan = null; } else { it.row = rowByKey(it.key); }
+    });
+    if (b.from === "all") {
+      var held = {};
+      b.items.forEach(function (it) { held[it.key] = true; });
+      b.left = allFills().filter(function (r) { return !held[rowKey(r)]; }).length;
+    }
+    if (!b.items.some(function (it) { return it.verdict === "write"; })) { b.phase = "nothing"; b.notice = FILL_CLOSED; }
+  }
+  /* the rows "לרשום את כל ההצעות" takes: each document's of the books' list in its order, then the dates alone, newest first */
+  function allFills() {
+    var seen = {}, out = [];
+    (((VIEW.b2c || {}).books || {}).documents || []).forEach(function (e) {
+      var r = e.proposal ? rowByKey("sc:" + e.proposal.item_id) : null;
+      if (r && !seen[r.id] && fillable(r)) { seen[r.id] = true; out.push(r); }
+    });
+    return out.concat(sortRows(ROWS.sc.filter(function (r) { return !seen[r.id] && fillable(r); }), "-date"));
+  }
+  /* the batch's action for a row: one of the two on the row itself (pickable), or what the books propose (fillable) */
+  function batchAction(r, key) {
+    var a = ROW_ACTIONS[key] ? (pickable(r) ? rowAction(r) : null) : fillable(r) ? rowFill(r) : null;
+    return a && a.key === key ? a : null;
+  }
+  var BATCH_FROM = { row: 1, bar: 1, detail: 1, list: 1, all: 1 };
+  /* `from`: what was pressed - "row", the row's own button, or "bar", the bar's; D4: "detail", the row's details', "list",
+     its document's in the books' list, or "all", above that list - beside which the batch floats (QA2 3) */
   function startBatch(actionKey, keys, from) {
     if (CAN.state === "no" || busy()) { return; }
-    var items = [], a = null;
+    var items = [], a = null, left = 0;
     keys.forEach(function (k) {
-      var r = rowByKey(k), x = r && pickable(r) ? rowAction(r) : null;
-      if (!x || x.key !== actionKey || items.length >= BATCH_MAX) { return; }
+      var r = rowByKey(k), x = r ? batchAction(r, actionKey) : null;
+      if (!x) { return; }
+      if (items.length >= BATCH_MAX) { left += 1; return; }
       a = a || x;
       items.push({ key: k, row: r, name: r.name });
     });
     if (!items.length) { return; }
     /* one thing on the screen at a time: a single action's plan, not being written, gives way */
     if (ACT && !busyAct()) { ACT = null; }
+    var books = fillAction(a);
+    /* `bar`: the list's bar was there when it was pressed, so its place is held while the batch is on the screen */
     var batch = BATCH = { action: actionKey, a: a, items: items, phase: "reading", at: 0, total: 0, error: "",
-      from: from === "row" ? "row" : "bar" };
+      from: BATCH_FROM[from] ? from : "bar", left: left, bar: !books || scRows().some(pickable) };
     use("act", { action: actionKey, phase: "batch_start" });
+    if (books) { use("books_fill", { from: from === "all" ? "all" : from === "list" ? "list" : "detail", rows: Math.min(items.length, 100) }); }
     redraw();
-    var w = a.steps[0][0];
-    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), [w.column]).then(function (got) {
-      if (BATCH === batch) { settleBatch(batch, got); }
-    }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
+    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), batchCols(a))
+      .then(function (got) {
+        if (BATCH === batch) { settleBatch(batch, got); }
+      }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
   }
   /* a status cell as the desk's reading shows it: its index, "" when empty */
   function shownIndex(r, column) {
     var f = ROW_FIELD[column];
     return f && f.length === 2 ? String(r[f[1]] == null ? "" : r[f[1]]) : "";
   }
-  function settleBatch(batch, got) {
+  /* the two on the row itself: one status each. Whether a label moved (the whole batch then fails, before any write) */
+  function settleStatuses(batch, got) {
     var w = batch.a.steps[0][0], labelsMoved = false;
     batch.items.forEach(function (it) {
       var live = got[String(it.row.id)];
@@ -1932,7 +2398,13 @@
       it.verdict = "write";
       it.plan = plan;
     });
-    if (labelsMoved) { failBatch(batch, { code: "label_moved", text: w.title + " " + w.label }); return; }
+    return labelsMoved;
+  }
+  function settleBatch(batch, got) {
+    var w = batch.a.steps[0][0];
+    /* D4: what the books propose has its own rules (settleFills) */
+    if (fillAction(batch.a)) { settleFills(batch, got); }
+    else if (settleStatuses(batch, got)) { failBatch(batch, { code: "label_moved", text: w.title + " " + w.label }); return; }
     var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
     batch.phase = n ? "confirm" : "nothing";
     use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
@@ -1956,10 +2428,13 @@
     var batch = BATCH;
     if (!batch || batch.phase !== "confirm" || busyAct()) { return; }
     var w = batch.a.steps[0][0], boardId = boardIdOf(batch.items[0].row), stop = "", maybe = false;
+    /* D4's review: each row read again with what its proposal rests on too, as the confirmation's own read was */
+    var writes = stepWrites(batch.a), cols = batchCols(batch.a), read = writes.concat(restsOn(batch.a));
     var todo = batch.items.filter(function (it) { return it.verdict === "write"; });
     batch.phase = "writing"; batch.at = 0; batch.total = todo.length;
-    /* the picks are the batch's now: whatever happens, the report says it row by row */
-    batch.items.forEach(function (it) { delete PICKED[it.key]; });
+    /* the picks are the batch's now: whatever happens, the report says it row by row (D4: a proposal of the books takes
+       no pick, and leaves them as they are) */
+    if (!fillAction(batch.a)) { batch.items.forEach(function (it) { delete PICKED[it.key]; }); }
     use("act", { action: batch.action, phase: "batch_confirm" });
     redraw();
     todo.reduce(function (p, it) {
@@ -1969,18 +2444,28 @@
         landed();
         /* the row again, as the person, right before its write: written only if it still holds what the confirmation
            showed (and its label still stands for the index), as a single action's confirmAction */
-        return readRow(boardId, it.row.id, [w.column]).then(function (live) {
-          var now = planAction(batch.a, live, {}, israelToday(), {});
-          if (changedSince(it.live, live, [w.column]) || now.problems.length ||
+        return readRow(boardId, it.row.id, cols).then(function (live) {
+          var now = planAction(batch.a, live, it.typed || {}, israelToday(), {});
+          if (changedSince(it.live, live, cols) || now.problems.length ||
               JSON.stringify(now.steps) !== JSON.stringify(it.plan.steps)) {
+            /* the first cell that moved is said, as monday holds it now */
+            var x = read.filter(function (c) { return changedSince(it.live, live, [c.column]); })[0] || w;
             it.result = "skipped";
-            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + w.title + " " +
-              shownCell("status", live.cells[w.column] || { index: null });
+            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + x.title + " " +
+              shownCell(x.kind, live.cells[x.column] || { index: null, text: "" });
             return null;
           }
-          return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
-            noteWritten(it.key, cells, it.live);
-            it.result = "written";
+          /* D4's review: no other row cites the number about to be written (one read, as the person) */
+          return citedElsewhere(boardId, batch.a, it).then(function (cited) {
+            if (cited) { it.result = "skipped"; it.why = cited; return null; }
+            /* and what the books propose is the reading's on the screen, right before the write - a newer reading may
+               have landed since the confirmation was shown, or while the rows before this one were written */
+            var moved = fillAction(batch.a) ? proposalMoved(batch.a, it) : "";
+            if (moved) { it.result = "skipped"; it.why = moved; return null; }
+            return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
+              noteWritten(it.key, cells, it.live);
+              it.result = "written";
+            });
           });
         }).catch(function (e) {
           e = e || {};
@@ -1989,7 +2474,7 @@
              answer in time */
           if ((e.landed && e.landed.length) || e.code === "unverified" || (e.code === "timeout" && e.landed)) { maybe = true; }
           it.result = "failed";
-          it.why = errorWords(e);
+          it.why = e.unchecked ? uncheckedWords(e) : errorWords(e);
           /* what fails every row alike stops the rest: the app's permission, or monday asking to slow down */
           if (e.code === "no_scope") { CAN = { state: "no", why: "no_scope" }; stop = WRITE_ERRORS.no_scope; }
           if (e.code === "rate_limited") { stop = WRITE_ERRORS.rate_limited; }
@@ -2017,11 +2502,28 @@
      reading, its one confirmation, its progress, its report - floats beside what was pressed (fin-pop, placePop): above the
      row, or the bar, where the view has room, below it otherwise, never over it. No row moves when it opens or closes */
   function batchHtml(rows) {
-    return barHtml(rows) + (BATCH ? batchBox(BATCH) : "");
+    return barHtml(rows) + (BATCH && !POP_IN_BOOKS ? batchBox(BATCH) : "");
+  }
+  /* D4: a batch pressed in the books' list floats in that list's panel, beside what was pressed there, while the list is
+     drawn (booksPanel sets it); anywhere else, in the list's own (batchHtml) */
+  var POP_IN_BOOKS = false;
+  function popInBooks(b) { return !!b && (b.from === "list" || b.from === "all"); }
+  /* a row's plan as the confirmation says it, each write: now, and what will be written - or that it stays */
+  function planWords(p) {
+    return p.lines.map(function (l) {
+      return l.title + ": " + (l.same || l.kept ? "כבר " + shownCell(l.kind, l.now) + ", לא נכתב"
+        : "עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue(l.kind === "status" ? "text" : l.kind, l.to));
+    }).join(" · ");
+  }
+  /* what was written in a row, write by write (D4: each row its own values) */
+  function writtenWords(p) {
+    return p.lines.filter(function (l) { return !l.same && !l.kept; }).map(function (l) {
+      return l.title + " " + shownValue(l.kind === "status" ? "text" : l.kind, l.to);
+    }).join(", ");
   }
   function batchBox(b) {
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
-    var w = b.a.steps[0][0];
+    var w = b.a.steps[0][0], books = fillAction(b.a);
     if (b.phase === "reading") {
       return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
         (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
@@ -2034,7 +2536,9 @@
     var skips = b.items.filter(function (it) { return it.verdict === "skip"; });
     var notWritten = skips.length ? "<p>לא ייכתב:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "";
     if (b.phase === "nothing") {
+      /* D4's review: a confirmation a newer reading left with nothing to write says so first (recheckBatch) */
       return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        (b.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(b.notice) + "</p>" : "") +
         "<p>אין מה לכתוב במאנדיי:</p><ul>" + skips.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" +
         "<div class=\"fin-act-go\">" + close + "</div></div>";
     }
@@ -2042,10 +2546,12 @@
       return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
         "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
           : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
-          var l = it.plan.lines[0];
-          return batchLine(it, l.title + ": עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue("text", l.to));
+          return batchLine(it, planWords(it.plan));
         }).join("") + "</ul>" + notWritten +
         (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
+        /* D4: past one batch's worth, the rest of the proposals wait for the next press */
+        (b.left ? "<p class=\"fin-subtle\">" + esc((b.left === 1 ? "ועוד הצעה אחת" : "ועוד " + NF.format(b.left) + " הצעות") +
+          ": בלחיצה נוספת אחרי הכתיבה, עד " + BATCH_MAX + " שורות בכתיבה אחת.") + "</p>" : "") +
         "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
         "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
     }
@@ -2057,11 +2563,14 @@
     var done = writes.filter(function (it) { return it.result === "written"; });
     var failed = writes.filter(function (it) { return it.result === "failed"; });
     var later = writes.filter(function (it) { return it.result === "skipped"; });
+    /* D4: a proposal written moves no row; its document leaves the books' list with the next reading */
     var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
-      ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן." : "לא נכתב כלום.";
+      (books ? ". המסך מתעדכן." : ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן.") : "לא נכתב כלום.";
     return "<div class=\"fin-batch fin-batch-done fin-pop\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
       esc(head) + " " + close + "</p>" +
-      (done.length ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
+      (done.length && books ? "<p>נכתב:</p><ul>" + done.map(function (it) { return batchLine(it, writtenWords(it.plan)); }).join("") +
+        "</ul>" : "") +
+      (done.length && !books ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
         done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
       (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
       (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
@@ -2074,7 +2583,9 @@
      allowed), empty, so the list does not move under the batch's report (QA2 3) */
   function barHtml(rows) {
     if (!rows.some(pickable)) {
-      return BATCH ? "<div class=\"fin-batch fin-batchbar idle fin-hold\" aria-hidden=\"true\"></div>" : "";
+      /* D4: held only where it was there when the batch was pressed (`bar`): a proposal of the books, pressed where the list
+         had no box, adds none */
+      return BATCH && BATCH.bar ? "<div class=\"fin-batch fin-batchbar idle fin-hold\" aria-hidden=\"true\"></div>" : "";
     }
     var picked = pickedIn(rows);
     if (!picked.length) {
@@ -2180,6 +2691,7 @@
         unfiltered: b2Filter(ROWS.b2, VIEW.b2b, "", "", q).length };
     }
     if (!VIEW.b2c) { return { results: 0, unfiltered: 0 }; }
+    if (state.sc.view === "cohorts" && cohortsPart()) { var c = cohortsShown().length; return { results: c, unfiltered: c }; }
     return { results: scFilter(ROWS.sc, VIEW.b2c, state.sc.state, state.sc.period, q).length,
       unfiltered: scFilter(ROWS.sc, VIEW.b2c, "", "", q).length };
   }
@@ -2705,7 +3217,7 @@
   /* the legend ("מקרא", round 3): the words this desk computes, from the server, for the tab on the screen. monday's own
      columns and labels have no entry - they are called by their monday names */
   function legendHtml() {
-    var parts = (VIEW[state.tab] && VIEW[state.tab].legend) || [];
+    var parts = ((VIEW[state.tab] && VIEW[state.tab].legend) || []).concat(state.tab === "b2c" && cohortsPart() ? [cohortsPart().legend] : []);
     return "<section class=\"fin-legend\" id=\"fin-legend\" aria-label=\"מקרא\"><div class=\"fin-legend-head\"><h2>מקרא</h2>" +
       "<span class=\"fin-subtle\">המילים שהמסך מחשב בעצמו, השיבוצים, הסימונים, ומאיפה באות עמודות של מאנדיי. כל השאר נקרא " +
       "כאן בשם שלו במאנדיי.</span></div>" + parts.map(function (p) {
@@ -2753,7 +3265,7 @@
     return "<section class=\"fin-health\">" + line + more + list + "</section>";
   }
   function asOf() { return stamp((BODY && BODY.taken_at) || VIEW.read_at); }
-  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend",
+  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend", "scview", "cohort", "unpriced",
     "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
     "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
   function focusKey() {
@@ -2767,7 +3279,7 @@
   }
   /* which list a table shows: the same key after a redraw is the same list, so it keeps its own scroll */
   function listKey() {
-    return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.b2.state, state.b2.view, state.b2.customer, state.query]);
+    return JSON.stringify([state.tab, state.sc.state, state.sc.period, state.sc.view, state.b2.state, state.b2.view, state.b2.customer, state.query]);
   }
   /* A table wider than its frame scrolls inside it (QA 2.8; since QA 9 only such a table, fitFrames), and a redraw builds it
      anew: opening a row's details, or a newer reading landing, must not throw the reader back to the box's top. Each list
@@ -2803,12 +3315,23 @@
      has left the list (a reading moved it), beside the bar */
   var POP_GAP = 6, POP_EDGE = 8;
   function popAnchor(pop) {
+    var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
+    /* D4's review (4b): a row's own action, in its details - beside its button, never over it nor over the boxes it takes
+       what is typed from (its .fin-act) */
+    if (pop.classList && pop.classList.contains("fin-act-box")) {
+      var btn = ACT && root.querySelector ? root.querySelector("[data-act=\"" + quote(ACT.key + ":" + ACT.action) + "\"]") : null;
+      return btn ? { v: (btn.closest && btn.closest(".fin-act")) || btn, h: btn } : null;
+    }
     var panel = pop.closest ? pop.closest(".fin-panel") : null, b = BATCH, v = null, h = null;
     if (!panel || !b) { return null; }
-    var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
     if (b.from === "row") {
       v = panel.querySelector("tr[data-row=\"" + quote(b.items[0].row.id) + "\"]");
       h = panel.querySelector("[data-row-act=\"" + quote(b.items[0].key + ":" + b.action) + "\"]");
+    } else if (b.from === "detail" || b.from === "list" || b.from === "all") {
+      /* D4: the button pressed - in the row's details, on its document's line in the books' list (beside which the
+         document's row is never covered), or above that list */
+      h = panel.querySelector(b.from === "all" ? "[data-books-all]" : "[data-books-fill=\"" + quote(b.items[0].key) + "\"]");
+      v = h && b.from === "list" && h.closest ? h.closest("tr") : h;
     }
     if (!v) {
       v = panel.querySelector(".fin-batchbar");
@@ -2833,7 +3356,7 @@
   }
   var follow = false;
   function onScroll() {
-    if (follow || !BATCH) { return; }
+    if (follow || !(BATCH || ACT)) { return; }
     follow = true;
     var again = function () { follow = false; placePop(); };
     if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }
@@ -2867,9 +3390,18 @@
   var REFRESHING = "מתעדכן";
   var SEARCH_ICON = "<svg class=\"fin-searchicon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\" focusable=\"false\">" +
     "<circle cx=\"7\" cy=\"7\" r=\"4.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M10.5 10.5 13.5 13.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+  /* QA 24.11, left for D4 (its review, 4a): "רענון" that failed with any error but a 429 replaced the whole desk with an
+     error screen, and what was typed in the search went with it. The desk on the screen stays, and the line beside its
+     reading's time says the refresh failed and why, until a reading is taken or "רענון" is pressed again */
+  var REFRESH_FAILED = "";
+  function refreshFailedWords(e) {
+    var key = e && e.error;
+    return "הרענון נכשל, ומוצגים הנתונים הקודמים" + (ERRORS[key] ? ": " + ERRORS[key] : key ? " (" + key + ")." : ".");
+  }
   function paint() {
     root.innerHTML = "<div class=\"fin-wrap\"><div class=\"fin-top\"><h1>כספים</h1><span class=\"fin-asof\">נכון ל-" + esc(asOf()) +
-      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>" : "") + "</span>" +
+      (BODY && BODY.refreshing ? " <span class=\"fin-refreshing\">" + REFRESHING + "</span>"
+        : REFRESH_FAILED ? " <span class=\"fin-refresh-failed\" role=\"status\">" + esc(REFRESH_FAILED) + "</span>" : "") + "</span>" +
       "<span class=\"fin-spacer\"></span><span class=\"fin-searchbox\">" + SEARCH_ICON +
       "<input class=\"fin-search\" id=\"fin-q\" type=\"search\" aria-label=\"חיפוש\" placeholder=\"חיפוש: שם, סכום, אסמכתא\" value=\"" +
       esc(state.query) + "\"></span><button class=\"fin-btn\" type=\"button\" data-refresh=\"1\">רענון</button></div>" +
@@ -2907,6 +3439,8 @@
     if (v && v.b2c) { ROWS.sc = v.b2c.rows; }
     if (v && v.b2b) { ROWS.b2 = v.b2b.rows; }
     applyWritten();
+    /* D4's review: a confirmation of the books' proposals on the screen is held to this reading */
+    recheckBatch();
   }
   function errorText(e) {
     var key = e && e.error;
@@ -2923,7 +3457,7 @@
   /* when the answer on the screen landed, by this computer's clock: its age is the server's `age_seconds` plus the time
      since, so a computer whose clock is off still counts it right */
   var bodyAt = 0;
-  function took(body) { BODY = body; bodyAt = Date.now(); }
+  function took(body) { BODY = body; bodyAt = Date.now(); REFRESH_FAILED = ""; }
   /* a later answer (the page's own second request, a refresh, a return): taken, and its view drawn when it is another
      reading than the one on the screen. D2: an answer without a view (no reading yet on the instance that answered)
      never replaces the view on the screen */
@@ -3004,6 +3538,9 @@
     }).catch(function (e) {
       use("load_failed", { code: useWord(e && e.error) || "unknown" });
       if (VIEW && e && e.error === "rate_limited") { notBefore(e); landed(); flash(errorText(e)); return; }
+      /* a desk on the screen stays, and its status line says the refresh failed (D4's review, 4a); only a page with no
+         desk yet says the error in its place */
+      if (VIEW) { if (BODY) { BODY.refreshing = false; } REFRESH_FAILED = refreshFailedWords(e); landed(); return; }
       message(errorText(e));
     });
   }
@@ -3058,10 +3595,16 @@
       if (BODY && BODY.refreshing) { followUp(BODY); }
     });
   }
+  /* QA 24.11, left for D4 (its review, 4c): two flashes within their time stacked in the same corner, one drawn over the
+     other - a write's "נכתב במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at
+     a time: a new one takes the place of the one on the screen, and the time of the one it replaced ends with it */
+  var TOAST = null;
   function flash(text, ms) {
+    if (TOAST) { clearTimeout(TOAST.timer); TOAST.el.remove(); }
     var t = document.createElement("div"); t.className = "fin-toast"; t.setAttribute("role", "alert"); t.textContent = text;
     document.body.appendChild(t);
-    setTimeout(function () { t.remove(); }, ms || 6000);
+    var shown = TOAST = { el: t, timer: null };
+    shown.timer = setTimeout(function () { t.remove(); if (TOAST === shown) { TOAST = null; } }, ms || 6000);
   }
   /* QA2 2 (24.11): "פתיחה במאנדיי" after "שליחת קבלה: יצאה" was written from here showed "טרם" - closed and opened again, and
      after "רענון" too - and only reloading the page showed "יצאה"; the item's page in a new tab showed it at once. monday's
@@ -3082,6 +3625,7 @@
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
+      "[data-books-fill],[data-books-all]," +
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
@@ -3103,6 +3647,17 @@
     }
     if (el.dataset.batch) {
       startBatch(el.dataset.batch, pickedIn(scRows()).map(rowKey), "bar"); return;
+    }
+    /* D4: what the books propose - one row's, from its details or its document in the books' list, or every one */
+    if (el.dataset.booksFill) {
+      var fillRow = rowByKey(el.dataset.booksFill), fillA = fillRow ? rowFill(fillRow) : null;
+      if (fillA) { startBatch(fillA.key, [el.dataset.booksFill], el.dataset.booksFrom === "list" ? "list" : "detail"); }
+      return;
+    }
+    if (el.dataset.booksAll) {
+      var fills = allFills();
+      if (fills.length) { startBatch(rowFill(fills[0]).key, fills.map(rowKey), "all"); }
+      return;
     }
     if (el.dataset.batchGo) { confirmBatch(); return; }
     if (el.dataset.batchClose) {
@@ -3205,7 +3760,9 @@
     else if (el.dataset.legend) { state.legend = !state.legend; use("legend", { open: !!state.legend }); render(); return; }
     /* "רענון" reads the boards again, and what the open details read live with them (the ID number, D2: a bank account,
        a ח.פ) */
-    else if (el.dataset.refresh) { use("refresh"); liveStale(); el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return; }
+    else if (el.dataset.refresh) {
+      use("refresh"); liveStale(); REFRESH_FAILED = ""; el.disabled = true; el.textContent = REFRESHING + "..."; load(true); return;
+    }
     render();
     /* on a wide screen the app scrolls #content, not the window */
     var scroller = document.getElementById("content");
@@ -3285,6 +3842,9 @@
     root.addEventListener("keydown", onKey);
     root.addEventListener("change", onChange);
     document.addEventListener("visibilitychange", onVisible);
+    /* D4: the students by cohort's own clicks and keys, beside the desk's (onCohortClick: inside the desk only) */
+    document.addEventListener("click", onCohortClick);
+    document.addEventListener("keydown", onCohortKey);
     /* the view's window taking the focus back: after monday's item card closes over it, the first click in the view */
     window.addEventListener("focus", onFocus);
     /* monday's sidebar opened or closed, the window resized: whether each table still fits its frame (QA 9) */

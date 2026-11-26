@@ -143,7 +143,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
   through finance.js's one door (`mondayCall`; its writes in `mondayWrite`, behind `WRITABLE`: a column change, and a billing edit's Update only when the app has `updates:write`). What the server never
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
-  page's memory and sent nowhere. Tests: `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
+  page's memory and sent nowhere. A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
+  until the next reading (`REFRESH_FAILED`, D4's review). A row's action in its details floats beside its control, as a batch
+  does (`actPop`), so no row moves. One flash shows at a time: a new one takes the place of the one on the screen. Tests:
+  `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
 - **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/usage_store.py`; `migrations/005`
   is analiza-metrics' 004 statement for statement, so D5 imports that history row for row): closed words and counts, checked
   by `app/desk/usage.py` (analiza-metrics' vocabulary, ported faithfully), never a name, an amount, a search's text or an ID
@@ -183,6 +186,59 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the desk's year) a part notes `student_window_ended` (NOTES: said after the reasons, by a current part too); `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`) and never waits for another request's computation. `/health` `desk.books`: state,
   as_of, reasons, never a count. No schema change. Tests: `tests/test_desk_books.py`, `tests/test_desk_books_page.py`.
+- **What the books propose to fill (D4, 26.11, "רישום מחשבשבת"):** `app/desk/books.py` `proposals`, in the same computation.
+  Never a rule of its own: FR-C2's `ref_fill.analyse` on the desk's own reading (Student Charge, B2B Charge, the Accounts'
+  keys) gives the number, and A1's `analyse` on the rows as they would be with those numbers written gives the date (its
+  `fill` bucket: an empty "תאריך תקבול" only; a row that already cites a valid invoice-receipt gets the date alone). Only a
+  row the desk dates from ERA_FROM on, with a document from it on (older is C1's cleanup). A proposal and a mark never meet
+  on a row; a proposal leaves the server only from an `ok` part computed on the reading shown (`merge`), never a held one.
+  The chips `books_ref_fill` / `books_date_fill` are the legend's. The action `books_fill` (DESK_ACTIONS) writes them as the
+  person: one step, the number (text) and the date (date), each only the value proposed and only into an empty cell
+  (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. `merge` lays on the row its chip (a flag, never
+  `books_task`), `books_fill` {number?, date?} and the action; on the document `proposal`. The page (finance.js D4): the
+  chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
+  ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
+  whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
+  pressed. A proposal is always the reading's on the screen (D4's review): taken off the current rows when the confirmation
+  is made, held to a newer reading that lands while it is open (`recheckBatch`: one withdrawn or changed leaves with its closed
+  reason, `FILL_GONE` / `FILL_CHANGED`; with none left it closes, said) and checked again right before each row's write. Both
+  reads take what the proposal rests on too (the action's `rests_on`: "סטטוס תשלום" by index, "סכום ששולם"), held to the
+  reading (`restsMoved`), and right before a number is written one `items_page_by_column_values` read as the person
+  (`READ_CITING`, `citedElsewhere`) finds a row of Student Charge that already cites it; a check that cannot be made fails
+  the row. The legend says exactly what is checked. A date written here files its row under that date's month at once
+  (`applyWritten`). Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
+  `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
+- **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
+  `b2c.cohorts` (Student Charge's members only). Only cohorts on the voucher track (Registration Flow `color_mm31k62f` index
+  3, `on_track`): one on another track is shown nowhere, priced or not. Per such cohort with one clean "מחיר" (`text_mm5fhydb`,
+  `price_of`, an invisible mark at its edge a space as A1's `_clean` reads it; else listed with why and no money, and a
+  cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
+  פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
+  money; a payment filed by its lead with no enrollment is the student's whose enrollment links that lead, `EN["lead"]`
+  "קישור לליד", or who is its lead's person, `LD["person"]`, when exactly one student is, `_lead_payer`; else it is said on
+  the cohort's line, `unlinked`, and in no balance), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
+  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out: listed, in no balance, and what they paid is
+  in "שולם בפועל", everything that came in (Chava's "כמה כבר התקבל בסך הכול"), and is their expected. A line is its students'
+  sums (`checks.ties`), and ties to what the list files under its cohort, summed from the payments apart from the students
+  (`filed` = paid + `unlinked` + `shared`, in money and in payments; one filed under none because its enrollments name two
+  cohorts, under each). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
+  filter (`any_of` [3] on Registration Flow, `TRACK`, `app/monday/client.py status_rule`) in a request of its own right
+  after the columns check, and a refresh's right after its windows (`filtered_ids`: one request more, a quiet refresh four,
+  and one per page of 500 after the first) - never an alias of them: monday refuses a request whole when one field is bad
+  (the review of D4) - and they join the payments' cohorts. A track that cannot be read (refused, another shape, no board,
+  the request failed) never fails a reading or a refresh: step 5 is skipped and `cohorts_read` says why (`COHORTS_UNREAD`),
+  which the view shows in place of its money (`state` "unread", `UNREAD_SAID`) and /health as `desk.last_reading.cohorts`;
+  a step 5 that fails is said the same way (`students_failed`), the reading kept as it was before it. An exception in the
+  module stays in its part (`state` "error", `CRASHED_SAID`, logged by class: view.py `_cohorts_of`), never `view_error`.
+  The enrollments of those with a price through `board_relation_mm1hetrb` (step 5, `roster_ids`); a refresh reads
+  those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
+  file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
+  cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
+  "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first
+  figure and the one tinted column, a cohort row opening to its students, the price and the count under the cohort's name
+  and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
+  1400), its legend part the server's; its clicks on
+  `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

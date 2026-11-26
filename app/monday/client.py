@@ -32,6 +32,14 @@ boards with a window their items_count and the ids and update times of their ite
 id beside them - under the same eight rules; and `read_items(..., pack=True)` sends the short tails of several jobs as one
 aliased request (analiza-metrics `items_query`), so a refresh that changed two payments and a deal costs one request.
 `board_ids` pages the two charge boards' ids for the refresh too, the query a whole reading starts with (D2's review).
+
+Since D4 (26.11, Analiza-Monday backlog 0313) the desk asks one more thing: the ids of a board's items whose status column
+holds one of some label indexes (`status_rule`: monday's documented status filter, `items_page(query_params: {rules:
+[{column_id, compare_value: [indexes], operator: any_of}]})`, answered live read only on 26.11) - the cohorts on the voucher
+track (`filtered_ids`). In a request of its own, never an alias of a request the desk cannot do without: monday refuses
+a request whole when one field of it is invalid, so a filter it refused took the columns check of every reading and the
+windows of every refresh down with it (the review of D4, 26.11). One request, and one more per page after the first
+(PAGE_LIMIT items).
 """
 
 from __future__ import annotations
@@ -67,7 +75,9 @@ CODES = ("auth", "rate_limited", "http", "graphql", "not_visible", "unknown_colu
          "never_read",
          # D2's refresh (app/desk/reading.py): an answer of another shape than the one its request asked for, and a charge
          # board whose items_count disagrees with the rows a refresh holds (`DeltaMismatch`)
-         "delta_shape", "count_mismatch")
+         "delta_shape", "count_mismatch",
+         # D4: a status filter answered without its alias or its items (`filtered_ids`)
+         "filter_shape")
 DETAIL_MAX = 200
 
 # What is never read (rule 8): the ID numbers - Leads' `ת.ז`, the Directory's, the vouchers board's, and Accounts' business
@@ -114,6 +124,22 @@ DELTA_RULE = ('{rules: [{column_id: "__last_updated__", compare_value: ["DAYS", 
               'compare_attribute: "UPDATED_AT"}]}')
 NEXT_WINDOW = ("query ($c: String!, $limit: Int!) { next_items_page(cursor: $c, limit: $limit) "
                "{ cursor items { id updated_at } } }")
+# D4: the items of a board whose status column holds one of some label indexes, by id only (`filtered_ids`), as alias `t0`
+# of a request of its own; its later pages by ITEM_IDS_NEXT
+TRACK_ALIAS = "t0: boards(ids: $t0) { items_page(limit: $limit, query_params: %s) { cursor items { id } } }"
+FILTERED_FIRST = "query ($t0: [ID!], $limit: Int!) { %s }" % TRACK_ALIAS
+_COLUMN_ID = re.compile(r"[a-z][a-z0-9_]{0,60}")
+
+
+def status_rule(column: str, indexes: Iterable) -> str:
+    """monday's documented filter on a status column: its items whose label index is any of `indexes`. The column is an id
+    of this service's own constants and the indexes are numbers, so the text is built, never taken from a caller's input."""
+    if not _COLUMN_ID.fullmatch(str(column)):
+        raise MondayError("graphql", "a filter names a column by its id")
+    values = ", ".join(str(int(i)) for i in indexes)
+    if not values:
+        raise MondayError("graphql", "a filter names at least one index")
+    return '{rules: [{column_id: "%s", compare_value: [%s], operator: any_of}]}' % (column, values)
 
 
 def window_query(windowed: int, checked: int, chunks: int, days: int) -> str:
@@ -358,6 +384,34 @@ class MondayReader:
             missing = sorted(set(cols) - present)
             if missing:
                 raise MondayError("unknown_column", f"board {board_id} lacks {missing}")
+
+    def filtered_ids(self, board: str, column: str, indexes: Iterable) -> list:
+        """D4: the ids of a board's items whose status column holds one of the label `indexes` (`status_rule`), each once in
+        monday's order, paged to the end - in a request of its own (FILTERED_FIRST), never an alias of another: monday
+        refuses a request whole when one field of it is invalid, so a filter it refused took the columns check and the
+        windows with it (the review of D4, 26.11). A refusal is monday's own code (`graphql` ...); a board monday does not
+        show, `not_visible`; an answer without the filter's alias, or a page without its items, `filter_shape` - each its
+        own word, so the caller can say which."""
+        board = str(board)
+        data = self.post(FILTERED_FIRST % status_rule(column, indexes), {"t0": [board], "limit": PAGE_LIMIT})
+        got = data.get("t0")
+        if not isinstance(got, list):
+            raise MondayError("filter_shape", f"board {board}: the answer carried no filter")
+        if not got:
+            raise MondayError("not_visible", f"board {board}")
+        page = got[0].get("items_page") if isinstance(got[0], dict) else None
+        ids: list = []
+        pages = 0
+        while True:
+            pages += 1
+            if pages > MAX_PAGES:
+                raise MondayError("too_many_pages", f"board {board}: a filter whose cursor never ends")
+            if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                raise MondayError("filter_shape", f"board {board}: the filter came back without items")
+            ids += [str(x["id"]) for x in page["items"] if isinstance(x, dict) and x.get("id") is not None]
+            if not page.get("cursor"):
+                return list(dict.fromkeys(ids))
+            page = self.post(ITEM_IDS_NEXT, {"c": page["cursor"], "limit": PAGE_LIMIT}).get("next_items_page")
 
     def item_ids(self, board_id: str) -> tuple:
         """(items_count, the ids of the board's items, paged)."""

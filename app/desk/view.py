@@ -44,6 +44,7 @@ WHAT IT NEVER HOLDS. Three values analiza-metrics' server read, and this one nev
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from collections import Counter, OrderedDict, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -51,7 +52,10 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..recon.ref_fill import FILL_WINDOW_DAYS
 from .reading import TAB_BOARDS
+
+logger = logging.getLogger("analiza_finance.desk")
 from .reading import (AC, ACCOUNTS_BOARD, B2, B2B_CHARGE, BOARDS, CO, COHORTS_BOARD, DEALS_BOARD, DL, EN,  # noqa: F401
                       ENROLLMENTS_BOARD, LD, LEADS_BOARD, SC, STUDENT_CHARGE, _uniq, cohort_ids, enrollment_cohorts,
                       enrollment_ids, lead_ids, lead_names_of, lead_rep, lead_reps_of, leads_deciding)
@@ -81,10 +85,12 @@ B_APPROVAL, B_APPROVED, B_CANCELLED, B_BILLED = "0", "1", "2", "6"
 B2B_PAY = {"0": "שולם חלקית", "1": "שולם", "2": "לא שולם"}
 BP_PARTIAL, BP_PAID, BP_UNPAID = "0", "1", "2"
 STAGE_NO_CONTRACT = "160"   # "בהרצה ללא חוזה" (app/pipeline.py DEAL_STAGES)
-# Enrollments' "סטטוס שובר משה"ע" (color_mm5fr6d6), read live 2026-11-10. 5 is the grey empty label.
+# Enrollments' "סטטוס שובר משה"ע" (color_mm5fr6d6), read live 2026-11-10. 5 is the grey empty label. 8 and 9 were added
+# in monday since (knowledge b2c-flow, read against settings_str 2026-11-24), and D4's students by cohort place them
+# (app/desk/cohorts.py): until then the desk counted them as labels it does not know
 VOUCHER = {"0": "הוגש – ממתין להחלטה", "1": "אושר - ממתין לתשלום", "2": "נדחה", "3": "נדחה - קיבל מלגה מאנליזה",
            "4": "אושר - יתרה שולמה", "5": "", "6": "ביטל השתתפות - דחייה", "7": "ביטל השתתפות - אחר",
-           "10": "לא רלוונטי", "17": "טרם הוגש"}
+           "8": "בטיפול מטה", "9": "ממתין לתקציב", "10": "לא רלוונטי", "17": "טרם הוגש"}
 LABELS = {SC["status"]: PAY, SC["receipt"]: RECEIPT, B2["billing"]: BILLING, B2["payment"]: B2B_PAY,
           EN["voucher"]: VOUCHER}
 # the status cells a row shows, by the row's field name: one that holds a value with no label is said, not shown empty
@@ -304,6 +310,10 @@ BOOKS_LIST_TITLE = "מסמכים בחשבשבת בלי חיוב במאנדיי"
 BOOKS_UNCLEAR_TITLE = "מסמכים בחשבשבת שלא ברור אם הם של סטודנט/ית או של חברה"
 BOOKS_CANDIDATE = "מועמדת לפי שם"
 BOOKS_AS_OF_WORD = "לפי הספרים"
+# D4: the action that writes what the books propose (DESK_ACTIONS `books_fill`), and the list's words for a proposal
+BOOKS_FILL_BUTTON = "רישום מחשבשבת"
+BOOKS_PROPOSAL = "הצעה"
+BOOKS_FILL_ALL = "לרשום את כל ההצעות"
 # the list's columns: the document as the books hold it, and its total (the legend defines each)
 BOOKS_DOC_HEADS = ("מספר מסמך", "סוג מסמך", "תאריך מסמך", "שם בכרטיס")
 BOOKS_SUM_WORD = "סכום בחשבשבת"
@@ -379,7 +389,21 @@ LEGEND = {
                            "לבדו, וחשבונית מס/קבלה בו נחשבת של סטודנט/ית. %s" % (BOOKS_ERA_SAID, _BOOKS_LATE)),
         (BOOKS_CANDIDATE, "ליד מסמך ברשימה: שורה בלוח Student Charge ששמה זהה לשם בכרטיס בחשבשבת, באותן מילים ובכל סדר "
                           "(מילים של שתי אותיות ומעלה, בלי ספרות). השם הוא רמז בלבד: התאמה נעשית רק לפי מספר המסמך "
-                          "באסמכתת חשבונית, ולכן המסך לא מקשר שורה למסמך לפי שם ולא ממלא דבר."),
+                          "באסמכתת חשבונית, ולכן המסך לא מקשר שורה למסמך לפי שם, ולא כותב דבר בלי אישור שלך."),
+        # D4 (app/desk/books.py `proposals`; DESK_ACTIONS `books_fill`)
+        ("%s · %s · %s" % (BOOKS_FILL_BUTTON, BOOKS_PROPOSAL, BOOKS_FILL_ALL),
+         "כשחשבשבת מציעה מה לרשום בתקבול (\"בחשבשבת: ...\" או \"תאריך מחשבשבת: ...\" ליד השורה, ו%s ליד המסמך ברשימה של "
+         "מסמכים בחשבשבת בלי חיוב במאנדיי): %s כותב במאנדיי, בשמך ובהרשאות שלך, את מספר המסמך באסמכתת חשבונית ואת "
+         "תאריך המסמך בתאריך תקבול, כל אחד רק כשחשבשבת מציעה אותו ורק כשהתא ריק. %s, מעל הרשימה, כותב את כולן יחד (עד 25 "
+         "בכתיבה אחת). לפני הכתיבה המסך קורא את השורות במאנדיי ומראה מה ייכתב בכל אחת, וממש לפני הכתיבה קורא כל שורה שוב. "
+         # the hostile review of D4: the promise says exactly what the page checks (frontend/finance.js settleFills,
+         # confirmBatch: the two cells written and the action's `rests_on`, the number in another row, a newer reading)
+         "שורה שהשתנתה במאנדיי מאז הקריאה לא נכתבת: שורה שאסמכתת חשבונית, תאריך תקבול, סטטוס תשלום או סכום ששולם שבה "
+         "אינם מה שהמסך קרא. שורה לא נכתבת גם כשאסמכתת חשבונית של שורה אחרת בלוח Student Charge היא כבר המספר שהיא "
+         "מקבלת, וכשקריאה חדשה של הלוחות, שנחתה בזמן שהאישור פתוח, כבר לא מציעה לה את אותו הדבר. תא שאינו ריק לא נכתב "
+         "אף פעם. אחרי הכתיבה המסך מבקש קריאה חדשה, והמסמך יוצא מהרשימה. רק בתקבולים "
+         "ובמסמכים מ-%s ואילך: מה שלפני כן מטופל בנפרד." % (_q(BOOKS_PROPOSAL), _q(BOOKS_FILL_BUTTON),
+                                                          _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
     ],
     "b2b": [
@@ -453,6 +477,10 @@ _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
 # what every mark of the books says of where its row is (D3; spec §6.1.1, §6.4.2)
 _BOOKS_MARK_ROW = ("לא משנה את השיבוץ. תקבול מ-%s ואילך שיש בו סימון כזה מופיע גם ב\"לטיפול\"; תקבול ישן יותר נשאר "
                    "במשבצת שלו עם הסימון." % BOOKS_ERA_SAID)
+# D4 (app/desk/books.py `proposals`): what every proposal of the books says of where it is and who writes it
+_BOOKS_REF_FILL = "בחשבשבת: {number}"
+_BOOKS_FILL_ROW = ("בפרטים, %s כותב אותו במאנדיי בשמך, רק בתא ריק. רק בתקבול ובמסמך מ-%s ואילך. לא משנה את השיבוץ."
+                   % (BOOKS_FILL_BUTTON, BOOKS_ERA_SAID))
 LEGEND_FLAGS = {
     "b2c": [
         # "נבנה", not "נכתב", which is the word of the desk's own writes ("נכתב, מתעדכן"; QA 24.11)
@@ -487,8 +515,17 @@ LEGEND_FLAGS = {
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
         ("refund_last_day_unknown", LAST_DAY_LABEL + " לא ידוע", "אין תאריך בקשת ביטול: התקבול לא מקושר להרשמה, או "
                                                                  "שבהרשמה אין תאריך. הפרטים אומרים איזה מהשניים."),
-        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ: את "
-                                                   "האסמכתאות ימלא החיבור לחשבשבת." % _PAID),
+        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ. כשחשבשבת "
+                                                   "מציעה את המספר, לידה: \"בחשבשבת: ...\"." % _PAID),
+        # D4 (app/desk/books.py `proposals`): what the books propose to fill, written only by the person ("רישום מחשבשבת")
+        ("books_ref_fill", _BOOKS_REF_FILL,
+         "אסמכתת חשבונית ריקה, וחשבשבת מציעה מספר: חשבונית מס/קבלה תקפה אחת בלבד בכרטיס של סטודנט/ית, ששום שורה בלוחות "
+         "החיובים לא מפנה אליה, שהשם בכרטיס זהה לשם השורה (באותן מילים ובכל סדר), שהסכום שלה שווה לסכום ששולם עד שקל, "
+         "ושהתאריך שלה עד %d יום לפני תאריך התקבול או אחריו; ושום שורה אחרת בשם ובסכום האלה לא מחכה לה. %s"
+         % (FILL_WINDOW_DAYS, _BOOKS_FILL_ROW)),
+        ("books_date_fill", "תאריך מחשבשבת: {date}",
+         "באסמכתת חשבונית יש חשבונית מס/קבלה תקפה בחשבשבת, הסכום שווה, וסטטוס התשלום אומר שהכסף נכנס, ותאריך תקבול ריק: "
+         "חשבשבת מציעה את תאריך המסמך. %s" % _BOOKS_FILL_ROW),
         ("receipt_pending", "שליחת קבלה: טרם", "סטטוס תשלום %s, ושליחת קבלה %s או ריקה." % (_PAID, _q(RECEIPT[R_PENDING]))),
         ("credit_ref_missing", "חסרה אסמכתת זיכוי", "תשלום שהוחזר מ-%s ואילך, ואסמכתת זיכוי ריקה. לא משנה את השיבוץ."
                                                      % CREDIT_REF_FROM.strftime("%d.%m.%Y")),
@@ -589,7 +626,9 @@ def flag_legend_term(text: str) -> str:
 FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
               "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid",   # D3: contradictions with the books
               "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
-              "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
+              "over_deal_value", "refund_last_day_unknown", "invoice_missing",
+              "books_ref_fill", "books_date_fill",   # D4: what the books propose, beside what is missing
+              "billed_no_invoice", "receipt_pending",
               "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
               "partial_amount_unknown", "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"]
 
@@ -652,6 +691,24 @@ DESK_ACTIONS = OrderedDict([
                     "steps": [[_typed(SC["credit_ref"], "אסמכתת זיכוי", "text", required=False)]]}),
     ("sc_invoice", {"board": "sc", "button": "שמירה", "field": True,
                     "steps": [[_typed(SC["invoice"], "אסמכתת חשבונית", "text", required=False)]]}),
+    # D4: what the books propose for the row (app/desk/books.py `proposals`: FR-C2's number, A1's date) - offered only on a
+    # row that carries a proposal (`books_fill`, laid by books.merge), never typed: each write is the value the books
+    # propose under its key (`books`), sent only when proposed, and only into a cell that is empty (`if_empty`, as "חויב"
+    # writes its demand day). The page reads the row right before it writes, and a cell that is no longer what the desk
+    # read is skipped and said, never written over (frontend/finance.js planAction, and the batch's reading)
+    ("books_fill", {"board": "sc", "button": BOOKS_FILL_BUTTON,
+                    "steps": [[{"column": SC["invoice"], "title": "אסמכתת חשבונית", "kind": "text", "books": "number",
+                                "if_empty": True},
+                               {"column": SC["paid_date"], "title": "תאריך תקבול", "kind": "date", "books": "date",
+                                "if_empty": True}]],
+                    # what a proposal rests on besides the two cells it writes (FR-C2's conditions 1 and 3: the status says the
+                    # money came in, by its index, and the amount): read with them, in the same request, before the
+                    # confirmation and again right before each write, and held to the row's `field` in the reading - a row
+                    # whose status or amount moved since is skipped and said, never written (the hostile review of D4). Never
+                    # written, so not on desk_writes
+                    "rests_on": [{"column": SC["status"], "title": _PAY_TITLE, "kind": "status", "field": "status_idx"},
+                                 {"column": SC["paid"], "title": "סכום ששולם", "kind": "number", "field": "paid_typed"}],
+                    "after": "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."}),
     # a company charge billed: with its invoice's reference when typed (an empty box never clears one), and "מועד דרישת
     # תשלום" today when it is empty (MON-92: a charge that moves to "חויב" without one gets the day it moved)
     ("billed", {"board": "b2", "button": "סימון %s" % _q(BILLING[B_BILLED]),
@@ -1057,7 +1114,9 @@ def build_b2c(sc_rows: list[dict], cohort_rows: list[dict], enrollments: list[di
             notes["cohort_" + how] += 1
         m = meta.get(cid) if cid else None
         row.update({"cohort_code": m["code"] if m else "", "cohort_title": (m["title"] or m["name"]) if m else "",
-                    "flow": m["flow"] if m else "", "cohort_from": how})
+                    "flow": m["flow"] if m else "", "cohort_from": how,
+                    # D4: the cohort by id, which the students by cohort file a payment under (app/desk/cohorts.py)
+                    "cohort_id": cid or ""})
         row["voucher_idx"], row["voucher"] = next(
             (voucher_of[str(e)] for e in r.get(SC["enrollment"]) or [] if voucher_of.get(str(e), ("", ""))[0]), ("", ""))
         row["person"] = uf.find(key)
@@ -1535,6 +1594,20 @@ def legend_terms(tab: str) -> set[str]:
     return {w for part in _legend_out(tab) for x in part["items"] for w in x["term"].split(" · ")}
 
 
+def _cohorts_of(snapshot: dict, rows: list[dict]) -> dict:
+    """D4's students by cohort (app/desk/cohorts.py) of this snapshot and its built payments. Imported here, when a view is
+    built: cohorts.py builds on this module's money and labels, so it imports this module, never the other way at load.
+    A failure of it is its part's alone (the review of D4: it was `view_error` "crashed" for both tabs, routes.py
+    `_view_of`): logged by its class, never a row or an amount, and the part says so in place of its money ("error")."""
+    from . import cohorts
+
+    try:
+        return cohorts.build_cohorts(snapshot, rows)
+    except Exception as exc:  # noqa: BLE001 - said by class and on the part: the tabs stand without the cohorts
+        logger.error("desk cohorts not built (%s)", type(exc).__name__)
+        return cohorts.not_shown("error", "crashed")
+
+
 def build_view(snapshot: dict, today: date) -> dict:
     """snapshot: {'read_at', 'student_charge': {'items_count','rows'}, 'b2b_charge': {...}, and the items read by id:
     'enrollments', 'leads' (the deciding ones, since 12.11), 'cohorts', 'deals', 'accounts' (lists), 'lead_names'
@@ -1553,8 +1626,10 @@ def build_view(snapshot: dict, today: date) -> dict:
     whole = periods[0]["states"]   # every payment is in exactly one state
     raw_b2c = [_b2c_row(r, today, Counter()) for r in sc["rows"]]
     asked = snapshot.get("asked") or {}
-    # what was asked for, by the same definitions the reader uses (a snapshot without `asked` derives them)
-    enr_ids = {str(x) for x in asked.get("enrollments", [])} or set(enrollment_ids(sc["rows"]))
+    # what was asked for, by the same definitions the reader uses (a snapshot without `asked` derives them). The
+    # enrollments the payments link to, always from the payments: since D4 the reading asks the enrollments of the cohorts
+    # with a price too, and those no payment links to (app/desk/reading.py `roster_ids`)
+    enr_ids = set(enrollment_ids(sc["rows"]))
     if names is not None:
         # every lead a payment links to is asked for its name, so the check counts them all by name, as before 12.11 -
         # `asked["leads"]` is the deciding ones since, the rows a reading keeps
@@ -1628,7 +1703,9 @@ def build_view(snapshot: dict, today: date) -> dict:
                 "money_in": periods[0]["money_in"], "refunded": periods[0]["refunded"],
                 "net": periods[0]["money_in"] - periods[0]["refunded"], "students": len({x["person"] for x in srows}),
                 "count": len(srows), "since": min((x["date"] for x in srows if x["date"]), default=""),
-                "dated_by_payment": sum(1 for x in srows if x["date_from"] == "paid")},
+                "dated_by_payment": sum(1 for x in srows if x["date_from"] == "paid"),
+                # D4 (backlog 0313): the students by cohort, from this reading and these very payments
+                "cohorts": _cohorts_of(snapshot, srows)},
         "b2b": {"rows": brows, "states": _states_out(B2B_STATES), "legend": _legend_out("b2b"), "tasks_about": TASKS_ABOUT["b2b"],
                 "actions": actions_out("b2"),
                 # the ledger's form for a customer's billing details, written by the person in the browser (ADR-0188)

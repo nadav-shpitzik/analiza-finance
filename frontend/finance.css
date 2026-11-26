@@ -49,6 +49,8 @@ body[data-theme="dark"] #screen-finance {
   animation: fin-pulse 1.4s ease-in-out infinite; }
 @keyframes fin-pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { #screen-finance .fin-refreshing::before { animation: none; } }
+/* D4's review (4a): a refresh that failed, beside the reading's time, the desk kept on the screen */
+#screen-finance .fin-refresh-failed { margin-inline-start: 8px; color: var(--fin-bad-ink); }
 #screen-finance .fin-spacer { flex: 1; }
 #screen-finance .fin-searchbox { position: relative; display: inline-flex; }
 #screen-finance .fin-searchicon { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); color: var(--fin-muted);
@@ -271,6 +273,26 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-seg .fin-btn:first-child { border-start-start-radius: 8px; border-end-start-radius: 8px; }
 #screen-finance .fin-seg .fin-btn:last-child { border-start-end-radius: 8px; border-end-end-radius: 8px; margin-inline-start: -1px; }
 #screen-finance .fin-btn.on { background: var(--fin-sel); border-color: var(--fin-focus); font-weight: 600; position: relative; }
+/* D4, "לפי מחזור" (knowledge backlog 0313): "אושר - ממתין לתשלום", money that should already have come in, is the view's one
+   accent - its figure first, in a light amber, and its column lightly tinted, its amounts heavier. A cohort's students sit
+   under it on the page's grey, indented, a student out of the count quieter; what is said of a cohort closes its list */
+#screen-finance .fin-figs .fin-hi { padding: 4px 10px 5px; border-radius: 8px; background: color-mix(in srgb, var(--fin-wait) 16%, var(--fin-panel)); }
+#screen-finance table.fin-cohorts-t .fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-panel)); }
+#screen-finance table.fin-cohorts-t th.fin-hi { color: var(--fin-ink); }
+#screen-finance table.fin-cohorts-t tr.fin-rowbtn td.fin-hi, #screen-finance table.fin-cohorts-t tfoot td.fin-hi { font-weight: 600; }
+#screen-finance table.fin-cohorts-t td.k-cohort { min-width: 170px; }
+/* sums of six figures in seven columns: a little less room around each, and its digits a touch smaller, so the table fits
+   monday's widths of 1280 and 1400 (QA 4 of 24.11) */
+#screen-finance table.fin-cohorts-t td.n, #screen-finance table.fin-cohorts-t th.n { padding-inline: 7px; }
+#screen-finance table.fin-cohorts-t td.n { font-size: 13.5px; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td { background: var(--fin-soft); font-size: 13px; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td.fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-soft)); }
+#screen-finance table.fin-cohorts-t tr.fin-subrow td.k-cohort { padding-inline-start: 28px; white-space: normal; }
+#screen-finance table.fin-cohorts-t tr.fin-subrow-off td { color: var(--fin-muted); }
+#screen-finance .fin-sub-said { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); }
+#screen-finance table.fin-cohorts-t td.fin-subnote { color: var(--fin-muted); font-size: 12.5px; padding-inline-start: 28px; white-space: normal; }
+#screen-finance .fin-unpriced { padding: 10px 16px 12px; border-top: 1px solid var(--fin-line); font-size: 13px; color: var(--fin-muted); }
+#screen-finance .fin-unpriced ul { margin: 6px 0 0; padding-inline-start: 18px; }
 
 /* a row's details (10.11, Nadav: "בטוח אפשר לשפר פה את הUI"): the situation in one line with the way to monday beside it,
    then only what the row does not show, two pairs a line, then the warnings as sentences */
@@ -334,8 +356,8 @@ body[data-theme="dark"] #screen-finance {
 
 /* round 3, slice 3: what is written from here. A row's actions come first, under its situation (the view is about 527
    pixels tall inside monday), in a quiet block of their own with a hairline under it; the plan before a write, its progress
-   and its result under the controls. One button carries weight - "כתיבה" / "שמירה", the one that writes - everything else
-   is the desk's usual outline. */
+   and its result float beside the controls (D4's review, 4b: under them they pushed the rows below down). One button
+   carries weight - "כתיבה" / "שמירה", the one that writes - everything else is the desk's usual outline. */
 #screen-finance .fin-acts { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--fin-line); }
 #screen-finance .fin-act-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; }
 #screen-finance .fin-act { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
@@ -394,9 +416,13 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
    beside what was pressed, over the list and never in it, so no row moves when it opens or closes (finance.js placePop
    places it in the view, and the focus on it scrolls nothing). Opaque, over the rows; the bar's place is held, empty, while
    the batch's rows offer no box any more */
-#screen-finance .fin-batch.fin-pop { position: fixed; z-index: 20; top: 8px; left: 8px; width: min(520px, calc(100% - 16px));
-  max-height: calc(100% - 16px); overflow: auto; margin: 0; padding: 10px 14px; border: 1px solid var(--fin-focus);
-  border-radius: 8px; background: var(--fin-panel); font-size: 14px; box-shadow: 0 8px 24px rgba(15, 20, 30, .2); }
+#screen-finance .fin-batch.fin-pop, #screen-finance .fin-act-box.fin-pop { position: fixed; z-index: 20; top: 8px; left: 8px;
+  width: min(520px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; margin: 0; padding: 10px 14px;
+  border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-panel); font-size: 14px;
+  box-shadow: 0 8px 24px rgba(15, 20, 30, .2); }
+/* D4's review (4b): a row's own action floats the same way, beside its button in the row's details, so no row below it
+   moves; it is still the details' own (it closes with them) */
+#screen-finance .fin-act-box .fin-act-msg { margin-top: 0; }
 #screen-finance .fin-batchbar.fin-hold { visibility: hidden; }
 /* "אין תנאי תשלום" that leads to the company's ledger: the same chip, pressable, underlined lightly as the desk's links are */
 #screen-finance button.fin-chiplink { border: 0; font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline;
@@ -422,3 +448,11 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-books .fin-cand + .fin-cand { margin-top: 3px; }
 #screen-finance table.fin-books-t td { vertical-align: top; }
 #screen-finance .fin-dx-books { margin: 10px 0 0; color: var(--fin-muted); font-size: 13px; }
+
+/* D4: what the books propose (frontend/finance.js proposalHtml) - under a document's candidates, the row the books propose
+   and the button that writes it as the person */
+#screen-finance .fin-books .fin-fill { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px;
+  font-size: 13px; }
+#screen-finance .fin-books .fin-fill .fin-btn { height: 26px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-books .fin-actions .fin-btn { gap: 6px; }
+#screen-finance .fin-acts .fin-fill-said { margin: 8px 0 0; }

@@ -48,11 +48,15 @@ if (input.clock) { const RealDate = Date; global.Date = class extends RealDate {
 const toasts = [], copied = [], sent = [], calls = [], posts = [], usage = [], executed = [], handlers = {}, listeners = {};
 const updates = [];
 const search = { focus() {}, setSelectionRange() {}, value: "" };
-global.document = { visibilityState: "visible", activeElement: null, body: { appendChild() {} },
+/* the flashes on the screen: each appended to the body and not removed yet, by what it says */
+const showing = [];
+global.document = { visibilityState: "visible", activeElement: null,
+  body: { appendChild(el) { if (el.className === "fin-toast") { showing.push(el); } } },
   addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
   getElementById(id) { return id === "fin-q" ? search : null; },
-  createElement() { const el = { setAttribute() {}, remove() {}, click() {}, style: {}, select() {} };
-    Object.defineProperty(el, "textContent", { set(v) { toasts.push(v); } }); return el; },
+  createElement() { const el = { setAttribute() {}, remove() { const i = showing.indexOf(el); if (i !== -1) { showing.splice(i, 1); } },
+    click() {}, style: {}, select() {} };
+    Object.defineProperty(el, "textContent", { set(v) { el.said = v; toasts.push(v); } }); return el; },
   execCommand() { return !!input.oldCopyWorks; } };
 Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: input.clipboard === "none" ? {} :
   { clipboard: { writeText(t) { if (input.clipboard === "refuses") { return Promise.reject(new Error("denied")); }
@@ -74,6 +78,9 @@ function cv(item, c) {
   if (x && typeof x === "object") { return { id: c, text: x.text || "", value: null, index: x.index, label: x.label }; }
   return { id: c, text: x == null ? "" : String(x), value: null };
 }
+/* a request whose answer is marked `park` waits, unanswered, until a step lets it go ({"unpark": "<its name>"}); it is then
+   answered from the boards as they are at that moment */
+const parked = {};
 const monday = M.absent ? null : {
   get: (what) => what !== "context" ? Promise.resolve({ data: "" }) : input.context === "never" ? new Promise(() => {})
     : Promise.resolve({ data: input.context || {} }),
@@ -82,35 +89,46 @@ const monday = M.absent ? null : {
     const v = (opts || {}).variables || {};
     sent.push({ kind: query.trim().split(" ")[0], query: query, variables: v, apiVersion: (opts || {}).apiVersion });
     const a = queue.shift() || {};
-    if (a.reject) { return Promise.reject(a.reject); }
-    if (a.hold) { return new Promise(() => {}); }
-    if (a.answer) { return Promise.resolve(a.answer); }
-    if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
-      updates.push(v);
-      return Promise.resolve({ data: { create_update: { id: "9001" } } });
-    }
-    if (query.trim().startsWith("mutation")) {
-      const item = boards[v.b][v.i], vals = JSON.parse(v.v);
-      Object.keys(vals).forEach((c) => {
-        if ((M.keep || []).indexOf(c) !== -1) { return; }                     // monday took the write and kept its value
-        const val = vals[c];
-        if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
-        else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
-        else if (val && typeof val === "object" && "ids" in val) {           // a dropdown: its label's name, by id
-          const l = (labels[v.b][c] || []).filter((x) => x.id === val.ids[0])[0]; item[c] = l ? l.name : "";
-        }
-        else { item[c] = String(val); }
-      });
-      return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
-    }
-    const b = String((v.b || [])[0]), cells = boards[b] || {};
-    const items = a.noItems ? [] : (v.i || []).filter((id) => has(cells, id)).map((id) => ({ id: id, name: cells[id].__name || "",
-      board: { id: cells[id].__board || b }, column_values: (v.c || []).map((c) => cv(cells[id], c)) }));
-    const columns = a.noColumn ? [] : (v.c || []).map((c) => ({ id: c, type: "x",
-      settings_str: JSON.stringify({ labels: (labels[b] || {})[c] || {} }) }));
-    return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
+    if (a.park) { return new Promise((go) => { parked[a.park] = go; }).then(() => reply(query, v, a)); }
+    return reply(query, v, a);
   }
 };
+function reply(query, v, a) {
+  if (a.reject) { return Promise.reject(a.reject); }
+  if (a.hold) { return new Promise(() => {}); }
+  if (a.answer) { return Promise.resolve(a.answer); }
+  if (query.indexOf("items_page_by_column_values(") !== -1) {
+    /* D4's review: the rows of a board whose cell in a column is one of the values, by its whole text (`noItems`: none) */
+    const on = boards[String(v.b)] || {};
+    const found = Object.keys(on).filter((id) => (v.v || []).indexOf(cv(on[id], v.c).text) !== -1)
+      .map((id) => ({ id: id, name: on[id].__name || "" }));
+    return Promise.resolve({ data: { items_page_by_column_values: { cursor: null, items: a.noItems ? [] : found } } });
+  }
+  if (query.trim().startsWith("mutation") && query.indexOf("create_update(") !== -1) {
+    updates.push(v);
+    return Promise.resolve({ data: { create_update: { id: "9001" } } });
+  }
+  if (query.trim().startsWith("mutation")) {
+    const item = boards[v.b][v.i], vals = JSON.parse(v.v);
+    Object.keys(vals).forEach((c) => {
+      if ((M.keep || []).indexOf(c) !== -1) { return; }                     // monday took the write and kept its value
+      const val = vals[c];
+      if (val && typeof val === "object" && "index" in val) { const l = labels[v.b][c][String(val.index)]; item[c] = { text: l, index: val.index, label: l }; }
+      else if (val && typeof val === "object" && "date" in val) { item[c] = val.date; }
+      else if (val && typeof val === "object" && "ids" in val) {           // a dropdown: its label's name, by id
+        const l = (labels[v.b][c] || []).filter((x) => x.id === val.ids[0])[0]; item[c] = l ? l.name : "";
+      }
+      else { item[c] = String(val); }
+    });
+    return Promise.resolve({ data: { change_multiple_column_values: { id: v.i, column_values: v.c.map((c) => cv(item, c)) } } });
+  }
+  const b = String((v.b || [])[0]), cells = boards[b] || {};
+  const items = a.noItems ? [] : (v.i || []).filter((id) => has(cells, id)).map((id) => ({ id: id, name: cells[id].__name || "",
+    board: { id: cells[id].__board || b }, column_values: (v.c || []).map((c) => cv(cells[id], c)) }));
+  const columns = a.noColumn ? [] : (v.c || []).map((c) => ({ id: c, type: "x",
+    settings_str: JSON.stringify({ labels: (labels[b] || {})[c] || {} }) }));
+  return Promise.resolve({ data: { items: items, boards: a.noBoard ? [] : [{ id: b, columns: columns }] }, account_id: 1 });
+}
 /* an answer marked `hold` lands only when a step says so ({"land": "<request>"}) */
 const held = {};
 function answer(key) {
@@ -163,6 +181,12 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
       if (!next) { throw new Error("nothing held for " + step.land); }
       next();
     }
+    if (step.unpark) {
+      const go = parked[step.unpark];
+      if (!go) { throw new Error("no monday request parked as " + step.unpark); }
+      delete parked[step.unpark];
+      go();
+    }
     if (step.hide) { document.visibilityState = "hidden"; (listeners.visibilitychange || []).forEach((f) => f()); }
     if (step.back) {
       /* a return to the view: [ms away, how] - "visible" (another tab), "focus" (monday's item card closed) or "both" */
@@ -191,7 +215,9 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
         why: it.why || "", result: it.result || null })) } : null, picked: Object.keys(F._picked()).sort(),
       /* D2 (ADR-0188): a company's billing edit */
       bill: F._billState() ? { phase: F._billState().phase, error: F._billState().error || "", outcome: F._billState().outcome || null }
-        : null });
+        : null,
+      /* D4's review (4c): what the flashes on the screen say after the step */
+      showing: showing.map((el) => el.said) });
   }
   /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
   fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
@@ -672,7 +698,11 @@ def test_every_monday_request_of_the_page_goes_through_the_one_door():
     door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
     assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
     assert page.count('"mutation ') == 2 and page.count("mondayCall(WRITE_ROW") == 1 and page.count("mondayCall(WRITE_UPDATE") == 1
-    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == ["READ_CELLS", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too
+    assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == [
+        "READ_CELLS", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    citing = re.search(r'var READ_CITING = ("[^;]*);', page).group(1)
+    assert citing.startswith('"query (') and "mutation" not in citing and "items_page_by_column_values(" in citing
     update = page[page.index("function mondayUpdate("):page.index("function readRows(")]
     assert "mondayCall(WRITE_UPDATE" in update and "!CAN_UPDATE" in update and "UPDATE_BOARDS" in update
     assert ".api(" not in code_of(GLUE)
@@ -1227,6 +1257,22 @@ def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_
     assert source.index("cardNote(el.dataset.open)") > source.index("if (deps.monday) {", source.index("if (el.dataset.open) {"))
 
 
+def test_one_flash_shows_at_a_time_and_the_newest_takes_the_place_of_the_one_on_the_screen():
+    """QA 24.11, left for D4 (its review, 4c): two flashes within their time stacked in the same corner, one drawn over the
+    other - a write's "נכתב במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at a
+    time: the newest takes the place of the one on the screen."""
+    answers = {"GET /api/desk": [{"body": answer(receipts_view())}],
+               "POST /api/desk/refresh": [{"body": answer(receipts_done(), taken_at="2026-11-24T08:00:09+00:00")}]}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"rowAct": "sc:3102:receipt_sent"}]}, {"click": [{"batchGo": "1"}]},
+                       {"click": [{"open": "3102"}, ["fin-name"]]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"pick": "sc:3106"}]}],
+                monday=receipts_world(), context=WRITES, answers=answers)
+    shown = [s["showing"] for s in got["steps"]]
+    assert shown[2] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן."]
+    assert shown[3] == [CARD_NOTE]                                  # the write's flash gave way to the card's note
+    assert all(len(x) <= 1 for x in shown) and got["toasts"] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן.", CARD_NOTE]
+
+
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------
 
 def test_a_payments_details_show_its_leads_id_number_read_as_the_person_never_from_the_server():
@@ -1681,6 +1727,54 @@ def test_a_reading_whose_view_could_not_be_built_is_said_as_the_servers_fault_wi
                              "בשרת, ונדב צריך לבדוק אותה."]
     # and an answer with no reading at all is still "not read yet", with its refresh
     assert "הנתונים עוד לא נקראו" in drive(answer(None), [], monday=world())["first"]
+
+
+REFRESH_FAILED = "הרענון נכשל, ומוצגים הנתונים הקודמים"
+
+
+@pytest.mark.parametrize("failure, said", [
+    ({"status": 503, "error": "finance_unavailable"},
+     REFRESH_FAILED + ": לא הצלחנו לקרוא עכשיו את לוחות החיובים. נסו שוב בעוד כמה דקות."),
+    ({"status": 500, "error": "http_500"}, REFRESH_FAILED + " (http_500)."),
+    ({"blocked": True, "status": 401, "error": "unauthorized"}, REFRESH_FAILED + " (unauthorized)."),
+    ({"message": "Failed to fetch"}, REFRESH_FAILED + "."),                  # no answer at all
+])
+def test_a_refresh_that_fails_keeps_the_desk_and_what_was_typed_and_says_so_beside_the_readings_time(failure, said):
+    """QA 24.11, left for D4 (its review, 4a): "רענון" that failed with any error but a 429 replaced the whole desk with an
+    error screen, and what was typed in the search went with it. The desk stays as it was, the search too, the button is
+    "רענון" again, and the line beside the reading's time says the refresh failed and why - until the next reading lands.
+    Drawn as the screen holds it (raw), never drawn again from the view."""
+    import html as h
+    got = drive(answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/refresh": [{"hold": True, "reject": failure}, {"hold": True, "body": newer_body(NEWER, 0)}]},
+                monday={"absent": True},
+                steps=[{"click": [{"refresh": "1"}], "raw": True}, {"type": "שורה", "land": "POST /api/desk/refresh", "raw": True},
+                       {"click": [{"refresh": "1"}], "raw": True}, {"type": "שורה-", "wait": 400, "raw": True},
+                       {"land": "POST /api/desk/refresh", "raw": True}])
+    pressed, failed, _again, waiting, landed = (s["html"] for s in got["steps"])
+    assert "fin-tabs" in failed and "data-retry" not in failed and search_box(failed) == "שורה"
+    asof = h.unescape(failed[failed.index('<span class="fin-asof">'):failed.index('<span class="fin-spacer">')])
+    assert '<span class="fin-refresh-failed" role="status">%s</span>' % said in asof
+    assert '<button class="fin-btn" type="button" data-refresh="1">רענון</button>' in failed
+    # pressed again: while it is on its way a drawing (the search settling) no longer says the failure; then it lands, the
+    # newer reading under the same search
+    assert "fin-refresh-failed" not in pressed and "fin-refresh-failed" not in waiting and "שורה-חדשה" not in waiting
+    assert "fin-refresh-failed" not in landed and "שורה-חדשה" in landed and search_box(landed) == "שורה-"
+    # with no desk on the screen yet, the error is said in its place, with the way to try again
+    first = drive(answers={"GET /api/desk": [{"reject": failure}]}, monday={"absent": True})["first"]
+    assert "fin-tabs" not in first and 'data-retry="1"' in first
+
+
+def test_a_newer_reading_that_lands_on_a_return_to_the_view_clears_a_failed_refresh():
+    """After "רענון" failed, the reading that lands when the view takes the focus back (askAgain, no press of hers) is the one
+    on the screen: the line beside its time no longer says the refresh failed."""
+    got = drive(answers={"GET /api/desk": [{"body": answer()}],
+                         "POST /api/desk/refresh": [{"reject": {"status": 500, "error": "http_500"}}, {"body": newer_body(NEWER, 0)}]},
+                monday={"absent": True}, clock=True,
+                steps=[{"click": [{"refresh": "1"}], "raw": True}, {"back": [60_000, "focus"], "raw": True}])
+    failed, back = (s["html"] for s in got["steps"])
+    assert "fin-refresh-failed" in failed and "שורה-חדשה" not in failed
+    assert "fin-refresh-failed" not in back and "שורה-חדשה" in back
 
 
 def test_an_answer_without_a_view_never_replaces_the_view_on_the_screen():
