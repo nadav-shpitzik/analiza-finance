@@ -21,6 +21,12 @@ head (`ID_NUMBERS_NOT_IN_FILE`). The page shows a payment's ID number read in th
 are out: they belong to the refund, in monday. Amounts are as the board holds them, including VAT; no VAT column is
 computed here.
 
+THE FILE WITH THE ID NUMBER (D4, 26.11; the owner's go that day: Chava finds a student's card in Hashavshevet by it). It is
+built in the person's browser, as the person: `b2c_table` describes this very file - `book`, the description every file
+here is written from (`write`) - with an empty "ת.ז" column where analiza-metrics' file had it and each row's leads, and
+the page (frontend/finance.js, "ייצוא לאקסל עם ת.ז") reads the numbers from monday as the person, fills the column and
+writes the file itself (frontend/xlsx.js). The server never sees a number, here as everywhere (NEVER_READ).
+
 NAMES (round 3, 11.11, the one-name norm): a column that holds a monday column is headed by that column's monday
 name, exactly; only what the desk computes keeps its own word ("שיבוץ", "מועד פירעון", "מועד אחרון להחזר", the aging
 bands), the same word as on the page and in its legend. A refund row carries its two dates side by side:
@@ -59,6 +65,12 @@ ZERO = Decimal("0")
 # The students' file's line about the ID number, at the head of its second sheet: the column analiza-metrics had is gone
 ID_NUMBERS_NOT_IN_FILE = ("מספרי ת.ז אינם בקובץ: השרת של השולחן לא קורא אותם ולא שומר אותם. ת.ז של תקבול מוצגת "
                           "בפרטים שלו בשולחן, ונקראת ממאנדיי בשמך.")
+# D4 (26.11): the students' file with the ID number, built in the browser (`b2c_table`): its column, where analiza-metrics'
+# file had it (app/finance_export.py B2C_COLUMNS at da671b2: right after "סטודנט/ית"), and its line at the same place
+ID_HEAD = "ת.ז"
+ID_AFTER = "סטודנט/ית"
+ID_NUMBERS_IN_FILE = ("מספרי ת.ז בקובץ נקראו ממאנדיי בשמך, בדפדפן, כשהקובץ נבנה: לכל תקבול, הראשון מהלידים שלו "
+                      "שיש בו ת.ז. השרת של השולחן לא קרא אותם ולא שמר אותם, והם לא נשלחו לשום מקום.")
 
 
 def _money_or_blank(v: Decimal) -> Decimal | None:
@@ -109,7 +121,8 @@ B2C_COLUMNS: list[tuple[str, Callable[[dict], Any], str, int]] = [
     ("מקור התאריך", lambda r: "הוקלד" if r["date_from"] == "paid" else "יום היצירה", "text", 13),
     ("אסמכתת חשבונית", lambda r: r["invoice"], "text", 15),
     ("סטודנט/ית", lambda r: r["name"], "text", 26),
-    # no "ת.ז" here: analiza-metrics read it live for the file, and this service never reads one (ID_NUMBERS_NOT_IN_FILE)
+    # no "ת.ז" here: analiza-metrics read it live for the file, and this service never reads one (ID_NUMBERS_NOT_IN_FILE);
+    # the file with it is built in the browser, its column placed here by b2c_columns (D4)
     # Student Charge's "נציג מכירות", next to the name as on her board (17.11): the lead's current Owner
     ("נציג מכירות", lambda r: r.get("rep", ""), "text", 16),
     ("סכום ששולם", _counted_paid, "money", 14),
@@ -260,7 +273,34 @@ def books_lines(books: Any, local: Callable[[Any], str]) -> list:
 def b2c_workbook(rows: list[dict], about: dict[str, Any], sheets: list | None = None) -> bytes:
     """rows: the filtered student payments (view.filter_b2c). about: the filter and the reading, for sheet 2, whose head
     says that the file carries no ID number. sheets: the books' lists of "לטיפול" (D3, `books_sheet`)."""
-    return _workbook("תקבולים", B2C_COLUMNS, rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
+    return write(b2c_book(rows, about, sheets))
+
+
+def b2c_columns(with_id: bool = False) -> list:
+    """The students' file's columns; with the ID number (D4), its column where analiza-metrics' file had it: right after
+    the student's name (ID_AFTER), as text, 12 wide. Its cells are empty here: the page fills them, as the person."""
+    if not with_id:
+        return B2C_COLUMNS
+    at = [c[0] for c in B2C_COLUMNS].index(ID_AFTER) + 1
+    return B2C_COLUMNS[:at] + [(ID_HEAD, lambda r: None, "text", 12)] + B2C_COLUMNS[at:]
+
+
+def b2c_table(rows: list[dict], about: dict[str, Any], sheets: list | None = None) -> dict:
+    """D4 (26.11): the students' file with the ID number, as data for the page to write in the person's browser
+    (frontend/finance.js "ייצוא לאקסל עם ת.ז", frontend/xlsx.js) - `b2c_book` of the same rows, so it is the file
+    b2c_workbook writes but for one column and one line: "ת.ז" after the name, every cell of it empty (`id_column`, its
+    index), and "פרטים"'s line about it (ID_NUMBERS_IN_FILE). Each row's item id and its leads, in monday's order (`keys`),
+    are what the page reads the number by. No ID number is here, nor anywhere on the server (NEVER_READ)."""
+    out = b2c_book(rows, about, sheets, with_id=True)
+    main = out["sheets"][0]
+    main["id_column"] = [c["head"] for c in main["columns"]].index(ID_HEAD)
+    main["keys"] = [{"id": str(r["id"]), "lead_ids": [str(x) for x in r.get("lead_ids") or []]} for r in rows]
+    return out
+
+
+def b2c_book(rows: list[dict], about: dict[str, Any], sheets: list | None = None, with_id: bool = False) -> dict:
+    """The students' file as data (`book`): its rows, "פרטים" and the books' lists; `with_id` its "ת.ז" column, empty."""
+    return book("תקבולים", b2c_columns(with_id), rows, about, "תקבולי סטודנטים מתוך שולחן הכספים",
                      [("הסכומים", "כפי שהם בלוח Student Charge, כולל מע\"מ"),
                       ("תאריך תקבול", "כפי שהוקלד בלוח; כשלא הוקלד, היום שבו נוצרה השורה במאנדיי, ואז במקור "
                                       "התאריך כתוב \"יום היצירה\""),
@@ -277,7 +317,8 @@ def b2c_workbook(rows: list[dict], about: dict[str, Any], sheets: list | None = 
                        % (REFUNDED_WORD, PAY[P_REFUNDED], PAY[P_PART], PAY[P_REFUNDED])),
                       _what_to_check("תקבול", B2C_STATES),
                       (LAST_DAY_LABEL, "תאריך בקשת ביטול בהרשמה ועוד %d יום, בשורות של החזר בלבד, ליד %s"
-                       % (REFUND_DUE_DAYS, PLANNED_LABEL))], head_lines=[("ת.ז", ID_NUMBERS_NOT_IN_FILE)], sheets=sheets)
+                       % (REFUND_DUE_DAYS, PLANNED_LABEL))],
+                     head_lines=[(ID_HEAD, ID_NUMBERS_IN_FILE if with_id else ID_NUMBERS_NOT_IN_FILE)], sheets=sheets)
 
 
 def b2b_workbook(rows: list[dict], about: dict[str, Any], sheets: list | None = None) -> bytes:
@@ -311,46 +352,47 @@ def total_label(head: str) -> str:
 
 def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any], what: str, totals: list,
               head_lines: list | None = None, sheets: list | None = None) -> bytes:
-    """`head_lines`: lines said right under what the file is, before when it was read (the students' file: no ID
-    number). `totals`: the lines after the file's own totals (FILE_TOTALS), which this sums from its cells. `sheets`: the
-    books' lists (D3), each a sheet of its own after "פרטים"."""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = title
-    _sheet_base(ws)
-    bold = Font(bold=True)
-    for c, (head, _fn, _kind, width) in enumerate(columns, start=1):
-        cell = ws.cell(row=1, column=c, value=head)
-        cell.font, cell.fill = bold, HEADER_FILL
-        cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
-        ws.column_dimensions[get_column_letter(c)].width = width
-    sums = {c: ZERO for c, (_head, _fn, kind, _width) in enumerate(columns, start=1) if kind == "money"}
-    for i, r in enumerate(rows, start=2):
-        for c, (_head, fn, kind, _width) in enumerate(columns, start=1):
-            v = fn(r)
-            cell = ws.cell(row=i, column=c)
-            if kind == "text":
-                _text(cell, v)
-                continue
-            cell.value = v
-            cell.number_format = {"money": MONEY_FMT, "amount": MONEY_FMT, "date": DATE_FMT, "int": "0"}[kind]
-            if c in sums and v is not None:
-                sums[c] += v
-    last = len(rows) + 1
-    last_col = get_column_letter(len(columns))
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = "A1:%s%d" % (last_col, max(last, 1))
-    # the total, one row below the data and outside the filter, follows whatever the filter hides
-    total_row = last + 2
-    ws.cell(row=total_row, column=2, value="סה\"כ לפי הסינון").font = bold
-    for c, (_head, _fn, kind, _width) in enumerate(columns, start=1):
-        if kind == "money" and rows:
-            col = get_column_letter(c)
-            cell = ws.cell(row=total_row, column=c, value="=SUBTOTAL(109,%s2:%s%d)" % (col, col, last))
-            cell.number_format, cell.font = MONEY_FMT, bold
+    """The file of `book`'s description, written by `write`."""
+    return write(book(title, columns, rows, about, what, totals, head_lines, sheets))
 
-    info = wb.create_sheet("פרטים")
-    _sheet_base(info)
+
+# D4 (26.11): a file is described as data first (`book`), and then written - here with openpyxl (`write`), and for the
+# students' file with the ID number in the person's browser (frontend/xlsx.js, from `b2c_table`), so the two files are one
+# description, never two copies of its rules.
+NUMBER_FORMATS = {"money": MONEY_FMT, "amount": MONEY_FMT, "date": DATE_FMT, "int": "0"}
+# the row under a list, whose totals follow the filter; and the second sheet, its name and its two columns' widths (a
+# total's name, as long as its column's header; then the text)
+TOTAL_UNDER = "סה\"כ לפי הסינון"
+INFO_TITLE = "פרטים"
+INFO_WIDTHS = (34, 60)
+
+
+def _cell(kind: str, v: Any) -> Any:
+    """A cell's value as the file holds it: a text cleaned of the characters a file may not carry (openpyxl's own list;
+    None when nothing is left), anything else as it is - a Decimal, a date, an int, or None."""
+    if kind == "text":
+        return ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v)) or None
+    return v
+
+
+def _described(columns: list) -> list:
+    return [{"head": head, "kind": kind, "width": width} for head, _fn, kind, width in columns]
+
+
+def book(title: str, columns: list, rows: list[dict], about: dict[str, Any], what: str, totals: list,
+         head_lines: list | None = None, sheets: list | None = None) -> dict:
+    """A file as data: {"sheets": [the list, "פרטים", the books' lists]}. A list is {title, columns: [{head, kind, width}],
+    rows: [[cell, ...]], total: the label of the row under it, or lines: the texts under it}; "פרטים" is {title, pairs:
+    [[key, value, kind]], widths}, a value's kind "money" for a Decimal, "int" for a count, else "text".
+    `head_lines`: lines said right under what the file is, before when it was read (the students' file: its ID number).
+    `totals`: the lines after the file's own totals (FILE_TOTALS), which this sums from its cells. `sheets`: the books'
+    lists (D3), each a sheet of its own after "פרטים"."""
+    cells = [[_cell(kind, fn(r)) for _head, fn, kind, _width in columns] for r in rows]
+    sums = {c: ZERO for c, (_head, _fn, kind, _width) in enumerate(columns) if kind == "money"}
+    for row in cells:
+        for c in sums:
+            if row[c] is not None:
+                sums[c] += row[c]
     lines = []
     if not about.get("complete", True):
         lines.append(("שימו לב", "הקריאה ממאנדיי לא שלמה: אין להסתמך על הסכומים בקובץ. רענון בשולחן יקרא שוב."))
@@ -370,50 +412,79 @@ def _workbook(title: str, columns: list, rows: list[dict], about: dict[str, Any]
         ("חיפוש", ILLEGAL_CHARACTERS_RE.sub("", about.get("q") or "") or "-"),
         ("שורות", len(rows)),
         (FILE_TOTALS[0], FILE_TOTALS[1] % title),
-        *[(total_label(columns[c - 1][0]), v) for c, v in sums.items()],
+        *[(total_label(columns[c][0]), v) for c, v in sums.items()],
     ] + totals
-    for i, (k, v) in enumerate(lines, start=1):
-        info.cell(row=i, column=1, value=k).font = bold
-        cell = info.cell(row=i, column=2)
-        if isinstance(v, (Decimal, int)):
-            cell.value = v
-            if isinstance(v, Decimal):
-                cell.number_format = MONEY_FMT
-        else:
-            _text(cell, v)
-    info.column_dimensions["A"].width = 34   # a total's name, as long as its column's header
-    info.column_dimensions["B"].width = 60
-    for sheet in sheets or []:
-        _list_sheet(wb, *sheet)
+    pairs = [[k, v, "money" if isinstance(v, Decimal) else "int" if isinstance(v, int) else "text"] for k, v in lines]
+    return {"sheets": [{"title": title, "columns": _described(columns), "rows": cells, "total": TOTAL_UNDER},
+                       {"title": INFO_TITLE, "pairs": pairs, "widths": list(INFO_WIDTHS)}] +
+                      [{"title": t, "columns": _described(cols), "rows": [[_cell(kind, fn(e)) for _h, fn, kind, _w in cols]
+                                                                           for e in entries], "lines": list(under)}
+                       for t, cols, entries, under in sheets or []]}
+
+
+def write(b: dict) -> bytes:
+    """The file of a description (`book`), with openpyxl: every list right to left, its header bold on its fill, frozen,
+    with a filter on it, dates as dates, amounts as numbers, every text as text (`_text`); under the first, its total that
+    follows the filter, and under a books' list its lines; "פרטים" its key in bold and its value."""
+    main, info, *lists = b["sheets"]
+    wb = Workbook()
+    _list_sheet(wb.active, main)
+    _pairs_sheet(wb.create_sheet(info["title"]), info)
+    for sheet in lists:
+        _list_sheet(wb.create_sheet(sheet["title"]), sheet)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
 
 
-def _list_sheet(wb, title: str, columns: list, entries: list, lines: list) -> None:
-    """One list of the books as a sheet: right to left, its header frozen with a filter, dates as dates, amounts as
-    numbers, every text as text (`_text`), and under the rows its title and sentence."""
-    ws = wb.create_sheet(title)
+def _list_sheet(ws, sheet: dict) -> None:
+    ws.title = sheet["title"]
     _sheet_base(ws)
     bold = Font(bold=True)
-    for c, (head, _fn, _kind, width) in enumerate(columns, start=1):
-        cell = ws.cell(row=1, column=c, value=head)
+    columns, rows = sheet["columns"], sheet["rows"]
+    for c, col in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=c, value=col["head"])
         cell.font, cell.fill = bold, HEADER_FILL
         cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
-        ws.column_dimensions[get_column_letter(c)].width = width
-    for i, e in enumerate(entries, start=2):
-        for c, (_head, fn, kind, _width) in enumerate(columns, start=1):
+        ws.column_dimensions[get_column_letter(c)].width = col["width"]
+    for i, row in enumerate(rows, start=2):
+        for c, (col, v) in enumerate(zip(columns, row), start=1):
             cell = ws.cell(row=i, column=c)
-            v = fn(e)
-            if kind == "text":
+            if col["kind"] == "text":
                 _text(cell, v)
                 continue
             cell.value = v
-            cell.number_format = {"money": MONEY_FMT, "date": DATE_FMT}[kind]
+            cell.number_format = NUMBER_FORMATS[col["kind"]]
+    last = len(rows) + 1
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = "A1:%s%d" % (get_column_letter(len(columns)), max(len(entries) + 1, 1))
-    for k, text in enumerate(lines, start=len(entries) + 3):
+    ws.auto_filter.ref = "A1:%s%d" % (get_column_letter(len(columns)), max(last, 1))
+    if sheet.get("total"):
+        # the total, one row below the data and outside the filter, follows whatever the filter hides
+        total_row = last + 2
+        ws.cell(row=total_row, column=2, value=sheet["total"]).font = bold
+        for c, col in enumerate(columns, start=1):
+            if col["kind"] == "money" and rows:
+                letter = get_column_letter(c)
+                cell = ws.cell(row=total_row, column=c, value="=SUBTOTAL(109,%s2:%s%d)" % (letter, letter, last))
+                cell.number_format, cell.font = MONEY_FMT, bold
+    for k, text in enumerate(sheet.get("lines") or [], start=len(rows) + 3):
         _text(ws.cell(row=k, column=1), text)
+
+
+def _pairs_sheet(ws, sheet: dict) -> None:
+    _sheet_base(ws)
+    bold = Font(bold=True)
+    for i, (k, v, kind) in enumerate(sheet["pairs"], start=1):
+        ws.cell(row=i, column=1, value=k).font = bold
+        cell = ws.cell(row=i, column=2)
+        if kind == "text":
+            _text(cell, v)
+            continue
+        cell.value = v
+        if kind == "money":
+            cell.number_format = MONEY_FMT
+    for c, width in enumerate(sheet["widths"], start=1):
+        ws.column_dimensions[get_column_letter(c)].width = width
 
 
 def download_headers(name: str, ascii_name: str) -> dict[str, str]:

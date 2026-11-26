@@ -492,3 +492,7 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-nag-hidden { margin: 10px 16px 4px; font-size: 13px; }
 #screen-finance .fin-nag-list { margin: 6px 0 0; padding-inline-start: 18px; }
 #screen-finance .fin-nag-list li + li { margin-top: 4px; }
+
+/* D4: the students' file with the ID number (frontend/finance.js idsNote) - on its way, or why it was not made, under the
+   list's head */
+#screen-finance .fin-idsnote { padding: 0 16px 10px; font-size: 13px; line-height: 1.5; }

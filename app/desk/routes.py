@@ -4,9 +4,10 @@
   A; its External hosting URL is https://analiza-finance.replit.app/desk/). Served `no-cache` with an ETag of its bytes,
   its assets linked as `?v=<hash of their bytes>` and kept a year: monday reloads the iframe on every open, and a stale
   script against a new answer is a blank view (analiza-metrics app/main.py, the same rule).
-- GET /desk/desk.js, /desk/desk.css, /desk/finance.js, /desk/finance.css, /desk/check.js, /desk/vendor/monday-sdk.js: the
-  assets. D2: finance.js and finance.css are the desk, ported from analiza-metrics; desk.js mounts it; check.js is D1's
-  self-check, drawn on /desk/?check=1. The SDK is analiza-metrics' copy, byte for byte (monday-sdk-js 0.4.12; a test holds
+- GET /desk/desk.js, /desk/desk.css, /desk/finance.js, /desk/finance.css, /desk/check.js, /desk/xlsx.js,
+  /desk/vendor/monday-sdk.js: the assets. D2: finance.js and finance.css are the desk, ported from analiza-metrics; desk.js
+  mounts it; check.js is D1's self-check, drawn on /desk/?check=1; D4: xlsx.js writes the students' file with the ID
+  number in the browser. The SDK is analiza-metrics' copy, byte for byte (monday-sdk-js 0.4.12; a test holds
   its sha256).
 - GET /api/desk: the gate (app/desk/gate.py), then who the reader is and the desk's reading (app/desk/reading.py) as
   counts, for the tabs the reader may see (D1), and the desk itself (D2): `view`, those tabs built from that reading
@@ -21,6 +22,9 @@
 - POST /api/desk/export-link, GET /api/desk/export.xlsx: a list as an Excel file (app/desk/export.py) behind a link signed
   with this service's own key, EXPORT_LINK_S long. D4: the students by cohort too (`b2c_cohorts`, app/desk/cohorts.py and
   cohorts_export.py), its totals and its file gated as the students' list is.
+- POST /api/desk/export.json (D4, 26.11): the students' file as data, the same rows, sheets and "פרטים" as its Excel file,
+  with an empty "ת.ז" column and each row's leads: the page reads the ID numbers from monday as the person and builds the
+  file itself (frontend/xlsx.js). Behind the sessionToken and Student Charge's members; it never holds an ID number.
 - POST /api/usage: what the reader did on the page, as closed words and counts (app/desk/usage.py), kept in `desk_events`
   (app/desk/usage_store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
 - POST /api/alerts/not-a-gap, POST /api/alerts/not-a-gap/undo (R5, the spec §2.4 and §6.1 item 4): "לא פער" on one alert
@@ -37,7 +41,8 @@ Nothing the page or its assets carry is data: everything comes from /api/desk, b
 never reads (an ID number, a refund's bank account, a company's ח.פ) the page reads from monday as the person. The service
 writes nothing to monday (ADR-0188): `MONDAY_TOKEN` reads only (app/monday/client.py refuses a mutation); the desk's writes
 go out from the browser, as the person (finance.js mondayWrite). No ID number, bank account or business number is ever in
-an answer or a file: the reading never holds one (NEVER_READ).
+an answer or a file the server writes: the reading never holds one (NEVER_READ). The students' file with the ID number
+(D4) is written in the person's browser, never here.
 """
 
 from __future__ import annotations
@@ -85,13 +90,14 @@ STATIC_FILES = {
     "/desk/finance.js": ("finance.js", "application/javascript; charset=utf-8"),
     "/desk/finance.css": ("finance.css", "text/css; charset=utf-8"),
     "/desk/check.js": ("check.js", "application/javascript; charset=utf-8"),
+    "/desk/xlsx.js": ("xlsx.js", "application/javascript; charset=utf-8"),
     "/desk/vendor/monday-sdk.js": ("vendor/monday-sdk.js", "application/javascript; charset=utf-8"),
 }
 PAGE = "index.html"
 # the page's links to its assets, rewritten to `?v=<hash>` when the page is served
 ASSET_LINKS = (("/desk/desk.js", 'src="/desk/desk.js"'), ("/desk/desk.css", 'href="/desk/desk.css"'),
                ("/desk/finance.js", 'src="/desk/finance.js"'), ("/desk/finance.css", 'href="/desk/finance.css"'),
-               ("/desk/check.js", 'src="/desk/check.js"'),
+               ("/desk/check.js", 'src="/desk/check.js"'), ("/desk/xlsx.js", 'src="/desk/xlsx.js"'),
                ("/desk/vendor/monday-sdk.js", 'src="/desk/vendor/monday-sdk.js"'))
 ASSET_VERSION_CHARS = 12
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -347,6 +353,11 @@ def desk_finance_css(request: Request):
 @router.get("/desk/check.js")
 def desk_check_js(request: Request):
     return _static(request, "/desk/check.js")
+
+
+@router.get("/desk/xlsx.js")
+def desk_xlsx_js(request: Request):
+    return _static(request, "/desk/xlsx.js")
 
 
 @router.get("/desk/vendor/monday-sdk.js")
@@ -621,6 +632,19 @@ def link_fields(user: Any, exp: str, tab: str, state: str, period: str, q: str, 
     return [str(user), exp, tab, state, period, q, taken, customer] + ([books] if books else [])
 
 
+def _bad_filter(body: ExportBody) -> bool:
+    """A filter no list of the desk has: a state its tab does not know, a key or a search too long, a company that is not an
+    id, a search outside the exportable alphabet, or the cohorts with anything but the search. The link's and (D4) the
+    students' table's alike."""
+    states = B2C_STATES if body.tab == "b2c" else B2B_STATES
+    return bool((body.tab == "b2c_cohorts" and (body.state or body.period or body.customer))
+                or (body.state and body.state != "tasks" and body.state not in states) or len(body.period) > 32
+                or len(body.q) > 100 or len(body.taken) > 40 or len(body.books) > BOOKS_KEY_MAX
+                or not (body.customer == "" or (body.customer.isascii() and body.customer.isalnum()
+                                                 and len(body.customer) <= 32))
+                or not query_exportable(body.q))
+
+
 def export_sig(client_secret: str, fields: list) -> str:
     """The link's signature: an HMAC of its fields under a key of this service's own, so a link signed by
     analiza-metrics (whose key is derived from the same Client Secret, under another context) is not valid here. JSON,
@@ -649,12 +673,7 @@ async def desk_export_link(request: Request) -> JSONResponse:
     if not _opens(visitor, body.tab):
         audit(visitor.identity, "desk-export", "not_a_member")
         return err(403, "not_a_board_member")
-    states = B2C_STATES if body.tab == "b2c" else B2B_STATES
-    if (body.tab == "b2c_cohorts" and (body.state or body.period or body.customer)) \
-            or (body.state and body.state != "tasks" and body.state not in states) or len(body.period) > 32 \
-            or len(body.q) > 100 or len(body.taken) > 40 or len(body.books) > BOOKS_KEY_MAX \
-            or not (body.customer == "" or (body.customer.isascii() and body.customer.isalnum() and len(body.customer) <= 32)) \
-            or not query_exportable(body.q):
+    if _bad_filter(body):
         return err(400, "bad_filter")
     user = visitor.identity.user_id
     exp = str(int(time.time()) + EXPORT_LINK_S)
@@ -704,6 +723,47 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
     if not member:
         _audit_link(u, "not_a_member")
         return err(403, "not_a_board_member")
+    got = _export_parts(cfg, st, u, tab, state, period, q, taken, customer, books)
+    if isinstance(got, JSONResponse):
+        return got
+    whole, rows, about, sheets, state_label, today = (got.whole, got.rows, got.about, got.sheets, got.state_label,
+                                                      got.today)
+    # openpyxl only here: a file is the one thing that needs it, and nothing else of the service waits for it
+    from .export import (b2b_file_names, b2b_workbook, b2c_workbook, customers_file_names, customers_workbook,
+                         download_headers)
+
+    # the file's name names its list, and its period or its company (QA 11.11, 2.12)
+    if tab == "b2c":
+        about_b2c, name, ascii_name = _b2c_about(got, state, period)
+        data = b2c_workbook(rows, about_b2c, sheets=sheets)
+    elif tab == "b2c_cohorts":
+        # D4: whole when the students' tab is, and the cohorts' lines tie to their students
+        from .cohorts_export import cohorts_file_names, cohorts_workbook
+
+        part = whole["b2c"].get("cohorts") or {}
+        tied = bool((part.get("checks") or {}).get("ties"))
+        data = cohorts_workbook(rows, filter_unpriced(part, q), dict(about, complete=about["complete"] and tied,
+                                                                     state_label=COHORTS_WORD,
+                                                                     period_label="כל המחזורים עם מחיר"))
+        name, ascii_name = cohorts_file_names(q, today)
+    elif tab == "b2b_customers":
+        # a company is monday's "חברה" (round 3); only the view keeps its name "לפי לקוח"
+        data = customers_workbook(rows, dict(about, state_label="לפי לקוח", period_label="כל החברות עם משהו פתוח"))
+        name, ascii_name = customers_file_names(today)
+    else:
+        who = next((x["account"] for x in whole["b2b"]["rows"] if x["account_id"] == customer), "") if customer else ""
+        data = b2b_workbook(rows, dict(about, period_label=("חברה: " + who) if who else "כל החברות"), sheets=sheets)
+        name, ascii_name = b2b_file_names(state_label, state, who, customer, today)
+    _audit_link(u, "file", len(rows))
+    return Response(content=data, headers=download_headers(name, ascii_name), media_type=XLSX)
+
+
+def _export_parts(cfg: config.Config, st: Any, u: int, tab: str, state: str, period: str, q: str, taken: str,
+                  customer: str, books: str) -> Any:
+    """What a list's file is built from - the Excel file's and (D4) the students' table the page builds its file with the
+    ID number from, alike: the reading this instance holds (`stale_ok`), its view with the books' part, the list as the
+    page filters it, "פרטים"'s `about`, the books' lists of "לטיפול" as sheets, the list's word and the day. Or the
+    refusal to send: no reading, no view, or a filter the view does not know."""
     reading, _last, _refreshing = st.reading.answer(stale_ok=True)
     if reading is None:
         return _unavailable(st)
@@ -717,9 +777,7 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         rows = _filtered(whole, tab, state, period, customer, q)
     except ValueError:
         return err(400, "bad_filter")
-    # openpyxl only here: a file is the one thing that needs it, and nothing else of the service waits for it
-    from .export import (b2b_file_names, b2b_workbook, b2c_file_names, b2c_workbook, books_lines, books_sheet,
-                         customers_file_names, customers_workbook, download_headers)
+    from .export import books_lines, books_sheet
 
     held, shown = _instant(reading.get("read_at")), _instant(taken)
     # compared as instants, not as printed minutes: two readings a second apart are two readings
@@ -745,32 +803,58 @@ def desk_export_file(request: Request, tab: str = "b2c", state: str = "", period
         other_board = B2B_CHARGE if side == "b2c" else STUDENT_CHARGE
         if (whole.get("books_unclear") or {}).get("documents") and st.members.member(u, other_board) is True:
             sheets.append(books_sheet("unclear", whole["books_unclear"]))
-    # the file's name names its list, and its period or its company (QA 11.11, 2.12)
-    if tab == "b2c":
-        p = next((x for x in whole["b2c"]["periods"] if x["key"] == period), None)
-        period_label = p["label"] if p else ("כל התקופה" if not period else period)
-        data = b2c_workbook(rows, dict(about, period_label=period_label), sheets=sheets)
-        name, ascii_name = b2c_file_names(state_label, state, period_label, period, today)
-    elif tab == "b2c_cohorts":
-        # D4: whole when the students' tab is, and the cohorts' lines tie to their students
-        from .cohorts_export import cohorts_file_names, cohorts_workbook
+    return SimpleNamespace(whole=whole, rows=rows, about=about, sheets=sheets, state_label=state_label, today=today,
+                           taken_at=reading.get("read_at"))
 
-        part = whole["b2c"].get("cohorts") or {}
-        tied = bool((part.get("checks") or {}).get("ties"))
-        data = cohorts_workbook(rows, filter_unpriced(part, q), dict(about, complete=complete and tied,
-                                                                     state_label=COHORTS_WORD,
-                                                                     period_label="כל המחזורים עם מחיר"))
-        name, ascii_name = cohorts_file_names(q, today)
-    elif tab == "b2b_customers":
-        # a company is monday's "חברה" (round 3); only the view keeps its name "לפי לקוח"
-        data = customers_workbook(rows, dict(about, state_label="לפי לקוח", period_label="כל החברות עם משהו פתוח"))
-        name, ascii_name = customers_file_names(today)
-    else:
-        who = next((x["account"] for x in whole["b2b"]["rows"] if x["account_id"] == customer), "") if customer else ""
-        data = b2b_workbook(rows, dict(about, period_label=("חברה: " + who) if who else "כל החברות"), sheets=sheets)
-        name, ascii_name = b2b_file_names(state_label, state, who, customer, today)
-    _audit_link(u, "file", len(rows))
-    return Response(content=data, headers=download_headers(name, ascii_name), media_type=XLSX)
+
+def _b2c_about(got: Any, state: str, period: str) -> tuple:
+    """The students' file's `about` with its period's word, and its two names (QA 11.11, 2.12: a file names its list and
+    its period) - for the Excel file and for the table the page builds its file with the ID number from."""
+    from .export import b2c_file_names
+
+    p = next((x for x in got.whole["b2c"]["periods"] if x["key"] == period), None)
+    period_label = p["label"] if p else ("כל התקופה" if not period else period)
+    name, ascii_name = b2c_file_names(got.state_label, state, period_label, period, got.today)
+    return dict(got.about, period_label=period_label), name, ascii_name
+
+
+@router.post("/api/desk/export.json")
+async def desk_export_table(request: Request) -> JSONResponse:
+    """D4 (26.11): the students' Excel file as data, for the page to build with the ID number ("ייצוא לאקסל עם ת.ז",
+    frontend/finance.js; written by frontend/xlsx.js): the very rows, columns, sheets and "פרטים" GET /api/desk/export.xlsx
+    gives for the same filter (`_export_parts`, `_b2c_about`; export.py `b2c_table` of the file's own `b2c_book`), with an
+    empty "ת.ז" column where analiza-metrics' file had it, and each row's item id and leads, which the page reads the
+    number by, from monday, as the person. Never an ID number: the reading never holds one (NEVER_READ).
+    Asked by the page itself, so the sessionToken comes with it and no signed link is needed (a link stands in for it only
+    where a new tab cannot carry one): the gate, then Student Charge's members, then the body, the link's own
+    (`ExportBody`, `_bad_filter`), the students' list only. The answer: the table, the file's `name`, the reading's
+    `taken_at` and the row `count`."""
+    got = await run_in_threadpool(_gated, request, "desk-export-table")
+    if isinstance(got, JSONResponse):
+        return got
+    cfg, st, visitor = got
+    body = await _body_of(request, ExportBody)
+    if body is None:
+        audit(visitor.identity, "desk-export-table", "invalid_filter")
+        return err(400, "invalid_filter")
+    if body.tab != "b2c":
+        return err(400, "unknown_tab")
+    if not _opens(visitor, "b2c"):
+        audit(visitor.identity, "desk-export-table", "not_a_member")
+        return err(403, "not_a_board_member")
+    if _bad_filter(body):
+        return err(400, "bad_filter")
+    parts = await run_in_threadpool(_export_parts, cfg, st, visitor.identity.user_id, "b2c", body.state, body.period,
+                                    body.q, body.taken, body.customer, body.books)
+    if isinstance(parts, JSONResponse):
+        return parts
+    from .export import b2c_table
+
+    about, name, _ascii_name = _b2c_about(parts, body.state, body.period)
+    table = b2c_table(parts.rows, about, sheets=parts.sheets)
+    audit(visitor.identity, "desk-export-table", "table", len(parts.rows))
+    return JSONResponse(json_safe(dict(table, name=name, taken_at=parts.taken_at, count=len(parts.rows))),
+                        headers={"Cache-Control": "no-store"})
 
 
 # ---- how the desk is used -------------------------------------------------------------------------------------------

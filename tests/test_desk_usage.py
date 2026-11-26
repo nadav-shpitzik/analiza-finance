@@ -573,7 +573,7 @@ def test_the_doc_names_every_list_a_file_is_asked_for_and_every_view():
 def test_each_numbered_query_after_the_first_reads_one_user():
     """analiza-metrics' copy counted every user in its queries 5-9 (the docs repo's session note of 24.11)."""
     which, *numbered = doc_sql("## 3.")
-    assert "desk_events" in which and len(numbered) == 9
+    assert "desk_events" in which and len(numbered) == 10
     assert "GROUP BY user_id" in numbered[0]
     for n, sql in enumerate(numbered[1:], start=2):
         assert "user_id = 12345678" in sql, n
@@ -586,11 +586,11 @@ def test_the_docs_queries_run_on_the_table_and_count_one_user_where_they_say(pg)
         rows, _ = usage.clean_batch(batch(ev("open", ms=800, board="sc"), ev("search", len=9, kind="digits", results=0,
                                                                               unfiltered=0),
                                           ev("act", action="refund_done", phase="done"), ev("open_item", where="name"),
-                                          ev("id_shown"), ev("state"), session_id=sid), user)
+                                          ev("id_shown"), ev("state"), ev("export_ids", results=12), session_id=sid), user)
         store.append_events(pg, rows)
     which, *numbered = doc_sql("## 3.")
     with psycopg.connect(pg) as conn:  # one transaction, rolled back: §5's DELETE runs too, and changes nothing
-        assert conn.execute(which).fetchone()[0] == 12
+        assert conn.execute(which).fetchone()[0] == 14
         got = [conn.execute(sql).fetchall() for sql in numbered]
         for sql in doc_sql():
             conn.execute(sql)
@@ -601,3 +601,4 @@ def test_the_docs_queries_run_on_the_table_and_count_one_user_where_they_say(pg)
     assert got[6] == [("b2c", "tasks", "name", 1)]                  # 7
     assert got[7] == [("id_shown", None, 1)]                        # 8
     assert [(r[1], r[2], r[3]) for r in got[8]] == [(1, 800.0, 800)]  # 9
+    assert got[9] == [("made", 1, 12)]                               # 10 (D4): her file with the ID number

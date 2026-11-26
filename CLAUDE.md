@@ -144,8 +144,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   monday supplied a context, `board` only for the two charge boards), and `/desk/?check=1` draws D1's self-check
   (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
   through finance.js's one door (`mondayCall`; its writes in `mondayWrite`, behind `WRITABLE`: a column change, and a billing edit's Update only when the app has `updates:write`). What the server never
-  reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
-  page's memory and sent nowhere; a read on its way shows its own spinner in its cell, and nothing of the page covers the
+  reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown (an ID number
+  also for "ייצוא לאקסל עם ת.ז", D4, into that file alone), kept in the page's memory and sent nowhere; a read on its way shows its own spinner in its cell, and nothing of the page covers the
   desk (`READING`; QA 26.11: the grey on the visit's first details is monday's, around the view, on its first monday.api). A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review); a "not yet" (429) is a flash counted down to the wait's end, and
   gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). At
@@ -308,6 +308,37 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   one's own. "חזר" beside an alert that came back. Its words are the legend's (view.py `NAG_WORD` and the rest). Usage:
   `not_a_gap` (`alert`, `phase`, `code`, `from`), `not_a_gap_undo`, `not_a_gap_list` (`open`, `list`). Tests:
   `tests/test_desk_dismissals_page.py` (node, Playwright).
+- **The students' Excel file with the ID number (D4, 26.11; the owner's go that day):** the server never reads one, so this
+  file is written in the person's browser. `POST /api/desk/export.json` (the sessionToken, then Student Charge's members, then
+  the link's own body and `_bad_filter`; the students' list only, `unknown_tab` otherwise) answers `export.py` `b2c_table`:
+  `b2c_book` of the very rows `/api/desk/export.xlsx` gives for the same filter (`_export_parts`, `_b2c_about`: one reading,
+  view, books' part, `about` and name for both), its columns with an empty "ת.ז" right after "סטודנט/ית" (analiza-metrics'
+  place, `b2c_columns`; `id_column`), "פרטים"'s line `ID_NUMBERS_IN_FILE`, and each row's item id and `lead_ids` in monday's
+  order (`keys`); money as strings, never floats. Since D4 every file is one description (`book`: its sheets, columns, cells
+  and "פרטים" as data) written by `write` (openpyxl), byte for byte the file it was (checked against 33bd24a's module, every
+  part but docProps, for the students', companies', aging and cohorts' files; and again when merged with the QA of 26.11 and
+  R5, every file the export link builds, the books' sheets with it, against the same files before the merge). The browser writes the same description
+  with `frontend/xlsx.js` (our own, about 260 lines and 16 KB, no library, no network; served as `/desk/xlsx.js` before
+  finance.js): a stored zip (method 0) with each part's CRC-32, inline strings as openpyxl 3.1 writes them, so a text is
+  always a string (never a formula, an error or a number: "=...", "+972", "00123" stay as typed), the server's styles,
+  right to left, the frozen header with its filter and the SUBTOTAL under the rows; a number or a date that is not one
+  throws (`code` "file"), never an empty cell. Read back with openpyxl, its file is the server's of the same description,
+  cell for cell, format for format (`tests/test_desk_xlsx.py`). The page (finance.js, its block "D4 ... with the ID
+  number"): "ייצוא לאקסל עם ת.ז" beside the students' list's "ייצוא לאקסל" only (not "לפי מחזור", not the companies),
+  disabled outside monday (`deps.monday`) and by the list's own rules; one press asks the table with the list's own filter
+  (`exportBody`, shared with `exportList`), reads the leads' numbers as the person through the one door (`readCells` with
+  monday's limit, `READ_CELLS_N`: `items(ids:)` answers 25 without one; each lead once, `ID_PAGE` 100 a request, one request
+  at a time, the board and column checked each time), fills the column by analiza-metrics' `with_id_numbers` (`idOf`: the
+  first of a row's leads, in monday's order, that holds one), and saves the file under the server's name (a Blob and an
+  `<a download>`). A row with none is counted by why (no lead, none in its leads, its leads not answered: deleted, moved,
+  or out of her sight) in the flash and right under "פרטים"'s ID line (`idLines`). Any refusal, timeout or rate limit, of
+  monday's or the server's, makes no file, never one half filled: `idsNote` under the list's head says why and offers the
+  file without the number and another try. The numbers live in the function's memory until the file is made: never sent,
+  stored, logged, drawn or put in the details' store. Usage kind `export_ids` (`results`, or `code`). **Unverified live:** a
+  download from monday's iframe (its sandbox is not documented, ui-surfaces trap 11; the list's own file opens a signed
+  link in a new tab instead) - the first press inside monday settles it. Tests: `tests/test_desk_export_ids.py`,
+  `tests/test_desk_export_ids_page.py` (node, and Playwright against this service's own app: the file's rows are the
+  screen's, every request of the page scanned for every number).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

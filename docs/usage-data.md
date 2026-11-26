@@ -35,6 +35,7 @@
 | `not_a_gap_list` | "הוסתרו כלא פער (N)" נפתח או נסגר (R5) | `open`, `list` (‏`b2c`, ‏`b2b`, ‏`unclear`) |
 | `bill` | פרטי חיוב של חברה. **לא נשלח מאז המעבר:** פרטי החיוב מוצגים לקריאה בלבד עד שהעריכה תחזור מהדפדפן (ADR-0188); נשאר ברשימה בשבילה, ובשביל ההיסטוריה שמיובאת | `phase` (‏`edit`, ‏`confirm`, ‏`done`, ‏`failed`, ‏`nothing`, ‏`invalid`, ‏`cancel`), `code`, `fields` כמה פרטים |
 | `export` | ייצוא לאקסל | `list` (‏`b2c`, ‏`b2b`, ‏`b2b_customers`, ‏`b2c_cohorts`: "לפי מחזור", D4) |
+| `export_ids` | "ייצוא לאקסל עם ת.ז" (D4, ‏26.11): הקובץ נבנה בדפדפן, או לא נוצר ולמה | `results` כמה תקבולים בקובץ; `code` למה לא נוצר (‏`denied`, ‏`rate_limited`, ‏`timeout`, ‏`columns_changed`, ‏`outside`, ‏`file`, ‏`table`, או מילת השגיאה של השרת) |
 | `legend` / `notes` | "מקרא" / "פרטים על הנתונים" | `open` |
 | `refresh` | "רענון" | - |
 | `back` | המסך קרא שוב כשחזרו אליו | `how`: ‏`visible` (לשונית אחרת), ‏`focus` (כרטיס של מאנדיי נסגר) |
@@ -142,6 +143,15 @@ SELECT (at AT TIME ZONE 'Asia/Jerusalem')::date AS day, count(*) AS opens,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY (detail->>'ms')::int) AS median_ms, max((detail->>'ms')::int) AS max_ms
 FROM desk_events WHERE kind = 'open' AND user_id = 12345678
 GROUP BY 1 ORDER BY 1 DESC;
+```
+
+**10. הקובץ עם ת.ז (D4): כמה נבנו, בכמה שורות, וכמה לא נוצרו ולמה** - ‏`made` הוא קובץ שירד; כל מילה אחרת היא הסיבה
+שקובץ לא נוצר (אז אפשר להוריד את הקובץ בלי ת.ז).
+
+```sql
+SELECT coalesce(detail->>'code', 'made') AS outcome, count(*) AS files, sum((detail->>'results')::int) AS rows
+FROM desk_events WHERE kind = 'export_ids' AND user_id = 12345678 AND at > now() - interval '30 days'
+GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 ## 4. אחרי הפריסה

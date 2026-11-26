@@ -312,7 +312,7 @@ def receipt_world() -> dict:
 def test_the_page_never_calls_a_path_under_api_finance():
     """Every request the page can make, made: the open, the newer reading (`?fresh=1`), a return, the refresh, the totals,
     the Excel link, a write's refresh and the usage batch. None is under /api/finance, and no file of the page names one."""
-    for name in ("finance.js", "desk.js", "check.js", "index.html"):
+    for name in ("finance.js", "desk.js", "check.js", "index.html", "xlsx.js"):
         assert "/api/finance" not in (FRONT / name).read_text(encoding="utf-8"), name
     later = answer(taken_at="2026-11-24T08:00:30+00:00")
     got = drive(answer(refreshing=True), [
@@ -710,9 +710,12 @@ def test_every_monday_request_of_the_page_goes_through_the_one_door():
     door = page[page.index("function mondayCall("):page.index("function shapeOk(")]
     assert "deps.monday.api(query, { variables: variables, apiVersion: API_VERSION })" in door
     assert page.count('"mutation ') == 2 and page.count("mondayCall(WRITE_ROW") == 1 and page.count("mondayCall(WRITE_UPDATE") == 1
-    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too
+    # D4's review: a third read, the rows that already cite a number about to be written (READ_CITING), a query too; and
+    # D4's file with the ID number, the cells read in pages of up to 100 (READ_CELLS_N, monday's limit), a query too
     assert sorted(re.findall(r"(?<!function )mondayCall\((\w+)", page)) == [
-        "READ_CELLS", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+        "READ_CELLS", "READ_CELLS_N", "READ_CITING", "READ_ROW", "WRITE_ROW", "WRITE_UPDATE"]
+    paged = re.search(r'var READ_CELLS_N = ("[^;]*);', page).group(1)
+    assert paged.startswith('"query (') and "mutation" not in paged and "items(ids: $i, limit: $n)" in paged
     citing = re.search(r'var READ_CITING = ("[^;]*);', page).group(1)
     assert citing.startswith('"query (') and "mutation" not in citing and "items_page_by_column_values(" in citing
     update = page[page.index("function mondayUpdate("):page.index("function readRows(")]
@@ -841,7 +844,7 @@ def test_the_page_has_no_retired_term_and_keeps_the_house_style():
                "נמצאת גם בקובץ האקסל"]
     found = [t for t in retired if t in source]
     assert not found, found
-    for name in ("finance.js", "finance.css", "desk.js", "desk.css", "check.js", "index.html"):
+    for name in ("finance.js", "finance.css", "desk.js", "desk.css", "check.js", "index.html", "xlsx.js"):
         text = (FRONT / name).read_text(encoding="utf-8")
         assert "—" not in text and "→" not in text, name
 

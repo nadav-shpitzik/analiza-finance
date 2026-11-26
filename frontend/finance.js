@@ -1020,7 +1020,7 @@
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
       "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" + scViews() +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
-      exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button></div></div>";
+      exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button>" + idsButton(rows) + "</div></div>" + idsNote();
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
     var figures = figs([["התקבלו", money(p.money_in)],
       /* the tile "החזר בוצע" leaves out a refund that sits under "חריג": say how much, from the server's figure */
@@ -1268,22 +1268,27 @@
     var what = EXPORT_WHAT[tab] || EXPORT_WHAT.b2c;
     return "קובץ האקסל יורד: " + plural(n, what[0], what[1]) + ".";
   }
+  /* the filter a list's file is asked by: the list as the screen shows it, whose rows the server's filters pick again (the
+     Excel file's link, and D4's students' file with the ID number) */
+  function exportBody(tab) {
+    var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
+    /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
+    var all = searching() && tab !== "b2b_customers";
+    /* D4: the students by cohort take the search box only, like "לפי לקוח" */
+    var whole = tab === "b2b_customers" || tab === "b2c_cohorts";
+    var body = { tab: whole ? tab : b2 ? "b2b" : "b2c", state: whole || all ? "" : f.state,
+      period: b2 || all || whole ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
+      q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
+    /* D3: and the books' part on the screen, so a file built from another says so (as the totals are asked by it) */
+    if (VIEW.books && VIEW.books.key) { body.books = VIEW.books.key; }
+    return body;
+  }
   function exportList(tab) {
     var count = 0;
     /* a newer reading on its way is waited for first, so the file is built from the list the reader then sees */
     return Promise.resolve(pending).then(function () {
       count = exportedCount(tab);
-      var b2 = tab === "b2b" || tab === "b2b_customers", f = b2 ? state.b2 : state.sc;
-      /* a search's file holds every row it found, as the screen shows them: no tile, period or company (1.2) */
-      var all = searching() && tab !== "b2b_customers";
-      /* D4: the students by cohort take the search box only, like "לפי לקוח" */
-      var whole = tab === "b2b_customers" || tab === "b2c_cohorts";
-      var body = { tab: whole ? tab : b2 ? "b2b" : "b2c", state: whole || all ? "" : f.state,
-        period: b2 || all || whole ? "" : state.sc.period, customer: tab === "b2b" && !all ? state.b2.customer : "",
-        q: state.query.trim(), taken: (BODY && BODY.taken_at) || "" };
-      /* D3: and the books' part on the screen, so a file built from another says so (as the totals are asked by it) */
-      if (VIEW.books && VIEW.books.key) { body.books = VIEW.books.key; }
-      return deps.post("/api/desk/export-link", body);
+      return deps.post("/api/desk/export-link", exportBody(tab));
     }).then(function (res) {
       var url = new URL(res.url, window.location.href).href;
       var said = function () { flash(exportSaid(tab, count)); };
@@ -1295,6 +1300,173 @@
       var a = document.createElement("a"); a.href = url; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove();
       said();
     }).catch(function (e) { flash(errorText(e)); });
+  }
+
+  /* ---------- D4 (26.11): the students' Excel file with the ID number ("ייצוא לאקסל עם ת.ז") ----------
+     Chava finds a student's card in Hashavshevet by the ID number, and analiza-metrics' file had a column of them, read
+     live by that server (app/finance.py with_id_numbers). This service's server never reads one (NEVER_READ; ADR-0173 §1),
+     so this file is made HERE, AS THE PERSON, the way the details show the number (readIdNumber). The server answers the
+     file as data (POST /api/desk/export.json, app/desk/export.py b2c_table: the very rows, columns, "פרטים" and books' lists
+     of the list's Excel file for the same filter, exportBody, with an empty "ת.ז" column where the old file had it and each
+     row's leads). The page reads those leads' numbers through the one door (readCells with monday's limit: pages of
+     ID_PAGE, one request at a time, each checking the Leads board and its column), fills the column by the old file's rule
+     (idOf: the first of the row's leads, in monday's order, that holds one), writes the file itself (frontend/xlsx.js),
+     and the browser saves it under the list's own file name. The numbers live in this function's memory until the file is
+     made and go nowhere else: not to the server, not into a usage event (export_ids: the rows, or a failure's code), not
+     into storage, not to the console, not even into the details' own store (IDS).
+     A read that fails, or that monday's rate limit cuts, makes no file - never one half filled: what failed is said under
+     the list's head (idsNote), with the file without the ID number one press away (the list's own export) and a press to
+     try again. A row whose leads monday does not answer (deleted, moved to another board, or out of the person's sight)
+     gets no number, and the flash and "פרטים" say how many (idLines). */
+  var ID_PAGE = 100;
+  /* the file on its way, or why the last one was not made: { phase: "reading" | "failed", total, done, code, words } */
+  var IDX = null;
+  /* what the page says of the file where the details' words (ID_ERRORS) do not fit */
+  var IDS_WORDS = { monday: "מספרי ת.ז לא נקראו ממאנדיי", file: "הקובץ לא נבנה בדפדפן",
+    table: "השרת לא החזיר את רשימת התקבולים כפי שהקובץ צריך", busy: "השולחן ביקש להאט; לנסות שוב בעוד דקה",
+    outside: "מספרי ת.ז נקראים ממאנדיי בשמך, ולכן רק כשהתצוגה פתוחה מתוך מאנדיי" };
+  var IDS_TITLE = "מספרי ת.ז נקראים ממאנדיי בשמך, כאן בדפדפן, ולא נשלחים לשום מקום";
+  function idsWhy(e, code) {
+    if (e && e.error) { return code === "rate_limited" ? IDS_WORDS.busy : errorText(e).replace(/\.$/, ""); }
+    return (code !== "monday" && ID_ERRORS[code]) || IDS_WORDS[code] || IDS_WORDS.monday;
+  }
+  /* the old file's rule (analiza-metrics app/finance.py with_id_numbers): the first of the row's leads, in monday's order,
+     that holds a number. A row with none says why: no lead ("no_lead"), leads that hold none ("none"), or no lead monday
+     answered ("not_found") */
+  function idOf(leadIds, got) {
+    var answered = false;
+    for (var i = 0; i < leadIds.length; i++) {
+      var x = String(leadIds[i]);
+      if (Object.prototype.hasOwnProperty.call(got, x)) {
+        answered = true;
+        if (got[x]) { return { value: got[x] }; }
+      }
+    }
+    return { value: "", why: !leadIds.length ? "no_lead" : answered ? "none" : "not_found" };
+  }
+  /* the numbers of these leads, as the person: {lead id: its number, "" when its cell is empty} for every lead monday
+     answered from the Leads board. Each lead once, ID_PAGE at a time, one request after the other; a page monday answers
+     with none of its leads is a page of leads not found. The first refusal ends the read, by its code (denied,
+     columns_changed, rate_limited, timeout ...). `progress(done, total)` hears each page */
+  function readIdNumbers(leadIds, progress) {
+    var ids = [], seen = Object.create(null), got = Object.create(null), at = 0;
+    leadIds.forEach(function (x) { x = String(x); if (!seen[x]) { seen[x] = true; ids.push(x); } });
+    function next() {
+      if (progress) { progress(at, ids.length); }
+      if (at >= ids.length) { return Promise.resolve(got); }
+      var page = ids.slice(at, at + ID_PAGE);
+      return readCells(LEADS_BOARD, page, [ID_COLUMN], page.length).catch(function (e) {
+        if (e && e.code === "not_found") { return {}; }
+        throw e;
+      }).then(function (cells) {
+        page.forEach(function (x) { if (cells[x]) { got[x] = cells[x][ID_COLUMN]; } });
+        at += page.length;
+        return next();
+      });
+    }
+    return next();
+  }
+  /* "פרטים": the rows the file holds no number for, and why, right under its line on the ID number */
+  function idLines(c) {
+    var out = [];
+    if (c.not_found) {
+      out.push(["שימו לב", c.not_found === 1 ? "לתקבול אחד אין ת.ז בקובץ: הליד שלו לא נמצא בלוח הלידים במאנדיי (נמחק, " +
+        "הועבר ללוח אחר, או שאין לך גישה אליו)." : "ל-" + NF.format(c.not_found) + " תקבולים אין ת.ז בקובץ: הלידים שלהם לא " +
+        "נמצאו בלוח הלידים במאנדיי (נמחקו, הועברו ללוח אחר, או שאין לך גישה אליהם).", "text"]);
+    }
+    if (c.none) { out.push(["תקבולים שבליד שלהם אין ת.ז", c.none, "int"]); }
+    if (c.no_lead) { out.push(["תקבולים בלי ליד", c.no_lead, "int"]); }
+    return out;
+  }
+  /* the server's description with the numbers in its "ת.ז" column, and its "פרטים" with idLines. A table of another shape
+     is refused ("table"), never written */
+  function idBook(table, got) {
+    var sheets = (table && table.sheets) || [], main = sheets[0], info = sheets[1];
+    var at = main && main.id_column, rows = (main && main.rows) || [], keys = (main && main.keys) || [];
+    if (!main || !info || !Array.isArray(info.pairs) || typeof at !== "number" || keys.length !== rows.length ||
+        ((main.columns || [])[at] || {}).head !== ID_TITLE) { throw { code: "table" }; }
+    var counts = { not_found: 0, none: 0, no_lead: 0 };
+    var filled = rows.map(function (cells, k) {
+      var id = idOf((keys[k] && keys[k].lead_ids) || [], got), out = cells.slice();
+      if (!id.value) { counts[id.why] += 1; }
+      out[at] = id.value || null;
+      return out;
+    });
+    var line = info.pairs.map(function (p) { return p[0]; }).indexOf(ID_TITLE) + 1;
+    var pairs = info.pairs.slice(0, line).concat(idLines(counts), info.pairs.slice(line));
+    return { book: { sheets: [Object.assign({}, main, { rows: filled }), Object.assign({}, info, { pairs: pairs })]
+      .concat(sheets.slice(2)) }, counts: counts, rows: rows.length };
+  }
+  function idsSaid(n, c) {
+    var none = c.not_found + c.none + c.no_lead;
+    return "קובץ האקסל עם ת.ז יורד: " + plural(n, "תקבול אחד", "תקבולים") + "." + (none ? " " + (none === 1 ? "לאחד מהם" :
+      "ל-" + NF.format(none) + " מהם") + " אין ת.ז, ובגיליון \"פרטים\" כתוב למה." : "");
+  }
+  /* the browser saves the bytes under the file's name; the link to them lives a minute, the time the download takes */
+  function saveFile(bytes, name) {
+    if (deps && deps.saveFile) { deps.saveFile(bytes, name); return; }
+    var url = URL.createObjectURL(new Blob([bytes], { type: window.DeskXlsx.MIME }));
+    var a = document.createElement("a");
+    a.href = url; a.download = name; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+  function idsButton(rows) {
+    var on = !!IDX && IDX.phase === "reading", inside = !!(deps && deps.monday);
+    var ok = rows.length && VIEW.checks.b2c_ok && exportable() && inside && !on;
+    var title = !inside ? " title=\"" + esc(IDS_WORDS.outside) + "\"" : exportTitle(VIEW.checks.b2c_ok) || " title=\"" + esc(IDS_TITLE) + "\"";
+    return "<button class=\"fin-btn\" type=\"button\" data-export-ids=\"1\"" + (ok ? "" : " disabled") + title + ">" +
+      (on ? "מכין קובץ עם ת.ז..." : "ייצוא לאקסל עם ת.ז") + "</button>";
+  }
+  function idsReading(x) {
+    return x.total ? "קורא ממאנדיי, בשמך, ת.ז של " + plural(x.total, "ליד אחד", "לידים") + (x.done ? ": " + NF.format(x.done) +
+      " נקראו" : "") + "..." : "מכין את הקובץ עם ת.ז...";
+  }
+  /* under the list's head: the file on its way, or why it was not made, with the file without the ID number and another try */
+  function idsNote() {
+    if (!IDX) { return ""; }
+    if (IDX.phase === "reading") { return "<div class=\"fin-idsnote\" role=\"status\" data-ids-note=\"1\">" + esc(idsReading(IDX)) + "</div>"; }
+    return "<div class=\"fin-idsnote\" role=\"alert\"><span class=\"fin-badtext\">" + esc("קובץ עם ת.ז לא נוצר: " + IDX.words + ".") +
+      "</span> <button type=\"button\" class=\"fin-linkbtn\" data-export=\"b2c\">ייצוא לאקסל בלי ת.ז</button> · " +
+      "<button type=\"button\" class=\"fin-linkbtn\" data-export-ids=\"1\">לנסות שוב</button></div>";
+  }
+  /* the note's count as the pages come in: its own text where it is on the screen, else a drawing */
+  function idsShow(mine) {
+    if (IDX !== mine) { return; }
+    var el = root && root.querySelector ? root.querySelector("[data-ids-note]") : null;
+    if (el) { el.textContent = idsReading(mine); } else { landed(); }
+  }
+  function exportWithIds() {
+    if (IDX && IDX.phase === "reading") { return Promise.resolve(); }
+    var mine = IDX = { phase: "reading", total: 0, done: 0 };
+    redraw();
+    /* a newer reading on its way is waited for first, as for the list's own file */
+    return Promise.resolve(pending).then(function () {
+      if (!deps.monday) { throw { code: "outside" }; }
+      if (!window.DeskXlsx) { throw { code: "file" }; }
+      return deps.post("/api/desk/export.json", exportBody("b2c"));
+    }).then(function (table) {
+      var keys = (((table || {}).sheets || [])[0] || {}).keys;
+      if (!Array.isArray(keys)) { throw { code: "table" }; }
+      var leads = [].concat.apply([], keys.map(function (k) { return (k && k.lead_ids) || []; }));
+      return readIdNumbers(leads, function (done, total) {
+        var first = !mine.total;
+        mine.done = done; mine.total = total;
+        if (first && IDX === mine) { landed(); } else { idsShow(mine); }
+      }).then(function (got) {
+        var made = idBook(table, got);
+        saveFile(window.DeskXlsx.write(made.book), table.name || "תקבולים-סטודנטים.xlsx");
+        if (IDX === mine) { IDX = null; }
+        landed();
+        flash(idsSaid(made.rows, made.counts));
+        use("export_ids", { results: Math.min(made.rows, 100000) });
+      });
+    }).catch(function (e) {
+      var code = (e && (e.code || e.error)) || (e instanceof Error ? "file" : "monday");
+      if (IDX === mine) { IDX = { phase: "failed", code: code, words: idsWhy(e, code) }; }
+      landed();
+      use("export_ids", { code: useWord(code) || "monday" });
+    });
   }
 
   /* ---------- D3: what the books say that monday does not (app/desk/books.py) ----------
@@ -3054,6 +3226,9 @@
   var ACCOUNTS_BOARD = "5089697343", VAT_COLUMN = "text_mm3y3gm7";
   var READ_CELLS = "query ($i: [ID!], $c: [String!], $b: [ID!]) { items(ids: $i) { id board { id } column_values(ids: $c) { id text } } " +
     "boards(ids: $b) { id columns(ids: $c) { id } } }";
+  /* D4: the same read for a page of more than 25 items - monday's items(ids:) answers 25 without a limit, 100 at most */
+  var READ_CELLS_N = "query ($i: [ID!], $n: Int!, $c: [String!], $b: [ID!]) { items(ids: $i, limit: $n) { id board { id } " +
+    "column_values(ids: $c) { id text } } boards(ids: $b) { id columns(ids: $c) { id } } }";
   /* by payment id, by payment id, by account id: { phase: "reading" | "ok" | "failed", value, code, stale, shown } - memory
      only */
   var IDS = {}, BANKS = {}, VATS = {};
@@ -3076,9 +3251,12 @@
   };
   /* the cells of `ids` on `board`, read as the person: {item id: {column: text}} for the items monday returned on that
      board. A board that answers nothing is "denied" (the Leads board without a CRM seat answers nothing), a column it
-     lacks "columns_changed", no item at all "not_found"; monday's own refusal comes by mondayErr's code */
-  function readCells(board, ids, cols) {
-    return mondayCall(READ_CELLS, { i: ids, c: cols, b: [board] }).then(function (data) {
+     lacks "columns_changed", no item at all "not_found"; monday's own refusal comes by mondayErr's code. `limit` (D4): a page
+     of more than 25 ids, asked with monday's limit */
+  function readCells(board, ids, cols, limit) {
+    var asked = limit ? mondayCall(READ_CELLS_N, { i: ids, n: limit, c: cols, b: [board] })
+      : mondayCall(READ_CELLS, { i: ids, c: cols, b: [board] });
+    return asked.then(function (data) {
       var b = (data.boards || []).filter(function (x) { return x && String(x.id) === board; })[0];
       if (!b) { throw { code: "denied" }; }
       var have = (b.columns || []).map(function (c) { return c && c.id; });
@@ -3596,7 +3774,7 @@
     return "<section class=\"fin-health\">" + line + more + list + "</section>";
   }
   function asOf() { return stamp((BODY && BODY.taken_at) || VIEW.read_at); }
-  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "notes", "refresh", "legend", "scview", "cohort", "unpriced",
+  var KEEP = ["fintab", "bstate", "b2state", "b2view", "customer", "row", "export", "exportIds", "notes", "refresh", "legend", "scview", "cohort", "unpriced",
     "actInput", "act", "terms", "idCopy", "pick", "pickAll", "pickClear", "rowAct", "batch", "batchGo", "batchClose",
     "nag", "nagGo", "nagClose", "nagList", "nagUndo",
     "bill", "billEdit", "billGo", "billSave", "billBack", "billClose"];
@@ -4043,7 +4221,7 @@
 
   /* ---------- events ---------- */
   function onClick(ev) {
-    var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
+    var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-export-ids],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
       "[data-books-fill],[data-books-all],[data-nag],[data-nag-go],[data-nag-close],[data-nag-list],[data-nag-undo]," +
@@ -4175,7 +4353,12 @@
       redraw(); return;
     }
     if (el.dataset.retry) { el.disabled = true; el.textContent = "טוען..."; load(false); return; }
-    if (el.dataset.export) { use("export", { list: el.dataset.export }); exportList(el.dataset.export); return; }
+    if (el.dataset.export) {
+      /* D4: the students' file without the ID number, pressed where the file with it was not made, takes that note away */
+      if (el.dataset.export === "b2c" && IDX && IDX.phase === "failed") { IDX = null; redraw(); }
+      use("export", { list: el.dataset.export }); exportList(el.dataset.export); return;
+    }
+    if (el.dataset.exportIds) { exportWithIds(); return; }
     if (el.dataset.bstate !== undefined) { state.sc.state = el.dataset.bstate; state.sc.open = {}; use("state"); redraw(); return; }
     if (el.dataset.b2state !== undefined) {
       state.b2.state = el.dataset.b2state; state.b2.view = "list"; state.b2.open = {};
@@ -4327,6 +4510,8 @@
     /* D2 (ADR-0188): a company's billing edit, the Update's door and whether monday's context lets the app write one */
     _billState: function () { return BILL; }, _canUpdate: function () { return CAN_UPDATE; },
     _update: function (boardId, itemId, body) { return mondayUpdate(boardId, itemId, body); },
+    /* D4: the students' file with the ID number - its rule, its read, the file on its way or why it was not made */
+    _idOf: idOf, _idPage: ID_PAGE, _readIdNumbers: readIdNumbers, _exportIds: exportWithIds, _idsState: function () { return IDX; },
     _show: function (st) {
       Object.keys(st || {}).forEach(function (k) {
         state[k] = st[k] && typeof st[k] === "object" ? Object.assign({}, state[k], st[k]) : st[k];
