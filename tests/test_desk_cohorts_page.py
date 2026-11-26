@@ -253,6 +253,20 @@ def test_the_cohorts_without_a_price_are_listed_on_demand_with_why():
     shut, opened = render([case(), case(unpriced=True)])
     assert "%s: 1" % ch.UNPRICED_TITLE in shut and 'data-unpriced="1" aria-expanded="false">הצגה' in shut and "<ul>" not in shut
     assert re.search(r"<li><bdi class=\"fin-nw\"><bdi dir=\"ltr\">A703</bdi></bdi> [^<]* · פעיל · אין מחיר</li>", opened)
+    assert len(re.findall(r"<li>", opened)) == 1 and "אין " + ch.UNPRICED_TITLE not in shut + opened
+
+
+def test_with_every_cohort_priced_one_line_says_there_is_none_without_a_price():
+    """QA 26.11 (5): with all 14 voucher cohorts priced, "מחזורים בלי מחיר" showed nothing at all - no line under the
+    table. One line says so now, with nothing to open; and a list of one is drawn as before (above)."""
+    s = cohort_snapshot()
+    s["cohorts"] = [c for c in s["cohorts"] if c["id"] != "C3"]
+    v = real_view(s)
+    assert v["b2c"]["cohorts"]["unpriced"] == [] and v["b2c"]["cohorts"]["cohorts"]
+    shut, opened = render([case(), case(unpriced=True)], v)
+    for html in (shut, opened):
+        assert '<div class="fin-unpriced"><span>אין %s</span></div>' % ch.UNPRICED_TITLE in html
+        assert "data-unpriced" not in html and "<ul>" not in html
 
 
 def test_a_line_that_does_not_tie_is_said_and_never_exported():

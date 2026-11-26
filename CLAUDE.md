@@ -220,7 +220,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   first of them and the one tinted; a cohort row opening to its students (a search that finds a student opens its cohort
   and marks her row, for that search only: `cohortOpen`, QA 26.11), the price and the count under the cohort's name
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
-  1400), its legend part the server's; its clicks on
+  1400), the cohorts without a price under it ("אין מחזורים בלי מחיר" when none, QA 26.11), its legend part the server's;
+  its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`

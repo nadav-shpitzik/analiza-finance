@@ -193,6 +193,8 @@
  * 4  A search by a student's name in "לפי מחזור" found the cohort and left it closed, the student neither shown nor marked.
  *      A cohort with a student the search finds is open while that search shows it, the student's row tinted and her name
  *      marked (cohortOpen); a click closes it under that search only (SEARCH_SHUT), and her own opened cohorts stay hers.
+ * 5  "מחזורים בלי מחיר" drew nothing at all while every cohort on the track was priced (all 14): one line says "אין
+ *      מחזורים בלי מחיר" (unpricedHtml).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1117,9 +1119,10 @@
     return "<div class=\"fin-tw\" data-list=\"" + esc(listKey()) + "\"><table class=\"fin-t fin-cohorts-t\"><thead>" + head + "</thead><tbody>" + body +
       "</tbody>" + foot + "</table></div>";
   }
-  /* the cohorts with no price, or cancelled: listed with why, no money - under the table, opened on demand */
+  /* the cohorts with no price, or cancelled: listed with why, no money - under the table, opened on demand; with none, a
+     line says so (QA 26.11, 5: the place showed nothing at all while all the cohorts were priced) */
   function unpricedHtml(c, list) {
-    if (!c.unpriced.length) { return ""; }
+    if (!c.unpriced.length) { return "<div class=\"fin-unpriced\"><span>" + esc("אין " + c.words.unpriced) + "</span></div>"; }
     var open = state.sc.unpriced;
     var why = {};
     (c.unpriced_why || []).forEach(function (x) { why[x.key] = x.label; });
