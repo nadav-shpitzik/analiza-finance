@@ -217,6 +217,14 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
   1400), its legend part the server's; its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
+- **The students' Excel file with the ID number (D4, 26.11; the owner's go that day):** the server never reads one, so this
+  file is written in the person's browser. `POST /api/desk/export.json` (the sessionToken, then Student Charge's members, then
+  the link's own body and `_bad_filter`; the students' list only, `unknown_tab` otherwise) answers `export.py` `b2c_table`:
+  `b2c_book` of the very rows `/api/desk/export.xlsx` gives for the same filter (`_export_parts`, `_b2c_about`: one reading,
+  view, books' part, `about` and name for both), its columns with an empty "ת.ז" right after "סטודנט/ית" (analiza-metrics'
+  place, `b2c_columns`; `id_column`), "פרטים"'s line `ID_NUMBERS_IN_FILE`, and each row's item id and `lead_ids` in monday's
+  order (`keys`); money as strings, never floats. Since D4 every file is one description (`book`: its sheets, columns, cells
+  and "פרטים" as data) written by `write` (openpyxl), byte for byte the file it was. Tests: `tests/test_desk_export_ids.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
