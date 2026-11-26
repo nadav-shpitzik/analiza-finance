@@ -180,11 +180,22 @@ def _one_column(texts: list) -> tuple:
             [browser.cell(row=i + 2, column=1).value for i in range(len(texts))])
 
 
-def test_a_carriage_return_reads_back_as_the_servers_file_holds_it():
-    """XML reads a raw carriage return back as a line feed; xlsx.js writes it as a character reference, as the server's
-    openpyxl (with lxml) does, so "\r\n" and a lone "\r" stay as typed."""
-    server, browser = _one_column(["62601\r\n62602", "שורה\rשנייה", "\rבראש", "בסוף\r"])
-    assert browser == server == ["62601\r\n62602", "שורה\rשנייה", "\rבראש", "בסוף\r"]
+def test_a_carriage_return_is_one_line_break_in_both_files_with_lxml_or_without():
+    """openpyxl writes a carriage return as a character reference with lxml (this machine) and raw without it (CI, and the
+    deployment by requirements.txt), and XML reads a raw one back as a line feed: the review's first fix kept it in the
+    browser's file, and CI's server file lost it. Both writers now make every line break a line feed before writing
+    (export.py `file_text`, xlsx.js `clean`), so neither file depends on lxml: no carriage return is left in any part."""
+    texts = ["62601\r\n62602", "שורה\rשנייה", "\rבראש", "בסוף\r", "שתי\r\n\r\nשורות"]
+    server, browser = _one_column(texts)
+    assert browser == server == ["62601\n62602", "שורה\nשנייה", "\nבראש", "בסוף\n", "שתי\n\nשורות"]
+    assert fx.file_text("a\r\nb\rc") == "a\nb\nc" and fx.file_text(None) == ""
+    import base64 as _b64
+    book = {"sheets": [{"title": "תקבולים", "columns": [{"head": "t", "kind": "text", "width": 9}],
+                        "rows": [[t] for t in texts], "total": "סה\"כ"},
+                       {"title": "פרטים", "pairs": [["k", "v", "text"]], "widths": [10, 20]}]}
+    for data in (fx.write(book), _b64.b64decode(written(book)["b64"])):
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            assert not [n for n in z.namelist() if "\r" in z.read(n).decode("utf-8") or "&#13;" in z.read(n).decode("utf-8")]
 
 
 def test_a_text_longer_than_a_cell_holds_is_cut_as_the_server_cuts_it():

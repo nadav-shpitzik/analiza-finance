@@ -196,11 +196,21 @@ def _sheet_base(ws) -> None:
     ws.sheet_view.rightToLeft = True
 
 
+def file_text(v: Any) -> str:
+    """A text as every file holds it: without the characters a file may not carry (openpyxl's own list), and every line
+    break a line feed - "\r\n" and a lone "\r" become "\n". openpyxl writes a carriage return as a character reference
+    with lxml and raw without it (CI and, by requirements.txt, the deployment have none), and XML reads a raw one back as a
+    line feed; so the file never depends on which, and the browser's writer (frontend/xlsx.js `clean`) does the same (the
+    review of 26.11, then CI)."""
+    text = ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v))
+    return text.replace("\r\n", "\n").replace("\r", "\n") if "\r" in text else text
+
+
 def _text(cell, v: Any) -> None:
     """A text from monday is written as text, always. openpyxl reads a string that opens with "=" as a formula
     and "#N/A" as an error, and refuses control characters outright; a student name comes from a public form,
     so neither may reach the file (hostile review 10.11: a name became a live HYPERLINK formula)."""
-    text = ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v))
+    text = file_text(v)
     if not text:
         return
     cell.value = text
@@ -371,7 +381,7 @@ def _cell(kind: str, v: Any) -> Any:
     """A cell's value as the file holds it: a text cleaned of the characters a file may not carry (openpyxl's own list;
     None when nothing is left), anything else as it is - a Decimal, a date, an int, or None."""
     if kind == "text":
-        return ILLEGAL_CHARACTERS_RE.sub("", "" if v is None else str(v)) or None
+        return file_text(v) or None
     return v
 
 
@@ -409,7 +419,7 @@ def book(title: str, columns: list, rows: list[dict], about: dict[str, Any], wha
         ("הופק", datetime.now(LOCAL_TZ).strftime("%d/%m/%Y %H:%M")),
         ("רשימה", about.get("state_label") or "הכל"),
         ("סינון", about.get("period_label") or "כל התקופה"),
-        ("חיפוש", ILLEGAL_CHARACTERS_RE.sub("", about.get("q") or "") or "-"),
+        ("חיפוש", file_text(about.get("q")) or "-"),
         ("שורות", len(rows)),
         (FILE_TOTALS[0], FILE_TOTALS[1] % title),
         *[(total_label(columns[c][0]), v) for c, v in sums.items()],

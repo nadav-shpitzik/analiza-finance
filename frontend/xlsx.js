@@ -52,7 +52,9 @@
 
   /* ---- a cell ---- */
   /* the text without what XML 1.0 cannot hold: the control characters openpyxl drops (all below a space but the tab, the
-     line feed and the carriage return), half of a surrogate pair alone, U+FFFE and U+FFFF */
+     line feed and the carriage return), half of a surrogate pair alone, U+FFFE and U+FFFF; and every line break a line
+     feed ("\r\n" and a lone "\r" become "\n"), as the server's `file_text` writes it (app/desk/export.py: openpyxl keeps a
+     carriage return with lxml and loses it without, so the server makes it one break either way; the review of 26.11) */
   function clean(v) {
     var s = v == null ? "" : String(v), out = "";
     for (var i = 0; i < s.length; i++) {
@@ -66,13 +68,10 @@
       if (c < 0x20 && c !== 0x09 && c !== 0x0A && c !== 0x0D) { continue; }
       out += s.charAt(i);
     }
-    return out;
+    return out.indexOf("\r") === -1 ? out : out.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   }
-  /* a carriage return as a character reference: XML reads a raw one back as a line feed ("\r\n" and "\r" become "\n"),
-     and the server's openpyxl (with lxml) writes it so and keeps it (the review of 26.11) */
   function esc(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-      .replace(/\r/g, "&#13;");
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
   /* Excel's limit of a cell's text, in characters (code points, as openpyxl counts them when it cuts a longer one: the
      server's file holds the first 32,767; Excel refuses a longer cell; the review of 26.11) */
