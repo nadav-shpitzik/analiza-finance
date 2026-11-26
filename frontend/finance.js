@@ -200,6 +200,9 @@
  *      (`scrollbar-gutter: stable`); tests/test_desk_browser.py measures it with the scrollbars that take room.
  * 7  A cohort's "מחוץ לחשבון" lines said 'Status "Frozen"', an English word inside Hebrew: the server says "סטטוס ההרשמה",
  *      the label as monday has it (app/desk/cohorts.py OUT_WHY); the page draws the server's sentence.
+ * 8  "אפשר לרענן שוב בעוד 2 שניות." stayed five seconds and more, its number never moving. The wait is counted down a
+ *      second at a time and the flash goes when it ends (flashWait); with no wait from the server, the page's own 5 seconds
+ *      are said without a number.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -3621,7 +3624,7 @@
       followUp(body);
     }).catch(function (e) {
       use("load_failed", { code: useWord(e && e.error) || "unknown" });
-      if (VIEW && e && e.error === "rate_limited") { notBefore(e); landed(); flash(errorText(e)); return; }
+      if (VIEW && e && e.error === "rate_limited") { notBefore(e); landed(); flashWait(e.retryAfter); return; }
       /* a desk on the screen stays, and its status line says the refresh failed (D4's review, 4a); only a page with no
          desk yet says the error in its place */
       if (VIEW) { if (BODY) { BODY.refreshing = false; } REFRESH_FAILED = refreshFailedWords(e); landed(); return; }
@@ -3684,11 +3687,32 @@
      a time: a new one takes the place of the one on the screen, and the time of the one it replaced ends with it */
   var TOAST = null;
   function flash(text, ms) {
-    if (TOAST) { clearTimeout(TOAST.timer); TOAST.el.remove(); }
+    if (TOAST) { clearTimeout(TOAST.timer); clearTimeout(TOAST.tick); TOAST.el.remove(); }
     var t = document.createElement("div"); t.className = "fin-toast"; t.setAttribute("role", "alert"); t.textContent = text;
     document.body.appendChild(t);
-    var shown = TOAST = { el: t, timer: null };
+    var shown = TOAST = { el: t, timer: null, tick: null };
     shown.timer = setTimeout(function () { t.remove(); if (TOAST === shown) { TOAST = null; } }, ms || 6000);
+  }
+  /* QA 26.11 (8): monday's "not yet" for "רענון" (429) said "אפשר לרענן שוב בעוד 2 שניות." and the line stayed five seconds
+     and more, its number never moving. The wait is counted down a second at a time, and the line goes when it ends; a
+     wait the server did not give (the page's own 5 seconds, notBefore) is said without a number, as long as it lasts */
+  function waitWords(n) {
+    return n > 1 ? "אפשר לרענן שוב בעוד " + NF.format(n) + " שניות." : "אפשר לרענן שוב בעוד שנייה.";
+  }
+  function flashWait(seconds) {
+    var left = Math.ceil(num(seconds));
+    if (left <= 0) { flash("אפשר לרענן שוב עוד רגע.", 5000); return; }
+    flash(waitWords(left), left * 1000);
+    var shown = TOAST;
+    var tick = function () {
+      shown.tick = setTimeout(function () {
+        left -= 1;
+        if (TOAST !== shown || left <= 0) { return; }
+        shown.el.textContent = waitWords(left);
+        tick();
+      }, 1000);
+    };
+    tick();
   }
   /* QA2 2 (24.11): "פתיחה במאנדיי" after "שליחת קבלה: יצאה" was written from here showed "טרם" - closed and opened again, and
      after "רענון" too - and only reloading the page showed "יצאה"; the item's page in a new tab showed it at once. monday's

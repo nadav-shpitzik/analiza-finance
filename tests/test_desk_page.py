@@ -871,6 +871,27 @@ def test_the_refresh_pressed_keeps_what_was_typed_while_it_was_on_its_way(landin
     assert ("rate_limited" in json.dumps(landing)) == ("אפשר לרענן שוב בעוד 5 שניות." in got["toasts"])
 
 
+@pytest.mark.parametrize("wait, said", [
+    (2, ["אפשר לרענן שוב בעוד 2 שניות.", "אפשר לרענן שוב בעוד שנייה."]),
+    (0, ["אפשר לרענן שוב עוד רגע."]),            # no wait from the server: the page's own 5 seconds, without a number
+])
+def test_the_refresh_wait_counts_down_and_goes_when_it_ends(wait, said):
+    """QA 26.11 (8): "אפשר לרענן שוב בעוד 2 שניות." stayed on the screen for five seconds and more, its number never
+    moving. The flash counts the wait down a second at a time, and goes when it ends; a wait the server did not give is
+    said without a number, for the page's own 5 seconds, then goes."""
+    not_yet = {"reject": {"error": "rate_limited", "retryAfter": wait}}
+    steps = [{"click": [{"refresh": "1"}]}, {"wait": 1100}, {"wait": 1000}] if wait else \
+        [{"click": [{"refresh": "1"}]}, {"wait": 4000}, {"wait": 1200}]
+    got = drive(answers={"GET /api/desk": [{"body": answer()}], "POST /api/desk/refresh": [not_yet]}, monday={"absent": True},
+                steps=steps)
+    shown = [s["showing"] for s in got["steps"]]
+    if wait:
+        assert shown == [[said[0]], [said[1]], []], shown
+    else:
+        assert shown == [said, said, []], shown
+    assert [t for t in got["toasts"] if "לרענן" in t] == said
+
+
 def test_a_drawing_that_lands_while_the_desk_is_pressed_waits_for_the_release_and_is_drawn_once():
     """QA 24.11 (1): a click on a tile was not taken while "מתעדכן" showed. A drawing between a press and its release builds
     what was pressed anew, and the browser then takes no click (tests/test_desk_browser.py presses one). An answer that
