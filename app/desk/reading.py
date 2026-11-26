@@ -18,12 +18,22 @@ shared pool for their chunks; here the chains are staged together, so the cap ho
    no such cohort has one. They join the enrollments: one list of the board's rows, asked and counted as one
    (`asked["enrollments"]` holds both), so a refresh lays them over the held reading like any other.
 The cohorts on the voucher track (VOUCHER_TRACK: Registration Flow "שוברים משרד העבודה") are read whether or not a payment
-links to them, so a cohort whose students paid nothing yet is there too: their ids ride on the request of step 1, one
-filtered items_page beside the columns check (`TRACK`, app/monday/client.py `status_rule`), and join the cohorts of
-step 4 (`asked["cohorts"]` holds the union). The cost: no request more, but one per page of 500 cohorts after the first;
-those no payment links to by id in step 4 (in its chunks of 100) and their enrollments in step 5. A refresh asks the same
-filter beside its windows, in the request it already sends, reads by id the cohorts on the track it did not hold, and reads
-the voucher-track cohorts with a price again every time, and the enrollments newly linked to them by id.
+links to them, so a cohort whose students paid nothing yet is there too: their ids are a request of their own right after
+the columns check (`read_track`: one filtered items_page, `TRACK`, app/monday/client.py `filtered_ids`), and join the
+cohorts of step 4 (`asked["cohorts"]` holds the union). Never an alias of the columns check: monday refuses a request whole
+when one field of it is invalid, so a filter it refused failed the columns check, and with it every reading (the review of
+D4, 26.11). The cost: one request, and one per page of 500 cohorts after the first; those no payment links to by id in
+step 4 (in its chunks of 100) and their enrollments in step 5. A refresh asks the same right after its windows - so a quiet
+refresh is four requests where D2's was three - reads by id the cohorts on the track it did not hold, and reads the
+voucher-track cohorts with a price again every time, and the enrollments newly linked to them by id.
+
+WHAT THE STUDENTS BY COHORT MAY NOT TAKE DOWN (the review of D4): when the track cannot be read - monday refuses the filter,
+answers it without its alias or its items, shows no board, or the request fails - the reading goes on as it is: the
+payments, the companies, the books and their proposals are read and shown as always, step 5 is skipped, and the reading
+says why in `cohorts_read` (a closed reason, COHORTS_UNREAD, and monday's closed code), which the students by cohort show
+in place of their money (app/desk/cohorts.py). So does a step 5 that fails ("students_failed"): nothing D2 or D3 shows
+needs it, so the reading keeps what it read before it. A refresh says the same and never falls back to a full reading for
+either: the full reading would meet the same refusal.
 
 WHAT IS COUNTED (analiza-metrics' truth rules, and R0's):
 - a charge board is whole when its items_count, the rows read and the distinct ids agree, and every row is one of the
@@ -129,10 +139,15 @@ DL = {"stage": "deal_stage", "value": "deal_value", "payer": "board_relation_mm1
 # the billing details: `vat_id` is the business number, checked to exist and never read here (NEVER_READ)
 AC = {"terms": "dropdown_mm3yd36d", "vat_id": "text_mm3y3gm7", "hash_key": "text_mm3yprqa", "invoice_name": "text_mm3yfrew"}
 EN = {"cohort": "board_relation_mm1h915d", "voucher": "color_mm5fr6d6", "asked": "date_mm8csw5y",
-      # D4: the enrollment's own Status (נרשם, פעיל ...) and its person (the Directory), who a cohort's students are
-      "status": "color_mm0sxcvn", "person": "board_relation_mm0spa0g"}
-# the lead's ID number: checked to exist, never read here (NEVER_READ); `rep` is its Owner, the payment's "נציג מכירות"
-LD = {"cohort": "board_relation_mkzvra97", "id_number": "text_mkzvem4", "rep": "multiple_person_mm2wwjjn"}
+      # D4: the enrollment's own Status (נרשם, פעיל ...) and its person (the Directory), who a cohort's students are; and
+      # (the review of D4) "קישור לליד", its back-link to its source lead (two-way with the lead's link to Enrollments,
+      # 680 links each side, knowledge 18.11), whose payment filed by that lead is the student's (app/desk/cohorts.py)
+      "status": "color_mm0sxcvn", "person": "board_relation_mm0spa0g", "lead": "board_relation_mm1g8cvh"}
+# the lead's ID number: checked to exist, never read here (NEVER_READ); `rep` is its Owner, the payment's "נציג מכירות";
+# `person` (the review of D4) its "Student Directory", the person a payment filed by the lead is (complete: 3,846 links each
+# way, knowledge 07.10)
+LD = {"cohort": "board_relation_mkzvra97", "id_number": "text_mkzvem4", "rep": "multiple_person_mm2wwjjn",
+      "person": "board_relation_mm0sffws"}
 COLUMNS = {"student_charge": SC, "b2b_charge": B2, "cohorts": CO, "deals": DL, "accounts": AC,
            "enrollments": EN, "leads": LD}
 # what the columns check asks of each board (every column the desk uses), and what a reading holds (the same, less
@@ -174,8 +189,9 @@ DELTA_KEYS = ("student_charge", "b2b_charge", "enrollments", "cohorts", "deals",
 CHECK_ONLY_KEYS = ("leads",)
 CHARGE_KEYS = ("student_charge", "b2b_charge")
 LINKED_KEYS = ("enrollments", "leads", "cohorts", "deals", "accounts")
-# what a reading holds of monday: laid under the next refresh, and kept in Postgres (app/desk/store.py keeps these only)
-BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked")
+# what a reading holds of monday: laid under the next refresh, and kept in Postgres (app/desk/store.py keeps these only);
+# D4, whether the students by cohort were read (`cohorts_read`), so a stored reading shown at once says it too
+BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked", "cohorts_read")
 # the body's shape: a version and the columns each board's rows hold, so a reading kept under another shape (an older
 # deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA).
 # 2 since its text is masked (`masked`, D2's review): a reading kept before is never laid under a refresh, so no row it
@@ -283,6 +299,35 @@ def roster_cohort(row: dict) -> bool:
 def roster_ids(cohorts: list) -> list:
     """The enrollments those cohorts link to, sorted, each once."""
     return sorted(_uniq(e for c in cohorts if roster_cohort(c) for e in c.get(CO["roster"]) or []))
+
+
+# Why the students by cohort were not read, a reading's `cohorts_read` (the review of D4): never a failed reading, said by
+# the view in place of their money (app/desk/cohorts.py UNREAD_SAID). The cohorts on the voucher track: monday refused the
+# request (its own code: `graphql`, or `auth`), answered it without the filter's alias or its items (`filter_shape`),
+# showed no board (`not_visible`), or the request failed otherwise (a transport, a rate limit, the reading's time); and
+# step 5, the enrollments of the cohorts with a price, that failed whatever its code
+COHORTS_UNREAD = ("track_refused", "track_shape", "track_not_visible", "track_failed", "students_failed")
+_TRACK_REASON = {"graphql": "track_refused", "auth": "track_refused", "filter_shape": "track_shape",
+                 "not_visible": "track_not_visible"}
+
+
+def cohorts_unread(step: str, exc: BaseException) -> dict:
+    """A reading's `cohorts_read` when a step of the students by cohort failed: the reason (COHORTS_UNREAD) and monday's
+    closed code ("internal" for an exception of another kind), logged by both and never by a message or a row."""
+    code = exc.code if isinstance(exc, MondayError) else "internal"
+    reason = "students_failed" if step == "students" else _TRACK_REASON.get(code, "track_failed")
+    logger.warning("desk reading without the students by cohort (%s, %s %s)", reason, step, code)
+    return {"ok": False, "reason": reason, "code": code}
+
+
+def read_track(reader: MondayReader) -> tuple:
+    """(the ids of every cohort on the voucher track, None), or (None, why not: `cohorts_unread`) - never an exception: a
+    filter monday refuses, answers in another shape or does not answer leaves the rest of the reading as it is (the review
+    of D4). Its own request (app/monday/client.py `filtered_ids`), and one more per page after the first."""
+    try:
+        return reader.filtered_ids(*TRACK), None
+    except Exception as exc:  # noqa: BLE001 - said by its code in `cohorts_read`: the desk stands without the track
+        return None, cohorts_unread("track", exc)
 
 
 # ---------------------------------------------------------------- no ID number in what a reading holds (D2's review, #6)
@@ -433,8 +478,9 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
     out: dict = {"read_at": read_at, "full_read_at": read_at, "kind": "full", "complete": False, "error": None,
                  "detail": None, "checks": {}, "calls": 0, "seconds": 0.0}
     try:
-        # D4: and every cohort on the voucher track, in the same request (`TRACK`)
-        track = reader.require_columns([(BOARDS[key], CHECKED_COLUMNS[key]) for key in BOARDS], track=TRACK)
+        reader.require_columns([(BOARDS[key], CHECKED_COLUMNS[key]) for key in BOARDS])
+        # D4: every cohort on the voucher track, in a request of its own: one monday refuses ends nothing (`read_track`)
+        track, unread = read_track(reader)
         (n_sc, sc_asked, sc_read), (n_b2, b2_asked, b2_read) = reader.read_boards(
             [(STUDENT_CHARGE, ROW_COLUMNS["student_charge"]), (B2B_CHARGE, ROW_COLUMNS["b2b_charge"])])
         checks: dict = {}
@@ -453,7 +499,7 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
 
         deciding = leads_deciding(sc_rows, enrollments)
         kept_leads = keep_only(leads, deciding)
-        coh_ids = sorted(_uniq(cohort_ids(enrollments, kept_leads) + track))
+        coh_ids = sorted(_uniq(cohort_ids(enrollments, kept_leads) + (track or [])))
         acct_ids = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
                                 + [a for d in deals for a in d.get(DL["payer"]) or []]))
         coh_read, acct_read = reader.read_items([(coh_ids, ROW_COLUMNS["cohorts"]), (acct_ids, ROW_COLUMNS["accounts"])])
@@ -461,13 +507,17 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         accounts, checks["accounts"] = by_id("accounts", acct_ids, masked("accounts", acct_read))
 
         # 5. (D4) the enrollments of the cohorts with a price that step 3 did not read, by id: one list of Enrollments'
-        # rows, counted as one board by what it asked
-        roster = [e for e in roster_ids(cohorts) if e not in set(enr_ids)]
+        # rows, counted as one board by what it asked. None without the track: the students by cohort say why instead
+        roster = [] if unread else [e for e in roster_ids(cohorts) if e not in set(enr_ids)]
         if roster:
-            (roster_read,) = reader.read_items([(roster, ROW_COLUMNS["enrollments"])])
-            enr_ids = sorted(_uniq(enr_ids + roster))
-            enrollments, checks["enrollments"] = by_id("enrollments", enr_ids,
-                                                       enr_read + masked("enrollments", roster_read))
+            try:
+                (roster_read,) = reader.read_items([(roster, ROW_COLUMNS["enrollments"])])
+            except Exception as exc:  # noqa: BLE001 - the review of D4: said in `cohorts_read`, the reading kept whole
+                unread = cohorts_unread("students", exc)
+            else:
+                enr_ids = sorted(_uniq(enr_ids + roster))
+                enrollments, checks["enrollments"] = by_id("enrollments", enr_ids,
+                                                           enr_read + masked("enrollments", roster_read))
     except MondayError as exc:
         out.update(error=exc.code, detail=exc.detail[:200])
     except Exception as exc:  # noqa: BLE001 - said by class: a reading that crashed is a reading that failed
@@ -479,7 +529,7 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
             lead_reps=lead_reps_of(ld_ids, leads), cohorts=cohorts, deals=deals, accounts=accounts,
             asked={"enrollments": enr_ids, "leads": deciding, "cohorts": coh_ids, "deals": deal_ids,
                    "accounts": acct_ids},
-            checks=checks, complete=all(c["ok"] for c in checks.values()))
+            checks=checks, complete=all(c["ok"] for c in checks.values()), cohorts_read=unread or {"ok": True})
     out["calls"], out["seconds"] = reader.calls - calls0, round(clock() - started, 1)
     logger.info("desk reading in %.1fs, %d calls: complete=%s error=%s", out["seconds"], out["calls"], out["complete"],
                 out["error"])
@@ -647,7 +697,9 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     that came is read by id) - the same snapshot as `read_desk`, `kind` "delta", the held reading's `full_read_at`, its
     counts, and `id_pages`, the requests the ids took. Raises DeltaMismatch when a charge board cannot be reconciled with
     its ids, and MondayError for anything monday or the shape of its answer did not allow: HeldReading then reads whole, or
-    says why not."""
+    says why not. D4: the cohorts on the voucher track cost a request of their own (`read_track`, and one per page of 500
+    after the first), so a quiet refresh is four requests - the windows, the track, the two charge boards' ids - where D2's
+    was three; a track or a step 5 that fails is said in `cohorts_read`, never raised."""
     started = clock()
     calls0 = reader.calls
     now = datetime.now(timezone.utc)
@@ -663,11 +715,11 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     held_deciding = asked["leads"]
     got = reader.changed_items([(BOARDS[k], CHECKED_COLUMNS[k]) for k in DELTA_KEYS],
                                [(BOARDS[k], CHECKED_COLUMNS[k]) for k in CHECK_ONLY_KEYS], days,
-                               (held_deciding, ROW_COLUMNS["leads"]), track=TRACK)
-    # D4: every cohort on the voucher track now, asked beside the windows as a full reading asks it beside its columns check
-    track = got.get("track")
-    if not isinstance(track, list):
-        raise MondayError("delta_shape", "no cohorts on the voucher track")
+                               (held_deciding, ROW_COLUMNS["leads"]))
+    # D4: every cohort on the voucher track now, in a request of its own right after the windows, as a full reading asks it
+    # right after its columns check: one request more than D2's quiet refresh (three, now four). One monday refuses is
+    # said in `cohorts_read` and never raised: a full reading would meet it the same way
+    track, unread = read_track(reader)
     counts = dict(zip(DELTA_KEYS, got["counts"]))
     windows = dict(zip(DELTA_KEYS, got["windows"]))
     for k in CHARGE_KEYS:
@@ -736,16 +788,20 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
         "deals": [i for i in need["deals"] if i not in asked_set["deals"]]})
     enrollments, deals = keep_only(lists["enrollments"], need["enrollments"]), keep_only(lists["deals"], need["deals"])
     need["leads"] = leads_deciding(sc_rows, enrollments)
-    need["cohorts"] = sorted(_uniq(cohort_ids(enrollments, keep_only(lists["leads"], need["leads"])) + track))
+    need["cohorts"] = sorted(_uniq(cohort_ids(enrollments, keep_only(lists["leads"], need["leads"])) + (track or [])))
     need["accounts"] = sorted(_uniq([a for r in b2_rows for a in r.get(B2["account"]) or []]
                                     + [a for d in deals for a in d.get(DL["payer"]) or []]))
     _read_new(reader, lists, ids_read, names, reps, strangers,
               {k: [i for i in need[k] if i not in asked_set[k]] for k in ("cohorts", "accounts")})
     # D4: the enrollments of the cohorts with a price, as a full reading reads them (step 5): through each cohort's link to
-    # them, by id those that neither the held reading held nor this refresh read
-    roster = [e for e in roster_ids(keep_only(lists["cohorts"], need["cohorts"])) if e not in set(need["enrollments"])]
+    # them, by id those that neither the held reading held nor this refresh read. None without the track, as in a full one
+    roster = [] if unread else [e for e in roster_ids(keep_only(lists["cohorts"], need["cohorts"]))
+                                if e not in set(need["enrollments"])]
     seen = asked_set["enrollments"] | set(ids_read["enrollments"])
-    _read_new(reader, lists, ids_read, names, reps, strangers, {"enrollments": [e for e in roster if e not in seen]})
+    try:
+        _read_new(reader, lists, ids_read, names, reps, strangers, {"enrollments": [e for e in roster if e not in seen]})
+    except Exception as exc:  # noqa: BLE001 - the review of D4: as a full reading's step 5, said and never raised
+        unread, roster = cohorts_unread("students", exc), []
     need["enrollments"] = sorted(_uniq(need["enrollments"] + roster))
     out = {"student_charge": {"items_count": paged["student_charge"][0], "rows": sc_rows},
            "b2b_charge": {"items_count": paged["b2b_charge"][0], "rows": b2_rows},
@@ -753,7 +809,8 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
            # every linked lead's name: held, read again with the deciding leads, or read as newly linked; and its Owner
            "lead_names": {i: names[i] for i in linked},
            "lead_reps": {i: reps.get(i) for i in linked},
-           "asked": {k: list(need[k]) for k in LINKED_KEYS}}
+           "asked": {k: list(need[k]) for k in LINKED_KEYS},
+           "cohorts_read": unread or {"ok": True}}
     checks = _delta_checks(out, paged, strangers, linked, names)
     out.update(read_at=now.isoformat(timespec="microseconds"), full_read_at=base["full_read_at"], kind="delta",
                complete=all(c["ok"] for c in checks.values()), error=None, detail=None, checks=checks,
@@ -768,18 +825,23 @@ def summary(reading: dict) -> dict:
     answer and the operator's views may carry; /health carries less (`health_part`)."""
     return {"read_at": reading.get("read_at"), "kind": reading.get("kind"), "complete": bool(reading.get("complete")),
             "error": reading.get("error"), "detail": reading.get("detail"), "seconds": reading.get("seconds"),
-            "calls": reading.get("calls"), "checks": reading.get("checks") or {}}
+            "calls": reading.get("calls"), "checks": reading.get("checks") or {},
+            "cohorts_read": reading.get("cohorts_read")}
 
 
 def health_part(last: Optional[dict]) -> Optional[dict]:
     """For the public /health: whether the last reading was complete and why not, which kind it was (D2: "full" or
-    "delta"), its time and cost. No count of rows (Nadav 19.11: the deployment is public)."""
+    "delta"), its time and cost, and (D4) whether it read the students by cohort: "ok", or why not (COHORTS_UNREAD). No
+    count of rows (Nadav 19.11: the deployment is public)."""
     if last is None:
         return None
+    cohorts = last.get("cohorts_read")
     return {"read_at": last.get("read_at"), "kind": last.get("kind"), "complete": last.get("complete"),
             "error": last.get("error"), "seconds": last.get("seconds"), "calls": last.get("calls"),
             "boards_whole": None if last.get("error") else
-            sorted(k for k, c in (last.get("checks") or {}).items() if c.get("ok"))}
+            sorted(k for k, c in (last.get("checks") or {}).items() if c.get("ok")),
+            "cohorts": None if last.get("error") or not isinstance(cohorts, dict) else
+            ("ok" if cohorts.get("ok") is True else str(cohorts.get("reason") or "unknown"))}
 
 
 def _iso_s(t: datetime) -> str:

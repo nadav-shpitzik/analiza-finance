@@ -408,8 +408,9 @@ def test_a_refresh_reads_only_what_changed_and_lays_it_over_the_held_reading_by_
     before, reads = len(w.queries), len(w.by_id_reads())
     got = rd.read_delta(reader, held)
     # the six boards' windows with the deciding leads (302: its enrollment names no cohort; 303: no enrollment) in one
-    # request, the two charge boards' ids (one page each), and the two changed rows packed into one more
-    assert len(w.queries) - before == 4 and got["calls"] == 4 and got["id_pages"] == 2
+    # request, the cohorts on the voucher track in one of their own (D4, since its review), the two charge boards' ids (one
+    # page each), and the two changed rows packed into one more
+    assert len(w.queries) - before == 5 and got["calls"] == 5 and got["id_pages"] == 2
     assert sorted(ids for _b, ids in w.by_id_reads()[reads:]) == [["102"], ["302", "303"], ["501"]]
     assert got["kind"] == "delta" and got["full_read_at"] == held["full_read_at"] and got["window_days"] == 2
     assert [r["id"] for r in got["student_charge"]["rows"]] == ["101", "102", "103"]       # in place
@@ -432,9 +433,10 @@ def test_a_new_charge_and_what_it_newly_links_to_are_read_by_id():
     w.touch(104, 204, 304, 404, 503, 603, 703, 704)
     before, reads = len(w.queries), len(w.by_id_reads())
     got = rd.read_delta(reader, held)
-    # the windows with the deciding leads; the charge boards' ids; the two new charges (in their windows and new to their
-    # boards' ids: read once); what they link to; the cohort and the accounts those name
-    assert len(w.queries) - before == 6
+    # the windows with the deciding leads; the cohorts on the voucher track (D4); the charge boards' ids; the two new
+    # charges (in their windows and new to their boards' ids: read once); what they link to; the cohort and the accounts
+    # those name
+    assert len(w.queries) - before == 7
     assert [ids for b, ids in w.by_id_reads()[reads:] if b in (SC, B2)] == [["104"], ["503"]]
     # 304 decides (204 names no cohort) and joins the deciding leads; 301 is kept by name only (201 names 401)
     assert got["asked"]["enrollments"] == ["201", "202", "204"] and got["asked"]["leads"] == ["302", "303", "304"]
@@ -739,8 +741,9 @@ def test_health_says_how_the_desk_read_and_kept_its_reading_and_never_a_row(stor
     stored.client.post("/api/desk/refresh", headers=auth())
     h = stored.client.get("/health").json()["desk"]
     last, r = h["last_reading"], h["refresh"]
-    assert last["kind"] == "delta" and last["calls"] == 4 and last["seconds"] is not None and last["error"] is None
-    assert r["last_full"]["calls"] == 10 and r["last_delta"]["calls"] == 4 and r["last_delta"]["days"] == 2
+    # (D4: the cohorts on the voucher track are a request of their own, in a full reading and in a refresh alike)
+    assert last["kind"] == "delta" and last["calls"] == 5 and last["seconds"] is not None and last["error"] is None
+    assert r["last_full"]["calls"] == 11 and r["last_delta"]["calls"] == 5 and r["last_delta"]["days"] == 2
     assert r["last_delta"]["id_pages"] == 2                             # of them, the charge boards' ids
     assert r["held"]["read_at"] == r["stored_read_at"] == r["last_delta"]["at"]
     assert r["held"]["full_read_at"] == r["last_full"]["at"] and r["full_after_hours"] == 36
@@ -899,19 +902,21 @@ def lead_ids_read(w: World, since: int) -> list:
     return sorted(i for b, ids in w.by_id_reads()[since:] if b == rd.LEADS_BOARD for i in ids)
 
 
-def test_a_refresh_never_asks_leads_for_a_window_and_a_quiet_one_is_three_requests():
+def test_a_refresh_never_asks_leads_for_a_window_and_a_quiet_one_is_four_requests():
     w = world()
     h = holder(w)
     h.get()
     w.touch(301)                                                        # a lead edited lately, deciding nothing
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    # one request: the six boards' windows, Leads' columns, and the deciding leads by id - 301 is never read; and the two
-    # charge boards' ids, a page each (D2's review)
-    assert kept["kind"] == "delta" and len(w.queries) - before == 3 and h.health()["last_delta"]["calls"] == 3
-    # (the windows' request is the one that asks "within_the_last": since D4 a reading's columns check carries a status
-    # filter, query_params too)
+    # one request: the six boards' windows, Leads' columns, and the deciding leads by id - 301 is never read; the cohorts
+    # on the voucher track in one of their own (D4: three requests until then, four since - the review of D4 moved the
+    # filter off the windows, where a refused one took the refresh down); and the two charge boards' ids, a page each
+    # (D2's review)
+    assert kept["kind"] == "delta" and len(w.queries) - before == 4 and h.health()["last_delta"]["calls"] == 4
+    # (the windows' request is the one that asks "within_the_last": the filter's own request has query_params too)
     assert h.health()["last_delta"]["id_pages"] == 2 and len(w.queries_of("within_the_last")) == 1
+    assert len(w.queries_of("any_of")) == 2 and not [q for q, _v in w.queries if "any_of" in q and "within_the_last" in q]
     assert lead_ids_read(w, reads) == ["302", "303"] and rd.LEADS_BOARD not in w.windowed
     assert sorted(w.windowed[-6:]) == sorted(rd.BOARDS[k] for k in rd.DELTA_KEYS)
     q = monday.window_query(6, 1, 1, 2)
@@ -927,7 +932,7 @@ def test_deciding_leads_beyond_a_chunk_are_read_in_the_same_request_an_alias_per
     w.set(302, cohort=rel(401))                                         # a cohort the reading holds: nothing more to read
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    assert len(w.queries) - before == 3                                 # the windows and the deciding leads; the ids
+    assert len(w.queries) - before == 4                     # the windows and the deciding leads; the track; the ids
     assert [ids for b, ids in w.by_id_reads()[reads:] if b == rd.LEADS_BOARD] == [["302"], ["303"]]
     assert view_row(kept, 102)["cohort_code"] == "C1" and desk_of(kept) == desk_of(rd.read_desk(reader_of(w)))
 
@@ -1016,9 +1021,9 @@ def test_a_lead_that_becomes_deciding_is_read_by_id_and_places_its_payment(how):
         w.set(201, cohort=rel())
     before, reads = len(w.queries), len(w.by_id_reads())
     kept, _ = h.get()
-    # the windows with 302 and 303; the charge boards' ids; the changed row; 301, which decides now (its cohort 402 is
-    # held already)
-    assert kept["kind"] == "delta" and len(w.queries) - before == 5
+    # the windows with 302 and 303; the cohorts on the voucher track (D4); the charge boards' ids; the changed row; 301,
+    # which decides now (its cohort 402 is held already)
+    assert kept["kind"] == "delta" and len(w.queries) - before == 6
     assert lead_ids_read(w, reads) == ["301", "302", "303"] and kept["asked"]["leads"] == ["301", "302", "303"]
     assert view_row(kept, 101)["cohort_code"] == "C2" and desk_of(kept) == desk_of(rd.read_desk(reader_of(w)))
 

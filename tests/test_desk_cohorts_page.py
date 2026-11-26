@@ -4,10 +4,10 @@ in node, and in Chromium through Playwright. Needs node (and Playwright for the 
 
 What is held: the switch "רשימה | לפי מחזור" in the list's head; "אושר - ממתין לתשלום" the first figure and the one tinted
 column; a cohort opening to its students, each balance in its own part's column and what a waived or out student paid
-struck through; the cohorts without a price listed on demand with why; the search picking the cohorts the server's
-filter_cohorts picks (the file and the totals are built from it); every label the view draws defined in the tab's legend,
-whose part "לפי מחזור" is the server's; the file asked as the list `b2c_cohorts`; and the usage events in the server's
-vocabulary."""
+in the line's paid (the review of D4); the cohorts without a price listed on demand with why; the search picking the
+cohorts the server's filter_cohorts picks (the file and the totals are built from it); every label the view draws defined
+in the tab's legend, whose part "לפי מחזור" is the server's; the file asked as the list `b2c_cohorts`; the view not read,
+or not computed, saying why in the server's words; and the usage events in the server's vocabulary."""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,7 @@ from app.desk import cohorts as ch
 from app.desk import view as fd
 from app.desk.usage import clean_batch
 from app.desk.view import json_safe
-from tests.desk_fixtures import TODAY, sc, snap
+from tests.desk_fixtures import TODAY, lead, sc, snap
 from tests.desk_page_view import answer as page_answer
 from tests.desk_page_view import view as hand_made_view
 from tests.test_desk_cohorts import coh, cohort_snapshot, enr
@@ -92,7 +92,8 @@ def test_the_list_has_the_switch_and_the_view_draws_the_servers_figures_approved
     figs = re.findall(r'<div( class="fin-hi")?><dt>([^<]+)</dt><dd><bdi>([^<]+)</bdi>', cohorts)
     assert [(bool(h), dt) for h, dt, _ in figs] == [(True, ch.PARTS["approved"]["label"]), (False, ch.BALANCE_WORD),
                                                     (False, ch.PAID_WORD), (False, ch.EXPECTED_WORD)]
-    assert [x for _h, _dt, x in figs] == ["6,000 ₪", "26,000 ₪", "18,000 ₪", "44,000 ₪"]
+    # (the review of D4, changed deliberately: E3's waived 4,000 is in "שולם בפועל" and the expected)
+    assert [x for _h, _dt, x in figs] == ["6,000 ₪", "26,000 ₪", "22,000 ₪", "48,000 ₪"]
     heads = re.findall(r'<th class="k-([a-z_]+)[^"]*">([^<]*)</th>', cohorts)
     # the price and the students counted are said under the cohort's name, so the table fits monday's widths
     assert [k for k, _ in heads] == ["more", "cohort", "expected", "paid", "part_approved", "part_submitted", "part_hq",
@@ -104,7 +105,7 @@ def test_the_list_has_the_switch_and_the_view_draws_the_servers_figures_approved
     line = cells_of(cohorts, "fin-rowbtn")[0]
     assert line["cohort"].startswith("A701") and "מחיר 10,000 ₪ · 2 %s · פעיל" % ch.STUDENTS_WORD in line["cohort"]
     assert line["part_approved"] == "6,000 ₪" and line["part_submitted"] == "-" and line["balance"] == "6,000 ₪"
-    assert line["expected"] == "20,000 ₪"
+    assert line["expected"] == "24,000 ₪" and line["paid"] == "18,000 ₪"
 
 
 def test_a_cohort_opens_to_its_students_each_balance_in_its_own_parts_column():
@@ -121,7 +122,9 @@ def test_a_cohort_opens_to_its_students_each_balance_in_its_own_parts_column():
     settled = students[1]
     assert settled["paid"] == "10,000 ₪" and settled["balance"] == "-"
     waived = students[2]
-    assert waived["cohort"].endswith('ויתור: "נדחה"') and waived["expected"] == "-" and waived["balance"] == "-"
+    # changed deliberately (the review of D4): what a waived student paid is the line's paid and their expected
+    assert waived["cohort"].endswith('ויתור: "נדחה"') and waived["expected"] == "4,000 ₪" and waived["balance"] == "-"
+    assert waived["paid"] == "4,000 ₪" and "<s " not in opened
     assert '<tr class="fin-subrow fin-subrow-off">' in opened
     # what the line holds besides its students, said under them
     assert "ויתור: סטודנט/ית אחד/ת" in opened
@@ -131,13 +134,32 @@ def test_a_cohort_opens_to_its_students_each_balance_in_its_own_parts_column():
     assert "k-open" not in opened
 
 
-def test_what_an_out_student_paid_is_struck_through_and_a_students_chips_are_the_servers():
+def test_what_an_out_student_paid_is_in_the_lines_paid_and_a_students_chips_are_the_servers():
+    # changed deliberately (the review of D4): it was struck through, in no sum of the line; now it is in "שולם בפועל"
     s = snap([sc(1, paid="4000", enr=["E1"]), sc(2, paid="12000", enr=["E2"])],
              cohorts=[coh(roster=["E1", "E2"])], enrollments=[enr("E1", voucher="10"), enr("E2", voucher="1")])
     html = render([case(cohorts={"C1": True})], real_view(s))[0]
-    assert re.search(r'<s class="fin-subtle" title="[^"]*: לא נספר"><bdi>4,000 ₪</bdi></s>', html)
+    out = next(x for x in cells_of(html) if "cohort" in x and x["cohort"].startswith("סטודנט/ית E1"))
+    assert out["paid"] == "4,000 ₪" == out["expected"] and out["balance"] == "-" and "<s " not in html
+    assert cells_of(html, "fin-rowbtn")[0]["paid"] == "16,000 ₪"
     assert '<span class="fin-chip">%s</span>' % ch.NOTES["overpaid"] in html
     assert "%s: %s" % (ch.OVERPAID_WORD, "2,000.00 ₪") in html                   # a sentence carries agorot, as the details do
+
+
+def test_money_filed_by_its_lead_that_no_student_holds_is_said_on_the_cohorts_line_shut_or_open():
+    # the review of D4: it left no balance smaller, so the line says it - on the line itself, not only when opened; one a
+    # student holds is said on them
+    s = snap([sc(1, paid="4000", lead=["L1"]), sc(2, paid="3950.5", lead=["L2"])],
+             cohorts=[coh(roster=["E1", "E2"])], enrollments=[enr("E1", voucher="1", lead=["L2"]), enr("E2", voucher="17")],
+             leads=[lead("L1", "C1"), lead("L2", "C1")])
+    v = real_view(s)
+    shut, opened = render([case(), case(cohorts={"C1": True})], v)
+    line = cells_of(shut, "fin-rowbtn")[0]
+    assert line["cohort"].endswith(" · %s 4,000 ₪" % ch.UNLINKED_WORD)
+    assert "%s: תקבול אחד, 4,000.00 ₪" % ch.UNLINKED_WORD in opened
+    assert '<span class="fin-chip">%s</span>' % ch.NOTES["by_lead"] in opened
+    quiet = cells_of(render([case()])[0], "fin-rowbtn")[0]
+    assert ch.UNLINKED_WORD not in quiet["cohort"]
 
 
 def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():
@@ -148,6 +170,12 @@ def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():
     assert line["paid"] == "7,950.50 ₪" and line["part_approved"] == "12,049.50 ₪" and line["expected"] == "20,000 ₪"
     students = cells_of(html)
     assert [x["balance"] for x in students] == ["6,049.50 ₪", "6,000 ₪"]
+    # the figures above the table write each amount as the table does (the review of D4: they were rounded to the shekel,
+    # 7,951 above a column that said 7,950.50)
+    figs = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", html))
+    shown = {k: re.sub(r"<[^>]+>", "", v) for k, v in figs.items()}
+    assert shown[ch.PARTS["approved"]["label"]] == line["part_approved"] and shown[ch.BALANCE_WORD] == line["balance"]
+    assert shown[ch.PAID_WORD] == line["paid"] and shown[ch.EXPECTED_WORD] == line["expected"] == "20,000 ₪"
 
 
 def test_the_cohorts_without_a_price_are_listed_on_demand_with_why():
@@ -191,6 +219,28 @@ def test_every_label_the_view_draws_is_defined_in_the_students_legend_and_the_le
         assert "<dt>%s</dt>" % p["label"] in legend
     # every chip a student can carry is in it
     assert set(ch.NOTES.values()) <= {x["term"] for x in v["b2c"]["cohorts"]["legend"]["items"]}
+
+
+@pytest.mark.parametrize("state", ["unread", "error"])
+def test_a_view_not_read_or_not_computed_says_why_in_the_servers_words_and_the_list_is_as_it_is(state):
+    # the review of D4: a reading whose filter monday refused, or a computation of the view that failed, shows no cohort and
+    # no money, says why where the table would be, and offers no file; the switch stays, and the payments' list is as it is
+    whole = real_view()
+    if state == "unread":
+        v = real_view(dict(cohort_snapshot(), cohorts_read={"ok": False, "reason": "track_refused", "code": "graphql"}))
+        said = ch.UNREAD_SAID["track_refused"]
+    else:
+        v = dict(whole, b2c=dict(whole["b2c"], cohorts=ch.not_shown("error", "crashed")))
+        said = ch.CRASHED_SAID
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2c"]["cohorts"]["state"] == state
+    cohorts, listed = render([case(), case("list")], v)
+    (whole_list,) = render([case("list")], whole)
+    part = v["b2c"]["cohorts"]
+    assert '<p class="fin-badtext">%s</p>' % part["said"].replace('"', "&quot;") in cohorts
+    assert said.replace('"', "&quot;") in cohorts
+    assert "fin-cohorts-t" not in cohorts and "fin-figs" not in cohorts and 'data-export="b2c_cohorts"' not in cohorts
+    assert 'data-scview="list"' in cohorts and 'data-scview="cohorts"' in cohorts
+    assert listed == whole_list
 
 
 def test_a_view_without_the_cohorts_draws_the_list_without_the_switch():

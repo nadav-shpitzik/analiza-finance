@@ -31,8 +31,14 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    counts as "התקבלו" less "הוחזרו" (app/desk/view.py `_b2c_row`, its money reused, never forked: only a status that brought
    money in, a refund netted, never above what came in). The deposit, and the balance row the helper opens when sales mark
    "אושר - יתרה שולמה", "<student> | השלמת תשלום". A row linked to the enrollments of two students, or of two cohorts, is
-   counted for no one and said on each cohort it names (`shared`): it would be counted twice otherwise. A payment the desk
-   files under the cohort by its lead, with no enrollment, is said on the cohort (`unlinked`) and counted for no student.
+   counted for no one and said on each cohort it names (`shared`): it would be counted twice otherwise.
+   - A payment the desk files under the cohort by its lead, with no enrollment (born before the lead was converted, and not
+     yet linked: backlog 0105 counted 63 of 417 on 03.09): the student's whose enrollment in the cohort links to its lead
+     (Enrollments' "קישור לליד", `EN["lead"]`, the conversion's back-link), or who is its lead's person (Leads' "Student
+     Directory", `LD["person"]`) or its own enrollment's - when exactly one student of the cohort is (`_lead_payer`),
+     whatever their standing, and said on them (`by_lead`). None, or two: it is no student's, so no balance holds it, and
+     it is said on the cohort (`unlinked`), its line too, as money that came in for the cohort and left no balance smaller
+     (the review of D4: a guess would hide money still to collect).
 4. WHERE THE BALANCE IS: the price less what the student paid, never below 0 (more is `overpaid`, said, and never netted
    against another student's balance). It sits in one part by the voucher status (`color_mm5fr6d6`, by INDEX, never by its
    text; the runbook's live set): PARTS, in Chava's order (her answer of 26.11) - "אושר - ממתין לתשלום" (1) first,
@@ -42,10 +48,24 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    statuses. Never hidden. "נדחה" and "נדחה - קיבל מלגה מאנליזה" (2, 3) are waived: no balance, the waiver recorded on the
    enrollment only. "ביטל השתתפות" (6, 7) and "לא רלוונטי" (10) are out of the count.
 
-THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected (the price for each student counted), what
-they paid, each part, the balance and what was paid over the price - and expected = paid + balance - overpaid, to the
-agora (Decimal end to end). `checks["ties"]` says so, and the tests hold it. Waived and out students are listed with what
-they paid, in no sum of the cohort's line but their own (`waived_paid`, `out_paid`).
+THE SUMS TIE: a cohort's every figure is the sum of its students' - the expected, what they paid, each part, the balance
+and what was paid over the price - and expected = paid + balance - overpaid, to the agora (Decimal end to end).
+`checks["ties"]` says so, and the tests hold it. "שולם בפועל" is everything that came in (Chava's word in backlog 0313:
+"כמה כבר התקבל בסך הכול"): what the waived and the out paid too (the review of D4). Their expected is what they paid - the
+balance was waived, or they left - and their balance 0, so the line still ties; what they paid is said apart as well
+(`waived_paid`, `out_paid`). So a line's expected is its price for each student counted, and what the waived and the out
+paid. And the line ties to the payments, summed apart from its students (the review of D4): everything the list files under
+the cohort (`filed`: the payments whose `cohort_id` is the cohort, and one it files under none because its enrollments name
+more than one, under each of them) is what its students paid - counted, waived and out - and what is said beside them,
+`unlinked` and `shared`, in money and in the number of payments; so a payment lost between the list and the view, or
+counted twice, is said above the table (NOT_TIED), and the file is never complete.
+
+WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
+`cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
+failed), or the enrollments of those with a price (step 5). The part then holds no cohort and no money, `state` "unread",
+and says why in its own words (UNREAD_SAID); the rest of the desk is read and shown as always. And when its own
+computation fails (app/desk/view.py `_cohorts_of`): the part alone says so (`state` "error"), never the view of both tabs.
+A part that is not "ok" is never exported as complete (`checks["ties"]`).
 
 WHAT IT IS NOT: a writer, or a second money rule. It reads the reading and the desk's own payment rows; nothing here asks
 monday, and the page adds no money up (frontend/finance.js draws these sums, and the totals of a filtered list come from
@@ -59,7 +79,8 @@ from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from typing import Any, Optional
 
-from .reading import CO, COHORT_CANCELLED, EN, SC, _uniq, on_track
+from ..recon.receipt_dates import _clean
+from .reading import CO, COHORT_CANCELLED, EN, LD, SC, _uniq, on_track
 from .view import UNNAMED_LABEL, VOUCHER, ZERO, _cohort_meta, _dsum, _q, label_of
 
 # The enrollment's Status (color_mm0sxcvn) that is in the count, by index: the helper's "IN" set
@@ -111,7 +132,8 @@ TRACK_LABEL = "שוברים משרד העבודה"   # Registration Flow's label
 # the one sentence that says which cohorts the view holds (above the table, and in the legend)
 TRACK_SAID = ("רק מחזורים שנוהל ההרשמה שלהם %s: החלקים הם סטטוסי שובר, ומחזור במסלול אחר לא מוצג ולא נספר, גם כשיש לו "
               "מחיר." % _q(TRACK_LABEL))
-ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים), %s, ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
+ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנטים, ועוד מה ששילמו סטודנטים עם ויתור או מחוץ לחשבון), %s (כל "
+         "מה שנכנס), ו%s - מחולקת לפי סטטוס השובר של כל סטודנט/ית, ו%s ראשון: "
          "כסף שכבר היה צריך להיכנס. %s לחיצה על מחזור פותחת את הסטודנטים שלו, וכל יתרה של סטודנט/ית בעמודה של החלק שלה. "
          "הקוד של מחזור והשם של סטודנט/ית פותחים אותם במאנדיי."
          % (EXPECTED_WORD, PAID_WORD, BALANCE_WORD, _q(VOUCHER["1"]), TRACK_SAID))
@@ -121,20 +143,23 @@ LEGEND = [
     (STUDENTS_WORD,
      "ההרשמות של המחזור בלוח ההרשמות שה-Status שלהן %s, הרשמה אחת לכל אדם (לפי Person); בלי מי שהשובר שלו נדחה, ביטל "
      "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % _IN_LABELS),
-    (EXPECTED_WORD, "המחיר כפול הסטודנטים: מה שהיה צריך להיכנס מכולם."),
-    (PAID_WORD, "מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמה בלוח Student Charge, %s פחות %s, כמו בשאר המסך - המקדמה, "
-                "ושורת %s שנפתחת כשמכירות מסמנים %s." % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]))),
+    (EXPECTED_WORD, "המחיר כפול מספר ה%s, ועוד מה ששילמו סטודנטים עם %s או %s (אצלם הצפי הוא מה ששילמו, והיתרה 0): "
+                    "מה שהיה צריך להיכנס מכולם." % (STUDENTS_WORD, _q(WAIVED_WORD), _q(OUT_WORD))),
+    (PAID_WORD, "כל מה שכבר נכנס: סכום ששולם בתקבולים של ההרשמות בלוח Student Charge, %s פחות %s, כמו בשאר המסך - "
+                "המקדמה, ושורת %s שנפתחת כשמכירות מסמנים %s. גם מה ששילמו סטודנטים עם %s או %s."
+     % (_q("התקבלו"), _q("הוחזרו"), _q("השלמת תשלום"), _q(VOUCHER["4"]), _q(WAIVED_WORD), _q(OUT_WORD))),
     (BALANCE_WORD, "לכל סטודנט/ית: המחיר פחות %s, ולא פחות מ-0. היתרה של המחזור היא סכום היתרות, מחולקת לחלקים לפי סטטוס "
                    "השובר:" % PAID_WORD),
 ] + [(p["label"], p["about"]) for p in PARTS.values()] + [
-    (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר בצפי."
-                  % (_q(VOUCHER["2"]), _q(VOUCHER["3"]))),
+    (WAIVED_WORD, "שובר %s או %s: הוויתור על היתרה מתועד בהרשמה בלבד, ולכן אין יתרה. מוצג ברשימה, ולא נספר ב%s; מה "
+                  "ששילם/ה נספר ב%s, וגם בצפי." % (_q(VOUCHER["2"]), _q(VOUCHER["3"]), STUDENTS_WORD, PAID_WORD)),
     (OUT_WORD, "%s, %s או %s, הרשמה שה-Status שלה אינו %s, או הרשמה שמקושרת ליותר ממחזור אחד: מוצגת ברשימה עם הסיבה, "
-               "ולא נספרת בצפי וביתרה." % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]),
-                                           _IN_LABELS)),
+               "ולא נספרת ב%s וביתרה; מה ששולם בה נספר ב%s, וגם בצפי."
+     % (_q("ביטל השתתפות - דחייה"), _q("ביטל השתתפות - אחר"), _q(VOUCHER["10"]), _IN_LABELS, STUDENTS_WORD, PAID_WORD)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
-    ("סכום מחוק", "ב%s: מה ששילם/ה סטודנט/ית עם ויתור או מחוץ לחשבון. מוצג, ולא נספר בשורת המחזור." % PAID_WORD),
-    (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה: לא נספרים לאף סטודנט/ית."),
+    (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה, ואין לדעת של מי מהסטודנטים הם: אף "
+                    "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם לא יורדים מאף יתרה, ולכן היתרה של "
+                    "המחזור עשויה להיות גדולה ממה שבאמת חסר. מוצגים בשורת המחזור."),
     (SHARED_WORD, "תקבול שמקושר להרשמות של כמה סטודנטים, או של כמה מחזורים: לא נספר לאף אחד, כדי שלא ייספר פעמיים."),
     (UNPRICED_TITLE, "מחזורים במסלול %s בלי מחיר, שהמחיר בהם אינו מספר אחד או 0, או שבוטלו: מוצגים עם הסיבה, בלי צפי "
                      "ובלי יתרה." % _q(TRACK_LABEL)),
@@ -148,15 +173,34 @@ NOTES = {"voucher_conflict": "בהרשמות של הסטודנט/ית שני ס�
          "voucher_unknown": "תווית שובר שהמסך לא מכיר",
          "payment_uncounted": "תקבול שהמסך לא סופר בכסף",
          "overpaid": OVERPAID_WORD,
-         "enrollments": "כמה הרשמות במחזור"}
+         "enrollments": "כמה הרשמות במחזור",
+         "by_lead": "תקבול לפי הליד"}
 NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במחזור, ובכל אחת סטטוס שובר אחר: היתרה ב%s, עד שיתוקן בהרשמה."
                                   % _q(NO_STATUS_LABEL),
               "voucher_unknown": "בסטטוס השובר תווית שנוספה במאנדיי אחרי שהמסך נבנה: היתרה ב%s." % _q(NO_STATUS_LABEL),
               "payment_uncounted": "לסטודנט/ית תקבול שסכום ששולם בו לא הוקלד, או שבסטטוס התשלום שלו תווית שהמסך לא מכיר: "
                                    "הוא לא נספר ב%s, ולכן היתרה גדולה ממה שבאמת חסר." % _q(PAID_WORD),
-              "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד."}
+              "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד.",
+              "by_lead": "תקבול שמקושר לליד ולא להרשמה (נוצר לפני ההמרה לסטודנט/ית, והקישור עוד לא נוסף): נספר לסטודנט/ית "
+                         "כי ההרשמה שלה/ו במחזור מקושרת לאותו ליד, או שהליד הוא של אותו אדם, ואין עוד סטודנט/ית כזה/ו "
+                         "במחזור."}
 # said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
-NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
+NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו או עם התקבולים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
+# said in place of the table when the reading could not read the cohorts (app/desk/reading.py COHORTS_UNREAD): what was not
+# read, why in its own words, and that nothing else is touched (the review of D4)
+_TRACK_LIST = "רשימת המחזורים במסלול %s" % _q(TRACK_LABEL)
+UNREAD_SAID = OrderedDict([
+    ("track_refused", "מאנדיי לא קיבל את הבקשה ל%s." % _TRACK_LIST),
+    ("track_shape", "התשובה של מאנדיי ל%s לא הגיעה בצורה שהמסך ביקש." % _TRACK_LIST),
+    ("track_not_visible", "מאנדיי לא הראה את לוח המחזורים בבקשה ל%s." % _TRACK_LIST),
+    ("track_failed", "הבקשה למאנדיי ל%s לא הצליחה." % _TRACK_LIST),
+    ("students_failed", "הבקשה למאנדיי להרשמות של המחזורים עם מחיר לא הצליחה."),
+])
+UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
+UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."
+# said in its place when its own computation failed (app/desk/view.py `_cohorts_of`): a fault of the server's
+CRASHED_SAID = ("התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל."
+                % _q(VIEW_WORD))
 OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
@@ -181,8 +225,11 @@ _SHEKEL = ("₪", "ש\"ח", "ש״ח")
 def price_of(text: Any) -> tuple:
     """(the price, "") from a cohort's "מחיר" as typed: one number, its thousands with commas or without, at most agorot,
     a "₪" or "ש"ח" beside it - or (None, why): "empty"; "unreadable", anything else (two numbers, a range, words, a "10 000",
-    a number the reading masked as an ID); "zero". Never a guess: a price that is not one clean number is said, not read."""
-    t = unicodedata.normalize("NFKC", str(text or "")).strip()
+    a number the reading masked as an ID); "zero". Never a guess: a price that is not one clean number is said, not read.
+    An invisible mark a right-to-left editor leaves (RLM, LRM, an embedding, a no-break space) is a space, by A1's own text
+    cleaning (app/recon/receipt_dates.py `_clean`, reused): at the edge of the number it is trimmed, so "\u200f12,000" is
+    12,000 as the page shows it; inside it the price is unreadable, never another number (the review of D4)."""
+    t = _clean(unicodedata.normalize("NFKC", str(text or "")))
     for s in _SHEKEL:
         t = t.replace(s, "")
     t = t.strip()
@@ -219,8 +266,10 @@ def _label_said(idx: str, label: str) -> str:
     return label or (UNNAMED_LABEL if idx else "ריק")
 
 
-def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list) -> dict:
-    """One student of a cohort: their enrollments there (id order), what they paid, and where their balance is."""
+def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list,
+             by_lead: frozenset = frozenset()) -> dict:
+    """One student of a cohort: their enrollments there (id order), what they paid, and where their balance is. `by_lead`:
+    the payments of theirs the desk files by their lead (`_lead_payer`), said on them."""
     ins = [e for e in enrollments if not _why_out(e, cohorts_of)]
     first = (ins or enrollments)[0]
     s_idx, s_label = label_of(first, EN["status"])
@@ -260,13 +309,29 @@ def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list
         notes.append("overpaid")
     if len(enrollments) > 1:
         notes.append("enrollments")
+    if any(str(p["id"]) in by_lead for p in payments):
+        notes.append("by_lead")
     return {"id": str(first["id"]), "name": first.get("name") or "", "enrollments": [str(e["id"]) for e in enrollments],
             "status": _label_said(s_idx, s_label), "status_idx": s_idx,
             "voucher": _label_said(v_idx, v_label), "voucher_idx": v_idx,
             "standing": standing, "part": part, "said": said,
-            "price": price if counted else None, "paid": paid, "balance": balance, "overpaid": overpaid,
+            # the expected: the price for a student counted; for a waived or an out one what they paid (the review of D4)
+            "price": price if counted else None, "expected": price if counted else paid, "paid": paid,
+            "balance": balance, "overpaid": overpaid,
             "payments": [str(p["id"]) for p in payments],
             "notes": [NOTES[k] for k in notes], "flags": notes}
+
+
+def _lead_payer(r: dict, groups: dict, lead_of: dict, lead_person: dict, person_of: dict) -> Optional[str]:
+    """The one student of a cohort (their person key in `groups`) a payment the desk files there by its lead is, or None:
+    those one of whose enrollments in the cohort links to the payment's lead ("קישור לליד"), or who are the person of its
+    lead ("Student Directory") or of its own enrollment (one that names no cohort, so its lead decided) - when exactly one
+    student is. None, or more than one, is no one's (the review of D4: never a guess)."""
+    leads = set(_uniq(r.get(SC["lead"]) or []))
+    persons = {p for x in leads for p in lead_person.get(x, ())} | {
+        person_of[e] for e in _uniq(r.get(SC["enrollment"]) or []) if e in person_of}
+    who = [p for p, es in groups.items() if p in persons or any(lead_of[str(e["id"])] & leads for e in es)]
+    return who[0] if len(who) == 1 else None
 
 
 def _student_order(s: dict) -> tuple:
@@ -277,11 +342,12 @@ def _student_order(s: dict) -> tuple:
 
 # ---------------------------------------------------------------- a cohort
 def _sums(students: list) -> dict:
-    """A cohort's figures, as the sums of its students': counted students only, but what waived and out ones paid."""
+    """A cohort's figures, as the sums of its students': the balance, its parts and what was paid over the price of the
+    counted ones; the expected and what was paid of every one (a waived or an out student's expected is what they paid)."""
     counted = [s for s in students if s["standing"] == "counted"]
     out = {"students": len(counted), "waived": sum(1 for s in students if s["standing"] == "waived"),
            "out": sum(1 for s in students if s["standing"] == "out"),
-           "expected": _dsum(s["price"] for s in counted), "paid": _dsum(s["paid"] for s in counted),
+           "expected": _dsum(s["expected"] for s in students), "paid": _dsum(s["paid"] for s in students),
            "overpaid": _dsum(s["overpaid"] for s in counted),
            "waived_paid": _dsum(s["paid"] for s in students if s["standing"] == "waived"),
            "out_paid": _dsum(s["paid"] for s in students if s["standing"] == "out")}
@@ -294,17 +360,61 @@ def _sums(students: list) -> dict:
 
 
 def _ties(line: dict) -> bool:
-    """The cohort's line is its students' sums, and its expected is what was paid and what is still to come."""
+    """The cohort's line is its students' sums, its expected is what was paid and what is still to come, and it is the
+    price for each student counted and what the waived and the out paid; and (the review of D4) everything the list files
+    under the cohort (`filed`, summed from the payments, not from the students) is what its students paid and what is said
+    beside them - `unlinked`, `shared` - in money and in payments."""
     again = _sums(line["students_list"])
     same = all(again[f] == line[f] for f in SUM_FIELDS + COUNT_FIELDS + tuple("part_" + k for k in PARTS))
+    filed, beside = line["filed"], (line["unlinked"], line["shared"])
     return same and line["expected"] == line["paid"] + line["balance"] - line["overpaid"] \
-        and line["expected"] == line["price"] * line["students"]
+        and line["expected"] == line["price"] * line["students"] + line["waived_paid"] + line["out_paid"] \
+        and filed["money"] == line["waived_paid"] + line["out_paid"] + _dsum(
+            s["paid"] for s in line["students_list"] if s["standing"] == "counted") + _dsum(x["money"] for x in beside) \
+        and filed["count"] == sum(len(s["payments"]) for s in line["students_list"]) + sum(x["count"] for x in beside)
+
+
+def _frame() -> dict:
+    """What the page and the file need to draw the view, whatever it holds: its parts, columns, words and legend."""
+    return {"parts": [{"key": k, "label": p["label"], "about": p["about"]} for k, p in PARTS.items()],
+            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when, "folded": k in FOLDED}
+                        for k, h, kind, when in COLUMNS],
+            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]
+                                       + [{"term": NOTES[k], "text": NOTES_SAID[k]} for k in NOTES_SAID]},
+            # the view's own words, which the page draws beside the server's numbers
+            "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
+                      "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
+                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
+            "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()]}
+
+
+def not_shown(state: str, reason: str) -> dict:
+    """The part when the view cannot be shown - `state` "unread": the reading could not read what it needs (UNREAD_SAID);
+    "error", reason "crashed": its own computation failed (app/desk/view.py `_cohorts_of`, CRASHED_SAID) - with no cohort
+    and no money, and why in its own words (`said`), which the page draws where the table would be. `checks["ties"]` is
+    false, so nothing of it is ever exported as complete."""
+    said = CRASHED_SAID if state == "error" else UNREAD_HEAD + UNREAD_SAID[reason] + UNREAD_TAIL
+    return dict(_frame(), state=state, reason=reason, said=said, cohorts=[], unpriced=[], totals=cohort_totals([]),
+                checks={"ties": False})
+
+
+def _unread(snapshot: dict) -> str:
+    """Why the reading could not read the students by cohort (its `cohorts_read`), "" when it could. A snapshot without
+    one - a reading of before it, a test's - said nothing against them; one of another shape is not trusted: "track_failed"."""
+    got = snapshot.get("cohorts_read")
+    if got is None or (isinstance(got, dict) and got.get("ok") is True):
+        return ""
+    reason = got.get("reason") if isinstance(got, dict) else None
+    return reason if reason in UNREAD_SAID else "track_failed"
 
 
 def build_cohorts(snapshot: dict, rows: list) -> dict:
     """The students by cohort of a reading (`snapshot`, app/desk/reading.py's shape) and the desk's payment rows built from
     it (`rows`, app/desk/view.py build_b2c): every cohort the reading holds, those with a price as lines and the rest listed
-    with why; and what the page and the file need to draw them."""
+    with why; and what the page and the file need to draw them. A reading that could not read them: `not_shown`."""
+    unread = _unread(snapshot)
+    if unread:
+        return not_shown("unread", unread)
     cohorts = snapshot.get("cohorts") or []
     enrollments = sorted((e for e in snapshot.get("enrollments") or [] if isinstance(e, dict)), key=_id_key)
     raw = (snapshot.get("student_charge") or {}).get("rows") or []
@@ -312,14 +422,28 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     built = {str(r["id"]): r for r in rows}
     cohorts_of = {str(e["id"]): _uniq(e.get(EN["cohort"]) or []) for e in enrollments}
     person_of = {str(e["id"]): _person(e) for e in enrollments}
+    lead_of = {str(e["id"]): set(_uniq(e.get(EN["lead"]) or [])) for e in enrollments}     # its "קישור לליד"
+    lead_person = {str(x["id"]): {"P:" + p for p in _uniq(x.get(LD["person"]) or [])}       # a lead's Directory person
+                   for x in snapshot.get("leads") or [] if isinstance(x, dict)}
 
     # each payment to the one (cohort, person) its enrollments name; one that names more is no one's (`shared`)
     paid_by: dict = defaultdict(list)
     shared: dict = defaultdict(list)
+    filed_by_lead: dict = defaultdict(list)   # the payments the desk files under a cohort by their lead: no enrollment
+    # everything the list files under each cohort, by its own `cohort_id`, and a payment it files under none because its
+    # enrollments name more than one, under each of them: the side of `checks["ties"]` summed apart from the students
+    filed: dict = defaultdict(list)
     for r in raw:
         b = built.get(str(r["id"]))
         if b is None:
             continue
+        if b.get("cohort_id"):
+            filed[b["cohort_id"]].append(b)
+        elif b.get("cohort_from") == "ambiguous":
+            for c in _uniq(c for e in _uniq(r.get(SC["enrollment"]) or []) for c in cohorts_of.get(e, [])):
+                filed[c].append(b)
+        if b.get("cohort_from") == "lead" and b.get("cohort_id"):
+            filed_by_lead[b["cohort_id"]].append((r, b))
         pairs = list(dict.fromkeys((c, person_of[e]) for e in (str(x) for x in r.get(SC["enrollment"]) or [])
                                    if e in cohorts_of for c in cohorts_of[e]))
         if len(pairs) == 1:
@@ -327,10 +451,6 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         else:
             for c in dict.fromkeys(c for c, _p in pairs):
                 shared[c].append(b)
-    unlinked: dict = defaultdict(list)   # the payments the desk files under a cohort by their lead: no enrollment
-    for b in rows:
-        if b.get("cohort_from") == "lead" and b.get("cohort_id"):
-            unlinked[b["cohort_id"]].append(b)
     held = set(cohorts_of)
     members: dict = defaultdict(list)    # each cohort's enrollments, by their own link, in id order
     for e in enrollments:
@@ -355,12 +475,23 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         groups: dict = OrderedDict()
         for e in members[cid]:
             groups.setdefault(person_of[str(e["id"])], []).append(e)
-        students = sorted((_student(es, cohorts_of, price, paid_by.get((cid, p), [])) for p, es in groups.items()),
+        # each student's payments: by their enrollments, and the ones filed here by their lead (`_lead_payer`)
+        theirs = {p: list(paid_by.get((cid, p), [])) for p in groups}
+        unlinked, by_lead = [], set()
+        for r, b in filed_by_lead[cid]:
+            who = _lead_payer(r, groups, lead_of, lead_person, person_of)
+            if who is None:
+                unlinked.append(b)
+            else:
+                theirs[who].append(b)
+                by_lead.add(str(b["id"]))
+        students = sorted((_student(es, cohorts_of, price, theirs[p], frozenset(by_lead)) for p, es in groups.items()),
                           key=_student_order)
         link = _uniq(c.get(CO["roster"]) or [])
         line = dict(head, price=price, students_list=students, **_sums(students),
-                    unlinked={"count": len(unlinked[cid]), "money": _dsum(b["net"] for b in unlinked[cid])},
+                    unlinked={"count": len(unlinked), "money": _dsum(b["net"] for b in unlinked)},
                     shared={"count": len(shared[cid]), "money": _dsum(b["net"] for b in shared[cid])},
+                    filed={"count": len(filed[cid]), "money": _dsum(b["net"] for b in filed[cid])},
                     # the cohort's link names an enrollment the reading did not get, or one whose own link is elsewhere
                     roster_missing=sum(1 for e in link if e not in held),
                     roster_elsewhere=sum(1 for e in link if e in held and cid not in cohorts_of[e]))
@@ -371,19 +502,8 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     lines.sort(key=lambda x: (-x["part_approved"], -x["balance"]))
     unpriced.sort(key=lambda x: (x["code"], x["id"]))
     unpriced.sort(key=lambda x: x["start"], reverse=True)
-    return {"cohorts": lines, "unpriced": unpriced, "totals": cohort_totals(lines),
-            "parts": [{"key": k, "label": p["label"], "about": p["about"]} for k, p in PARTS.items()],
-            "columns": [{"key": k, "header": h, "kind": kind, "shown_when": when, "folded": k in FOLDED}
-                        for k, h, kind, when in COLUMNS],
-            "about": ABOUT, "legend": {"title": LEGEND_TITLE, "items": [{"term": t, "text": x} for t, x in LEGEND]
-                                       + [{"term": NOTES[k], "text": NOTES_SAID[k]} for k in NOTES_SAID]},
-            # the view's own words, which the page draws beside the server's numbers
-            "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
-                      "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
-                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
-            "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()],
-            "checks": {"ties": all(_ties(x) for x in lines)
-                       and cohort_totals(lines) == _totals_by_student(lines)}}
+    return dict(_frame(), state="ok", reason="", said="", cohorts=lines, unpriced=unpriced, totals=cohort_totals(lines),
+                checks={"ties": all(_ties(x) for x in lines) and cohort_totals(lines) == _totals_by_student(lines)})
 
 
 # ---------------------------------------------------------------- the lists, as the page shows them

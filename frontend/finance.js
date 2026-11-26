@@ -1008,26 +1008,26 @@
     var k = col.key;
     if (k === "cohort") {
       var c = cohortsPart();
+      /* the review of D4: money filed here by its lead that no student holds is said on the line itself, shut or open - it
+         left no balance smaller, so the line's balance may be more than is really missing */
       return itemLink("co", x.id, "fin-name", "<bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi>") + " " + esc(x.title) +
         "<span class=\"fin-sub-said\">" +
         esc(header(c, "price")) + " " + cash(x.price) + " · " + NF.format(x.students) + " " + esc(header(c, "students")) +
-        (x.status ? " · " + esc(x.status) : "") + "</span>";
+        (x.status ? " · " + esc(x.status) : "") +
+        (x.unlinked && x.unlinked.count ? " · " + esc(c.words.unlinked) + " " + cash(x.unlinked.money) : "") + "</span>";
     }
     return num(x[k]) ? cash(x[k]) : NOT_SET;
   }
-  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid struck through,
-     as "סכום מחוק" is (shown, in no sum of the line) */
+  /* a student under its cohort: each balance in its own part's column; what a waived or an out student paid is in the
+     line's "שולם בפועל" and is their expected (the review of D4: everything that came in) */
   function studentCell(col, s) {
     var k = col.key, counted = s.standing === "counted";
     if (k === "cohort") {
       return itemLink("en", s.id, "fin-name", esc(s.name)) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
         (s.notes.length ? "<div class=\"fin-chips\">" + s.notes.map(function (t) { return "<span class=\"fin-chip\">" + esc(t) + "</span>"; }).join("") + "</div>" : "");
     }
-    if (k === "expected") { return counted ? cash(s.price) : NOT_SET; }
-    if (k === "paid") {
-      if (!num(s.paid)) { return NOT_SET; }
-      return counted ? cash(s.paid) : "<s class=\"fin-subtle\" title=\"" + esc(s.said + ": לא נספר") + "\">" + cash(s.paid) + "</s>";
-    }
+    if (k === "expected") { return num(s.expected) ? cash(s.expected) : NOT_SET; }
+    if (k === "paid") { return num(s.paid) ? cash(s.paid) : NOT_SET; }
     if (k === "balance") { return counted && num(s.balance) ? cash(s.balance) : NOT_SET; }
     return counted && k === "part_" + s.part && num(s.balance) ? cash(s.balance) : NOT_SET;
   }
@@ -1095,10 +1095,18 @@
   }
   function cohortsHtml() {
     var c = cohortsPart(), shown = cohortsShown(), t = c.totals, w = c.words || {};
+    if (c.state && c.state !== "ok") {
+      /* the review of D4: the view not read in this reading, or not computed - no cohort and no money, and why in the
+         server's words where the table would be; the list and the rest of the desk are as they are */
+      return panel("<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><p class=\"fin-badtext\">" +
+        esc(c.said) + "</p></div><div class=\"fin-actions\">" + scViews() + "</div></div>");
+    }
     var ok = VIEW.checks.b2c_ok && c.checks.ties;
-    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי") */
-    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, money(t.part_approved), true], [w.balance, money(t.balance)],
-      [w.paid, money(t.paid)], [w.expected, money(t.expected)]].map(function (x) {
+    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount
+       as the table writes it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel
+       while the table under them was not) */
+    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, cash(t.part_approved), true], [w.balance, cash(t.balance)],
+      [w.paid, cash(t.paid)], [w.expected, cash(t.expected)]].map(function (x) {
       return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
     }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +

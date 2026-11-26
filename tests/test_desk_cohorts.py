@@ -22,6 +22,7 @@ from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import quote, urlencode
 
+import httpx
 import openpyxl
 import pytest
 
@@ -46,11 +47,12 @@ def _st(row: dict, col: str, idx: str, labels: dict) -> None:
     row[col + "#"] = idx
 
 
-def enr(id_, cohort="C1", voucher="", status_="1", person=None, name=None, cohorts=None) -> dict:
-    """An Enrollments row as the reading holds it: its cohort link, voucher status and Status by index, its person."""
+def enr(id_, cohort="C1", voucher="", status_="1", person=None, name=None, cohorts=None, lead=()) -> dict:
+    """An Enrollments row as the reading holds it: its cohort link, voucher status and Status by index, its person, and its
+    "קישור לליד" (`lead`: the leads it links back to)."""
     r = {"id": str(id_), "name": name or "סטודנט/ית %s" % id_, rd.EN["asked"]: "",
          rd.EN["cohort"]: [str(c) for c in cohorts] if cohorts is not None else ([str(cohort)] if cohort else []),
-         rd.EN["person"]: [str(person)] if person else []}
+         rd.EN["person"]: [str(person)] if person else [], rd.EN["lead"]: [str(x) for x in lead]}
     _st(r, rd.EN["voucher"], voucher, fd.VOUCHER)
     _st(r, rd.EN["status"], status_, STATUS)
     return r
@@ -110,8 +112,11 @@ def test_every_voucher_status_lands_in_its_part_by_index(voucher):
         assert all(ln["part_" + k] == 0 for k in ch.PARTS if k != part)
         assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["paid"] == D("4000")
     else:
-        assert s["balance"] == 0 and ln["balance"] == 0 and ln["students"] == 0 and ln["expected"] == 0
-        assert ln["paid"] == 0 and ln[standing] == 1 and ln[standing + "_paid"] == D("4000")
+        # changed deliberately (the review of D4): what a waived or an out student paid is in "שולם בפועל", everything that
+        # came in, and is their expected - no balance, so the line still ties
+        assert s["balance"] == 0 and ln["balance"] == 0 and ln["students"] == 0 and ln["expected"] == D("4000")
+        assert ln["paid"] == D("4000") and ln[standing] == 1 and ln[standing + "_paid"] == D("4000")
+        assert s["expected"] == s["paid"] == D("4000") and s["price"] is None
 
 
 def test_every_live_voucher_index_is_placed_and_the_parts_are_chavas_in_her_order():
@@ -139,19 +144,21 @@ def test_an_empty_grey_or_unknown_voucher_status_has_its_own_line_and_is_never_h
 
 # ---- 2. waived, and out of the count -----------------------------------------------------------------------------------
 @pytest.mark.parametrize("voucher", ["2", "3"])
-def test_a_rejected_voucher_is_waived_no_balance_and_not_in_the_expected(voucher):
+def test_a_rejected_voucher_is_waived_no_balance_and_what_it_paid_is_its_expected(voucher):
     rows = [enr("E1", voucher=voucher), enr("E2", voucher="1")]
     ln = line(part_of([sc(1, paid="4000", enr=["E1"])], [coh(roster=["E1", "E2"])], rows))
     s = student(ln, "E1")
     assert s["standing"] == "waived" and s["balance"] == 0 and s["price"] is None and s["paid"] == D("4000")
     assert s["said"] == 'ויתור: "%s"' % fd.VOUCHER[voucher]
-    assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["balance"] == D("10000") and ln["paid"] == 0
-    assert ln["waived"] == 1 and ln["waived_paid"] == D("4000")
+    # changed deliberately (the review of D4): "שולם בפועל" is everything that came in, the waived deposit too, and the
+    # waived student's expected is what they paid - the line is 14,000 expected, 4,000 paid, 10,000 still to come
+    assert ln["students"] == 1 and ln["expected"] == D("14000") and ln["balance"] == D("10000") and ln["paid"] == D("4000")
+    assert ln["waived"] == 1 and ln["waived_paid"] == D("4000") and s["expected"] == D("4000")
 
 
 @pytest.mark.parametrize("how", ["voucher_6", "voucher_7", "voucher_10", "status_0", "status_5", "status_6", "status_7",
                                  "status_8", "status_empty", "status_unknown", "two_cohorts"])
-def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_sum(how):
+def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_balance(how):
     kind, _, value = how.partition("_")
     out = (enr("E1", voucher=value) if kind == "voucher"
            else enr("E1", voucher="1", cohorts=["C1", "C2"]) if kind == "two"
@@ -161,8 +168,10 @@ def test_a_student_out_of_the_count_is_listed_with_why_and_in_no_sum(how):
     ln = line(part)
     s = student(ln, "E1")
     assert s["standing"] == "out" and s["balance"] == 0 and s["said"].startswith(ch.OUT_WORD + ": ")
-    assert ln["students"] == 1 and ln["expected"] == D("10000") and ln["paid"] == 0 and ln["balance"] == D("10000")
-    assert ln["out"] == 1 and ln["out_paid"] == (0 if kind == "two" else D("3000"))
+    # changed deliberately (the review of D4): what an out student paid is in "שולם בפועל" and is their expected
+    paid = D(0) if kind == "two" else D("3000")
+    assert ln["students"] == 1 and ln["expected"] == D("10000") + paid and ln["paid"] == paid
+    assert ln["balance"] == D("10000") and ln["out"] == 1 and ln["out_paid"] == paid and s["expected"] == paid
     if kind == "two":
         # in both cohorts' lists, in neither's count; its payment names two cohorts, so it is counted for no one
         assert s["said"] == "%s: %s" % (ch.OUT_WORD, ch.OUT_WHY["cohorts"])
@@ -274,6 +283,81 @@ def test_a_payment_the_desk_files_by_its_lead_is_said_on_its_cohort_and_counted_
     assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == D("4000") and ln["students"] == 1
 
 
+LEAD_ROUTES = {
+    # the enrollment's "קישור לליד" names the payment's lead (the conversion's back-link)
+    "enrollment_links_the_lead": dict(enrollment={"lead": ["L1"]}, lead={}, payment={}),
+    # the lead's "Student Directory" is the student's person
+    "the_leads_person": dict(enrollment={"person": "P1"}, lead={"person": "P1"}, payment={}),
+    # the payment's own enrollment (no cohort: its lead decided) is the student's person
+    "its_own_enrollment": dict(enrollment={"person": "P1"}, lead={}, payment={"enr": ["E9"]}),
+}
+
+
+@pytest.mark.parametrize("route", sorted(LEAD_ROUTES))
+def test_a_payment_filed_by_its_lead_is_the_one_students_whose_enrollment_or_person_it_shares(route):
+    """The review of D4 (MEDIUM): a deposit filed under the cohort by its lead, with no enrollment (backlog 0105: 63 of
+    417 on 03.09), was money to collect from its student still. It is the student's when the data links exactly one."""
+    how = LEAD_ROUTES[route]
+    payments = [sc(1, paid="4000", lead=["L1"], **how["payment"]), sc(2, paid="4000", enr=["E2"])]
+    rows = [enr("E1", voucher="1", **how["enrollment"]), enr("E2", voucher="17", person="P2"),
+            enr("E9", cohort=None, person="P1")]
+    ln = line(part_of(payments, [coh(price="12,000", roster=["E1", "E2"])], rows, [lead("L1", "C1", **how["lead"])]))
+    one = student(ln, "E1")
+    assert one["payments"] == ["1"] and one["paid"] == D("4000") and one["balance"] == D("8000")
+    assert one["notes"] == [ch.NOTES["by_lead"]] and student(ln, "E2")["notes"] == []
+    assert ln["unlinked"] == {"count": 0, "money": D(0)} and ln["part_approved"] == D("8000")
+    assert ln["paid"] == D("8000") and ln["balance"] == D("16000") and ln["expected"] == D("24000")
+
+
+@pytest.mark.parametrize("who", ["none", "two", "a_counted_and_a_waived"])
+def test_a_payment_filed_by_its_lead_that_no_one_or_two_students_share_is_the_cohorts_and_no_balance_holds_it(who):
+    """None of the cohort's students, or more than one, shares the payment's lead or person: never a guess. It is said on
+    the cohort (`unlinked`) and no student's balance is smaller for it. Two that share it include a waived one: a waived
+    student is a student of the cohort too, so the payment is not given to the counted one (it may be the waived one's)."""
+    links = {"none": ({}, {}), "two": ({"lead": ["L1"]}, {"lead": ["L1"]}),
+             "a_counted_and_a_waived": ({"lead": ["L1"]}, {"lead": ["L1"], "voucher": "2"})}[who]
+    e2 = dict({"voucher": "17", "person": "P2"}, **links[1])
+    rows = [enr("E1", voucher="1", person="P1", **links[0]), enr("E2", **e2)]
+    ln = line(part_of([sc(1, paid="4000", lead=["L1"])], [coh(price="12,000", roster=["E1", "E2"])], rows,
+                      [lead("L1", "C1")]))
+    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == 0
+    assert all(s["payments"] == [] and ch.NOTES["by_lead"] not in s["notes"] for s in ln["students_list"])
+    assert student(ln, "E1")["balance"] == D("12000")
+
+
+def test_a_payment_filed_by_its_lead_that_only_a_waived_student_shares_is_theirs_and_moves_no_balance():
+    rows = [enr("E1", voucher="2", lead=["L1"]), enr("E2", voucher="1", person="P2")]
+    ln = line(part_of([sc(1, paid="4000", lead=["L1"])], [coh(price="12,000", roster=["E1", "E2"])], rows,
+                      [lead("L1", "C1")]))
+    waived = student(ln, "E1")
+    assert waived["standing"] == "waived" and waived["payments"] == ["1"] and waived["balance"] == 0
+    assert ln["unlinked"]["count"] == 0 and ln["balance"] == D("12000") and ln["waived_paid"] == D("4000")
+
+
+def test_the_reading_reads_the_enrollments_lead_link_and_the_leads_person_so_a_deposit_by_lead_is_its_students():
+    w = cohort_world()
+    # 205's lead 305 paid a deposit before 205 was linked to the payment; 205 is in 402, priced here
+    w.set(402, price="12,000", touch=False)
+    w.add(SC, 104, "תלמיד-דלת", status=status("שולם", 1), paid="4000", enrollment=rel(), lead=rel(305))
+    w.add(rd.LEADS_BOARD, 305, "ליד-חמש", cohort=rel(402), rep="", person=rel(1205))
+    w.set(205, lead=rel(305), touch=False)
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None and "305" in r["asked"]["leads"]
+    assert next(x for x in r["leads"] if x["id"] == "305")[rd.LD["person"]] == ["1205"]
+    assert next(x for x in r["enrollments"] if x["id"] == "205")[rd.EN["lead"]] == ["305"]
+    ln = line(cohorts_of(r), "A402")
+    assert student(ln, "205")["payments"] == ["104"] and ln["unlinked"]["count"] == 0
+    # and by the lead's person alone, when the enrollment does not link the lead
+    w.set(205, lead=rel(), touch=False)
+    w.set(205, person=rel(1205), touch=False)
+    ln = line(cohorts_of(rd.read_desk(reader_of(w))), "A402")
+    assert student(ln, "205")["payments"] == ["104"] and ln["unlinked"]["count"] == 0
+    # neither: the cohort's, said
+    w.set(305, person=rel(), touch=False)
+    ln = line(cohorts_of(rd.read_desk(reader_of(w))), "A402")
+    assert student(ln, "205")["payments"] == [] and ln["unlinked"] == {"count": 1, "money": D("4000")}
+
+
 def test_the_enrollments_own_link_decides_and_the_cohorts_link_is_checked_against_it():
     # E2 is in the cohort's link but its own link is another cohort; E3 names the cohort, though the cohort's link lags;
     # E4 is in the link, and monday did not return it
@@ -300,7 +384,11 @@ def test_a_cohort_without_a_clean_price_or_cancelled_is_listed_with_why_and_no_m
 
 @pytest.mark.parametrize("text, value", [("10,000", "10000"), ("12000", "12000"), (" 15,000 ", "15000"), ("10,000 ₪", "10000"),
                                          ("₪12,000", "12000"), ("9,999.5", "9999.5"), ("1,234,567", "1234567"),
-                                         ('12,000 ש"ח', "12000"), ("１２０００", "12000")])
+                                         ('12,000 ש"ח', "12000"), ("１２０００", "12000"),
+                                         # the review of D4: the marks a right-to-left editor leaves, as A1 cleans them
+                                         ("\u200f12,000", "12000"), ("12,000\u200e", "12000"), ("\u202b12,000\u202c", "12000"),
+                                         ("\u200e12,000 ₪", "12000"), ("₪\u200f12000", "12000"), ("\ufeff9,000", "9000"),
+                                         ("\u206612,000\u2069", "12000"), ("12,000\u00a0₪", "12000")])
 def test_a_price_is_one_clean_number_as_typed(text, value):
     assert ch.price_of(text) == (D(value), "")
 
@@ -308,7 +396,10 @@ def test_a_price_is_one_clean_number_as_typed(text, value):
 @pytest.mark.parametrize("text, why", [(None, "empty"), ("", "empty"), ("₪", "empty"), ("0", "zero"), ("0.00", "zero"),
                                        ("10,00", "unreadable"), ("10.000", "unreadable"), ("1,0000", "unreadable"),
                                        ("-5000", "unreadable"), ("12000 + 3000", "unreadable"), ("כ-12000", "unreadable"),
-                                       ("10,000.505", "unreadable"), ("٤٠٠٠", "unreadable")])
+                                       ("10,000.505", "unreadable"), ("٤٠٠٠", "unreadable"),
+                                       # a mark inside the number is never another number; a mark alone is no price
+                                       ("12,\u200f000", "unreadable"), ("12\u200b000", "unreadable"), ("\u200f", "empty"),
+                                       ("\u200e₪\u200f", "empty")])
 def test_a_price_that_is_not_one_clean_number_is_never_guessed(text, why):
     assert ch.price_of(text) == (None, why)
 
@@ -340,7 +431,7 @@ def random_part(rng: random.Random) -> tuple:
 
 def test_the_sums_tie_through_random_cohorts():
     rng = random.Random(20261126)
-    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared")}
+    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared", "filed")}
     for _ in range(150):
         payments, cohorts, enrollments = random_part(rng)
         v = view_of(payments, cohorts, enrollments)
@@ -348,8 +439,12 @@ def test_the_sums_tie_through_random_cohorts():
         assert part["checks"]["ties"] is True
         for ln in part["cohorts"]:
             counted = [s for s in ln["students_list"] if s["standing"] == "counted"]
-            assert ln["students"] == len(counted) and ln["expected"] == ln["price"] * len(counted)
-            assert ln["paid"] == sum((s["paid"] for s in counted), D(0))
+            others = [s for s in ln["students_list"] if s["standing"] != "counted"]
+            # the review of D4: what the waived and the out paid is in "שולם בפועל", and is their expected
+            assert ln["students"] == len(counted)
+            assert ln["expected"] == ln["price"] * len(counted) + sum((s["paid"] for s in others), D(0))
+            assert ln["paid"] == sum((s["paid"] for s in ln["students_list"]), D(0))
+            assert ln["waived_paid"] + ln["out_paid"] == sum((s["paid"] for s in others), D(0))
             for k in ch.PARTS:
                 assert ln["part_" + k] == sum((s["balance"] for s in counted if s["part"] == k), D(0))
             assert ln["balance"] == sum((ln["part_" + k] for k in ch.PARTS), D(0))
@@ -361,10 +456,20 @@ def test_the_sums_tie_through_random_cohorts():
                     assert s["balance"] == max(ln["price"] - s["paid"], D(0))
                     assert s["overpaid"] == max(s["paid"] - ln["price"], D(0))
                 else:
-                    assert s["balance"] == 0 and s["part"] == ""
+                    assert s["balance"] == 0 and s["part"] == "" and s["expected"] == s["paid"]
                 seen[s["standing"]] += 1
                 seen["overpaid"] += bool(s["overpaid"])
             seen["shared"] += ln["shared"]["count"]
+        # the review of D4: each line ties to what the list files under its cohort, summed here from the list's rows and
+        # the enrollments' own links - a payment filed under none because its enrollments name several, under each
+        cohorts_of = {e["id"]: e[rd.EN["cohort"]] for e in enrollments}
+        for ln in part["cohorts"]:
+            mine = [r for r in v["b2c"]["rows"] if r["cohort_id"] == ln["id"] or r["cohort_from"] == "ambiguous" and ln["id"]
+                    in {c for e in next(p for p in payments if p["id"] == r["id"])[rd.SC["enrollment"]]
+                        for c in cohorts_of.get(e, [])}]
+            assert ln["filed"] == {"count": len(mine), "money": sum((r["net"] for r in mine), D(0))}
+            assert ln["filed"]["money"] == ln["paid"] + ln["unlinked"]["money"] + ln["shared"]["money"]
+            seen["filed"] += len(mine)
         total = ch.cohort_totals(part["cohorts"])
         assert part["totals"] == total
         # every total is its lines' sum, each field summed here and not by the module's own function
@@ -386,6 +491,59 @@ def test_a_broken_line_is_said_by_the_check():
     for field, value in (("paid", D("4001")), ("part_approved", D("5999")), ("expected", D("9000")), ("students", 2),
                          ("balance", D("1"))):
         assert not ch._ties(dict(ln, **{field: value})), field
+    # a student and the line that agree with each other, and with expected = paid + balance, but not with the price: the
+    # line's expected is the price for each student counted, and what the waived and the out paid
+    off = dict(ln["students_list"][0], expected=D("9000"), balance=D("5000"))
+    wrong = dict(ln, students_list=[off], expected=D("9000"), balance=D("5000"), part_approved=D("5000"))
+    assert ch._sums([off])["expected"] == wrong["expected"] and not ch._ties(wrong)
+
+
+def test_a_line_ties_to_what_the_list_files_under_its_cohort_summed_apart_from_its_students():
+    """The review of D4: the line is its students' sums, and that alone cannot see a payment the view lost between the list
+    and the students, or counted twice. So everything the list files under the cohort (`filed`, from the payments' own
+    cohort) is what its students paid - counted, waived and out - and what is said beside them, unlinked and shared."""
+    rows = [enr("E1", voucher="1", person="P1"), enr("E2", voucher="2", person="P2"), enr("E3", voucher="6", person="P3"),
+            enr("E4", voucher="17", person="P4")]
+    payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="3000", enr=["E2"]), sc(3, paid="2000", enr=["E3"]),
+                sc(4, paid="1000", enr=["E1", "E4"]), sc(5, paid="500", lead=["L1"]), sc(6, paid="250", enr=["E1", "E9"])]
+    rows.append(enr("E9", cohort="C2", voucher="1", person="P1"))
+    part = part_of(payments, [coh(roster=["E1", "E2", "E3", "E4"]), coh("C2", "A702", roster=["E9"])], rows,
+                   [lead("L1", "C1")])
+    ln = line(part)
+    # 1-3 the students', 4 two students' (shared), 5 by its lead and no one's (unlinked), 6 two cohorts' (shared on both)
+    assert ln["filed"] == {"count": 6, "money": D("10750")} and part["checks"]["ties"] is True
+    assert (ln["paid"], ln["unlinked"]["money"], ln["shared"]["money"]) == (D("9000"), D("500"), D("1250"))
+    assert line(part, "A702")["filed"] == {"count": 1, "money": D("250")} == line(part, "A702")["shared"]
+    # a line whose students and figures agree with each other, but that lost a payment on the way: said
+    one = student(ln, "E1")
+    lost = dict(one, payments=[], paid=D(0), balance=D("10000"))
+    students = [lost if s is one else s for s in ln["students_list"]]
+    broken = dict(ln, students_list=students, **ch._sums(students))
+    assert ch._sums(broken["students_list"])["paid"] == broken["paid"] and ch._ties(dict(ln))
+    assert broken["expected"] == broken["paid"] + broken["balance"] - broken["overpaid"] and not ch._ties(broken)
+    # counted twice - in a student's and in "unlinked" - or a payment more than the list files: said
+    assert not ch._ties(dict(ln, unlinked={"count": 2, "money": D("4500")}))
+    assert not ch._ties(dict(ln, filed={"count": 6, "money": D("10751")}))
+    assert not ch._ties(dict(ln, filed={"count": 7, "money": D("10750")}))
+
+
+def test_a_payment_the_view_loses_is_said_by_the_check_and_the_line_never_exported_as_complete(desk, monkeypatch):  # noqa: F811
+    real = ch._student
+
+    def loses_one(enrollments, cohorts_of, price, payments, *a):
+        return real(enrollments, cohorts_of, price, payments[:-1], *a)
+
+    monkeypatch.setattr(ch, "_student", loses_one)
+    s = cohort_snapshot()
+    part = fd.build_view(s, TODAY)["b2c"]["cohorts"]
+    assert part["state"] == "ok" and part["checks"]["ties"] is False
+    assert all(ch._sums(x["students_list"])["paid"] == x["paid"] for x in part["cohorts"])   # the students alone agree
+    served(monkeypatch, s)
+    desk.get(session_token(1))
+    url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
+    info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
+        io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
+    assert "לא שלמה" in info["שימו לב"]
 
 
 def test_the_cohorts_come_money_that_should_have_come_in_first_and_the_students_by_part():
@@ -476,8 +634,9 @@ def test_the_reading_reads_the_enrollments_of_the_cohorts_with_a_price_with_the_
     w.extra_cells = {"203": {"lookup_mm2kg3gw": {"text": ID_NUMBER}}}
     r = rd.read_desk(reader_of(w))
     assert r["error"] is None and r["complete"] is True
-    # step 5: 203 and 204 by id, in one request more; 205 (no price) and 403's (cancelled) never
-    assert r["asked"]["enrollments"] == ["201", "202", "203", "204", "206"] and r["calls"] == 8
+    # step 5: 203 and 204 by id, in one request more; 205 (no price) and 403's (cancelled) never (nine: the cohorts on the
+    # voucher track are a request of their own since the review of D4)
+    assert r["asked"]["enrollments"] == ["201", "202", "203", "204", "206"] and r["calls"] == 9
     assert sorted(e["id"] for e in r["enrollments"]) == ["201", "202", "203", "204", "206"]
     assert r["checks"]["enrollments"]["asked"] == 5 and r["checks"]["enrollments"]["rows"] == 5
     assert ["203", "204"] in [ids for b, ids in w.by_id_reads() if b == rd.ENROLLMENTS_BOARD]
@@ -505,14 +664,17 @@ def test_a_reading_with_no_cohort_with_a_price_reads_what_it_read_before():
     w = cohort_world()
     w.set(401, price="", touch=False)
     r = rd.read_desk(reader_of(w))
-    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["calls"] == 7
+    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["calls"] == 8
 
 
 def test_the_body_schema_moved_so_a_reading_kept_before_d4_is_read_whole():
     assert rd.BODY_SCHEMA.startswith("4:")
     for key, col in (("cohorts", rd.CO["price"]), ("cohorts", rd.CO["roster"]), ("enrollments", rd.EN["status"]),
-                     ("enrollments", rd.EN["person"])):
+                     ("enrollments", rd.EN["person"]),
+                     # the review of D4: a payment filed by its lead is the student's by these two links
+                     ("enrollments", rd.EN["lead"]), ("leads", rd.LD["person"])):
         assert col in rd.ROW_COLUMNS[key] and col in rd.CHECKED_COLUMNS[key]
+    assert (rd.EN["lead"], rd.LD["person"]) == ("board_relation_mm1g8cvh", "board_relation_mm0sffws")
 
 
 def test_a_missing_new_column_ends_the_reading_instead_of_reading_as_empty():
@@ -687,12 +849,12 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
 # ---- the routes: the totals and the file of the view, gated as the students' list ------------------------------------
 def cohort_snapshot() -> dict:
     """A701 (10,000): E1 approved, 4,000 paid; E2 settled, its deposit and the helper's balance row; E3 waived, its
-    4,000 deposit paid. A702
-    (12,000): E4 not submitted, 4,000 paid; E5 submitted, nothing paid. A703 without a price."""
+    4,000 deposit paid - in A701's "שולם בפועל" and its expected (the review of D4). A702 (12,000): E4 not submitted,
+    4,000 paid; E5 submitted, nothing paid. A703 without a price."""
     balance = sc(3, paid="6000", enr=["E2"], receipt="0", invoice="", ctype="השלמת תשלום")
     balance["name"] = "סטודנט/ית E2 | השלמת תשלום"
     payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), balance, sc(4, paid="4000", enr=["E4"]),
-                sc(5, paid="4000", enr=["E3"])]       # E3's deposit: waived, so in no sum of A701's line
+                sc(5, paid="4000", enr=["E3"])]       # E3's deposit: waived, so in A701's paid and expected, no balance
     cohorts = [coh("C1", "A701", roster=["E1", "E2", "E3"]), coh("C2", "A702", price="12000", roster=["E4", "E5"]),
                coh("C3", "A703", price="")]
     enrollments = [enr("E1", "C1", voucher="1", name="רונית כהן"), enr("E2", "C1", voucher="4"),
@@ -719,7 +881,8 @@ def test_the_cohorts_totals_are_the_servers_for_the_list_as_filtered_and_for_its
     assert t["count"] == 2 and t["taken_at"] == taken
     assert {k: t["sums"][k] for k in ("expected", "paid", "balance", "part_approved", "part_submitted",
                                        "part_not_submitted", "part_settled", "students", "waived")} == {
-        "expected": "44000", "paid": "18000", "balance": "26000", "part_approved": "6000", "part_submitted": "12000",
+        # (the review of D4, changed deliberately: E3's waived 4,000 is in "שולם בפועל" and its expected)
+        "expected": "48000", "paid": "22000", "balance": "26000", "part_approved": "6000", "part_submitted": "12000",
         "part_not_submitted": "8000", "part_settled": "0", "students": 4, "waived": 1}
     t = get("tab=b2c_cohorts&q=%D7%9B%D7%94%D7%9F").json()                            # "כהן": a student of A701
     assert t["count"] == 1 and t["sums"]["balance"] == "6000"
@@ -765,8 +928,10 @@ def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_coho
         for h in money:
             assert sum(s[h] or 0 for s in srows if s["מחזור"] == code) == (ln[h] or 0), (code, h)
     waived = next(s for s in srows if s["מזהה במאנדיי"] == "E3")
-    assert waived[ch.PAID_WORD] is None and waived["בחשבון"].startswith(ch.WAIVED_WORD)
-    assert waived["%s, %s או %s" % (ch.PAID_WORD, ch.WAIVED_WORD, ch.OUT_WORD)] == 4000      # in a column of its own
+    # changed deliberately (the review of D4): in the paid column, and its expected - no column of its own any more
+    assert waived[ch.PAID_WORD] == 4000 == waived[ch.EXPECTED_WORD] and waived["בחשבון"].startswith(ch.WAIVED_WORD)
+    assert lines["A701"][ch.PAID_WORD] == 18000 and lines["A701"][ch.EXPECTED_WORD] == 24000
+    assert not [h for h in sheads if h and h.startswith(ch.PAID_WORD + ",")]
     unpriced = wb["בלי מחיר"]
     assert [unpriced.cell(row=2, column=c).value for c in (1, 5)] == ["A703", "אין מחיר"]
     info = {row[0].value: row[1].value for row in wb["פרטים"].iter_rows()}
@@ -800,6 +965,34 @@ def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, mo
     assert "לא שלמה" in info["שימו לב"]
 
 
+def test_a_cohorts_module_that_breaks_is_its_parts_alone_and_both_tabs_stand(desk, monkeypatch, caplog):  # noqa: F811
+    """The review of D4 (MEDIUM): `build_view` called `build_cohorts` unguarded, so an exception in the newest module was
+    `view_error` "crashed" for both tabs - no payments, no companies, no actions."""
+    served(monkeypatch, cohort_snapshot())
+
+    def broken(snapshot, rows):
+        raise KeyError("רונית כהן 4000")                                # a key the module did not expect: never logged
+
+    monkeypatch.setattr(ch, "build_cohorts", broken)
+    body = desk.get(session_token(1)).json()
+    assert body["view_error"] is None and sorted(r["id"] for r in body["view"]["b2c"]["rows"]) == ["1", "2", "3", "4", "5"]
+    assert body["view"]["b2b"] is not None and body["view"]["checks"]["ok"] is True
+    part = body["view"]["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["said"], part["cohorts"]) == ("error", "crashed", ch.CRASHED_SAID, [])
+    assert part["checks"] == {"ties": False} and part["legend"]["title"] == ch.LEGEND_TITLE
+    assert "KeyError" in caplog.text and "רונית" not in caplog.text and "4000" not in caplog.text
+    # the payments' totals and file as always; the cohorts' none, and their file never complete
+    taken = quote(body["taken_at"])
+    t = desk.client.get("/api/desk/totals?tab=b2c&taken=" + taken, headers=_auth()).json()
+    assert t["count"] == 5
+    t = desk.client.get("/api/desk/totals?tab=b2c_cohorts&taken=" + taken, headers=_auth()).json()
+    assert t["count"] == 0 and t["sums"]["balance"] == "0"
+    url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
+    info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
+        io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
+    assert "לא שלמה" in info["שימו לב"]
+
+
 # ---- the voucher track: only its cohorts, and every one of them, paid for or not ---------------------------------------
 from app.monday import client as monday  # noqa: E402
 
@@ -807,25 +1000,33 @@ RULE = '{rules: [{column_id: "color_mm31k62f", compare_value: [3], operator: any
 ALIAS = "t0: boards(ids: $t0) { items_page(limit: $limit, query_params: %s) { cursor items { id } } }" % RULE
 
 
-def test_the_track_filter_is_mondays_documented_status_filter_and_rides_on_requests_already_sent():
+def test_the_track_filter_is_mondays_documented_status_filter_in_a_request_of_its_own():
+    """The review of D4 (HIGH): the filter rode the columns check of every reading and the windows of every refresh, and
+    monday refuses a request whole when one field of it is invalid - so a filter it refused took the whole desk down. It is
+    a request of its own now (changed deliberately: this test said it rode on requests already sent), right after the
+    columns check and right after the windows, its query text the one answered live on 26.11."""
     assert rd.VOUCHER_TRACK == "3" and rd.TRACK == (rd.COHORTS_BOARD, "color_mm31k62f", ("3",))
     assert monday.status_rule(rd.CO["flow"], rd.TRACK[2]) == RULE
     assert monday.status_rule("color_x", [1, "2"]) == '{rules: [{column_id: "color_x", compare_value: [1, 2], operator: any_of}]}'
     for bad in (('color_x"}] , {', [3]), ("color_x", []), ("color_x", ["3; drop"])):
         with pytest.raises((monday.MondayError, ValueError)):
             monday.status_rule(*bad)
-    # a full reading: beside its columns check, in its first request - no request of its own
+    # a full reading: the columns check alone, then the filter alone
     w = cohort_world()
     rd.read_desk(reader_of(w))
-    first_q, first_v = w.queries[0]
-    assert "columns(ids:" in first_q and ALIAS in first_q and first_v["t0"] == [rd.COHORTS_BOARD] and first_v["limit"] == 500
+    (first_q, _v), (second_q, second_v) = w.queries[0], w.queries[1]
+    assert "columns(ids:" in first_q and "any_of" not in first_q and "$t0" not in first_q
+    assert second_q == "query ($t0: [ID!], $limit: Int!) { %s }" % ALIAS
+    assert second_v == {"t0": [rd.COHORTS_BOARD], "limit": 500}
     assert sum(1 for q, _v in w.queries if "any_of" in q) == 1 and w.tracked == [(rd.COHORTS_BOARD, rd.CO["flow"], [3])]
-    # a refresh: beside its windows, in the request it already sends - a quiet one is still three requests
+    # a refresh: the windows alone, then the filter alone - a quiet one is five requests here (the windows, the filter, two
+    # pages of ids, and the cohorts with a price read again)
     reader, held = reader_of(w), rd.read_desk(reader_of(w))
     before = len(w.queries)
     got = rd.read_delta(reader, held)
-    windows = [q for q, _v in w.queries[before:] if "within_the_last" in q]
-    assert len(windows) == 1 and ALIAS in windows[0] and got["calls"] == len(w.queries) - before == 4
+    asked = [q for q, _v in w.queries[before:]]
+    assert "within_the_last" in asked[0] and "any_of" not in asked[0] and asked[1] == second_q
+    assert got["calls"] == len(asked) == 5 and got["cohorts_read"] == {"ok": True}
 
 
 def track_world() -> World:
@@ -933,20 +1134,170 @@ def test_the_track_is_paged_to_its_end_in_a_full_reading_and_a_refresh(page):
     assert got["asked"]["cohorts"] == whole["asked"]["cohorts"] and cohorts_of(got) == cohorts_of(whole)
 
 
-def test_a_filter_answered_in_another_shape_fails_the_reading_and_a_refresh_reads_whole_instead():
-    w = track_world()
-    reader, held = reader_of(w), rd.read_desk(reader_of(w))
+def _filter_answers(w: World, how: str) -> None:
+    """The filter's own request answered another way: refused as monday refuses an invalid field (errors, no data), without
+    its items, without its alias, with no board, failing on the wire, or breaking in a way the reader does not know."""
     answer = w.answer_track
-    w.answer_track = lambda q, v: {k: [{"items_page": {"cursor": None}}] for k in answer(q, v)}   # no items in it
+    plain = w.handler
+
+    def handler(request):
+        if b"any_of" in request.content and how == "refused":
+            return httpx.Response(200, json={"errors": [{"message": "Invalid value for compare_value",
+                                                         "extensions": {"code": "INVALID_ARGUMENT"}}]})
+        if b"any_of" in request.content and how == "http":
+            return httpx.Response(500, text="no")
+        if b"any_of" in request.content and how == "crash":
+            raise RuntimeError("a transport that breaks in a way the reader does not know")
+        return plain(request)
+
+    w.handler = handler
+    w.answer_track = {"shape": lambda q, v: {k: [{"items_page": {"cursor": None}}] for k in answer(q, v)},
+                      "missing": lambda q, v: {}, "no_board": lambda q, v: {"t0": []}}.get(how, answer)
+
+
+UNREAD_HOW = {"refused": ("track_refused", "graphql"), "shape": ("track_shape", "filter_shape"),
+              "missing": ("track_shape", "filter_shape"), "no_board": ("track_not_visible", "not_visible"),
+              "http": ("track_failed", "http"), "crash": ("track_failed", "internal")}
+
+
+@pytest.mark.parametrize("how", sorted(UNREAD_HOW))
+def test_a_filter_refused_answered_in_another_shape_or_not_at_all_leaves_the_reading_and_the_refresh_whole(how):
+    """The review of D4 (HIGH), changed deliberately: this test said a filter answered in another shape FAILED the reading
+    and made a refresh read whole. Now neither: the payments, the companies and their counts are read as always, step 5 is
+    skipped, and the reading says why in `cohorts_read` - a closed reason in its own words, never "board not visible" for
+    an answer that did not carry the filter. A refresh says the same, and a full reading would agree with it."""
+    w = track_world()
+    held = rd.read_desk(reader_of(w))
+    whole = fd.build_view(held, TODAY)
+    _filter_answers(w, how)
+    reason, code = UNREAD_HOW[how]
     r = rd.read_desk(reader_of(w))
-    assert r["error"] == "graphql" and "filter" in r["detail"]
-    with pytest.raises(monday.MondayError) as err:
-        rd.read_delta(reader, held)
-    assert err.value.code == "delta_shape"
-    # and an answer without the filter at all, from a reader that did not ask for it: never a refresh short of the track
-    w.answer_track = answer
-    plain = reader.changed_items
-    reader.changed_items = lambda *a, **k: dict(plain(*a, **k), track=None)
-    with pytest.raises(monday.MondayError) as err:
-        rd.read_delta(reader, held)
-    assert err.value.code == "delta_shape" and "voucher track" in err.value.detail
+    assert r["error"] is None and r["complete"] is True and r["cohorts_read"] == {"ok": False, "reason": reason, "code": code}
+    # the payments' cohorts are still read (the list's cohort code), the track's alone are not; no enrollment of step 5
+    assert r["asked"]["cohorts"] == ["401", "402", "403", "404"] and r["asked"]["enrollments"] == ["201", "202", "206", "209"]
+    v = fd.build_view(r, TODAY)
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2b"] == whole["b2b"] and v["checks"]["ok"] is True
+    part = v["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["cohorts"], part["unpriced"]) == ("unread", reason, [], [])
+    assert part["said"] == ch.UNREAD_HEAD + ch.UNREAD_SAID[reason] + ch.UNREAD_TAIL and part["checks"]["ties"] is False
+    assert "גלוי" not in part["said"] or how == "no_board"
+    assert part["totals"]["count"] == 0 and part["legend"] == whole["b2c"]["cohorts"]["legend"]
+    # a refresh: never raised, so HeldReading never reads whole for it; it agrees with a full reading of the same moment
+    got = rd.read_delta(reader_of(w), held)
+    assert got["kind"] == "delta" and got["error"] is None and got["cohorts_read"] == r["cohorts_read"]
+    assert got["asked"] == r["asked"] and fd.build_view(got, TODAY)["b2c"]["cohorts"] == part
+    # and the next reading that reads the track shows the cohorts again, a refresh as a full one
+    del w.handler, w.answer_track
+    back = rd.read_delta(reader_of(w), got)
+    assert back["cohorts_read"] == {"ok": True} and back["asked"] == held["asked"]
+    assert cohorts_of(back) == cohorts_of(held) == whole["b2c"]["cohorts"]
+
+
+def test_a_refused_filter_never_makes_the_held_reading_fall_back_and_health_says_why():
+    w = track_world()
+    h = rd.HeldReading(lambda: reader_of(w), ttl_s=0)
+    h.get()
+    _filter_answers(w, "refused")
+    kept, last = h.get()
+    assert kept["kind"] == "delta" and last["error"] is None and h.health()["last_codes"] == ["delta", "store_not_configured"]
+    assert rd.health_part(last)["cohorts"] == "track_refused" and last["cohorts_read"]["code"] == "graphql"
+    full = rd.read_desk(reader_of(w))
+    assert rd.health_part(rd.summary(full))["cohorts"] == "track_refused"
+    assert rd.health_part(rd.summary(rd.read_desk(reader_of(track_world()))))["cohorts"] == "ok"
+    assert rd.health_part(rd.summary({"error": "graphql"}))["cohorts"] is None
+
+
+def test_a_reading_without_the_track_is_kept_so_and_a_cold_instance_shows_it_as_not_read():
+    from tests.test_desk_mirror import MemoryStore
+
+    w, store = track_world(), MemoryStore()
+    _filter_answers(w, "shape")
+    rd.HeldReading(lambda: reader_of(w), store=store).get()
+    cold = rd.HeldReading(lambda: reader_of(w), store=store)
+    shown, _last, refreshing = cold.answer(stale_ok=True)
+    assert refreshing is True and shown["cohorts_read"] == {"ok": False, "reason": "track_shape", "code": "filter_shape"}
+    assert fd.build_view(shown, TODAY)["b2c"]["cohorts"]["state"] == "unread"
+    # the next reading reads the track again: kept in the store's place, its students back
+    del w.handler, w.answer_track
+    fresh, _ = cold.get()
+    assert fresh["cohorts_read"] == {"ok": True} and store.load()["cohorts_read"] == {"ok": True}
+    assert fd.build_view(fresh, TODAY)["b2c"]["cohorts"]["state"] == "ok"
+
+
+def _failing_by_id(w: World, ids: set, crash: bool = False) -> None:
+    """monday failing every read by id that asks exactly `ids` - step 5's request, plain in a full reading or packed in a
+    refresh - as it fails a request it cannot answer (errors, no data), or the transport breaking in a way the reader does
+    not know (`crash`)."""
+    plain = w.handler
+
+    def handler(request):
+        body = json.loads(request.content)
+        asked = [{str(x) for x in v} for k, v in body["variables"].items() if k == "ids" or k[:1] == "i" and k[1:].isdigit()]
+        if "items(" in body["query"] and ids in asked:
+            if crash:
+                raise RuntimeError("a transport that breaks in a way the reader does not know")
+            return httpx.Response(200, json={"errors": [{"message": "Internal server error"}]})
+        return plain(request)
+
+    w.handler = handler
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_a_failed_read_of_the_priced_cohorts_students_leaves_the_reading_and_the_refresh_whole(crash):
+    """The review of D4 (MEDIUM): step 5 was one more request inside the reading's try, so a failure of it ended the whole
+    reading, though nothing D2 or D3 shows needs it. Now it is said (`students_failed`), as the track is."""
+    code = "internal" if crash else "graphql"
+    w = cohort_world()
+    held = rd.read_desk(reader_of(w))
+    whole = fd.build_view(held, TODAY)
+    _failing_by_id(w, {"203", "204"}, crash)
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None and r["complete"] is True
+    assert r["cohorts_read"] == {"ok": False, "reason": "students_failed", "code": code}
+    # what the reading read before step 5 is kept as it was: the payments' enrollments, counted whole
+    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["checks"]["enrollments"]["ok"] is True
+    assert r["asked"]["cohorts"] == held["asked"]["cohorts"]
+    v = fd.build_view(r, TODAY)
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2b"] == whole["b2b"] and v["checks"]["ok"] is True
+    part = v["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["cohorts"]) == ("unread", "students_failed", [])
+    assert part["said"] == ch.UNREAD_HEAD + ch.UNREAD_SAID["students_failed"] + ch.UNREAD_TAIL
+    assert rd.health_part(rd.summary(r))["cohorts"] == "students_failed"
+    # a refresh: a student newly linked to 401 is read by id after the windows, and that read fails - said, never raised,
+    # so HeldReading never reads whole for it
+    del w.handler
+    w.add(rd.ENROLLMENTS_BOARD, 207, "הרשמה-207", cohort=rel(401), voucher=status("טרם הוגש", 17),
+          status=status("נרשם", 1), person=rel(907))
+    w.touch(207)
+    w.set(401, roster=rel(201, 203, 204, 207), touch=False)
+    _failing_by_id(w, {"207"}, crash)
+    h = rd.HeldReading(lambda: reader_of(w), ttl_s=0)
+    h.reading = held
+    kept, last = h.get()
+    assert kept["kind"] == "delta" and last["error"] is None and h.health()["last_codes"][0] == "delta"
+    assert kept["cohorts_read"] == {"ok": False, "reason": "students_failed", "code": code}
+    assert "207" not in kept["asked"]["enrollments"] and fd.build_view(kept, TODAY)["b2c"]["rows"] == whole["b2c"]["rows"]
+    # once monday answers again, the next refresh reads the student it could not
+    del w.handler
+    again, _ = h.get()
+    assert again["cohorts_read"] == {"ok": True} and "207" in again["asked"]["enrollments"]
+    assert line(cohorts_of(again), "A401")["students"] == 4 and cohorts_of(again) == cohorts_of(rd.read_desk(reader_of(w)))
+
+
+def test_every_reason_the_reading_gives_has_its_words_and_the_part_of_another_shape_is_not_trusted():
+    assert set(ch.UNREAD_SAID) == set(rd.COHORTS_UNREAD)
+    for how, (reason, code) in UNREAD_HOW.items():
+        if code != "internal":
+            assert rd.cohorts_unread("track", monday.MondayError(code, "x"))["reason"] == reason, how
+    assert rd.cohorts_unread("track", KeyError("t0")) == {"ok": False, "reason": "track_failed", "code": "internal"}
+    for code in ("graphql", "filter_shape", "not_visible", "http"):
+        assert rd.cohorts_unread("students", monday.MondayError(code, "x"))["reason"] == "students_failed"
+    s = cohort_snapshot()
+    ok = ch.build_cohorts(s, fd.build_view(s, TODAY)["b2c"]["rows"])
+    assert ok["state"] == "ok" and ok["reason"] == "" and ok["said"] == "" and ok["cohorts"]
+    for said, state in ((None, "ok"), ({"ok": True}, "ok"), ({"ok": False, "reason": "track_shape"}, "unread"),
+                        ({"ok": False, "reason": "no such reason"}, "unread"), ("broken", "unread"), ({}, "unread")):
+        part = fd.build_view(dict(s, cohorts_read=said), TODAY)["b2c"]["cohorts"]
+        assert part["state"] == state, said
+        if state == "unread":
+            assert part["reason"] in ch.UNREAD_SAID and not part["cohorts"]

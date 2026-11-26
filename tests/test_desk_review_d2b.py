@@ -124,8 +124,9 @@ def test_the_ids_cost_a_page_per_board_and_a_long_board_costs_a_page_more(monkey
     h.get()
     before = len(w.queries)
     kept, _ = h.get()
-    assert kept["kind"] == "delta" and kept["id_pages"] == 3 and len(w.queries) - before == 4
-    assert h.health()["last_delta"]["id_pages"] == 3 and h.health()["last_delta"]["calls"] == 4
+    # the windows, the cohorts on the voucher track (D4: a request of their own since its review) and three pages of ids
+    assert kept["kind"] == "delta" and kept["id_pages"] == 3 and len(w.queries) - before == 5
+    assert h.health()["last_delta"]["id_pages"] == 3 and h.health()["last_delta"]["calls"] == 5
     assert [r["id"] for r in kept["student_charge"]["rows"]] == ["101", "102", "103"]
 
 
