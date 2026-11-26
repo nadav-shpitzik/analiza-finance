@@ -260,7 +260,8 @@ B2C_STATES = OrderedDict([
     ("receipt_pending", {"label": "%s, שליחת קבלה: %s" % (PAY[P_PAID], RECEIPT[R_PENDING]), "task": True,
                          "money": "money_in",
                          # why, not only what (QA 7): money came in and its receipt has not gone out
-                         "about": "נכנס כסף, והקבלה עליו עוד לא יצאה: סטטוס תשלום %s, ושליחת קבלה %s או ריקה, %s."
+                         "about": "נכנס כסף, והקבלה עליו עוד לא יצאה: סטטוס תשלום %s, ושליחת קבלה %s או ריקה, %s. "
+                                  "הוותיק ראשון, וליד התאריך כמה ימים הוא ממתין."  # Nadav 26.11: receipts go out slowly
                                   % (_quoted([PAY[P_PAID], PAY[P_ASKED]]), _q(RECEIPT[R_PENDING]), _NO_REFUND)}),
     ("refund_asked", {"label": "%s, טרם אושר" % PAY[P_ASKED], "task": False, "money": "money_in",
                       "about": "סטטוס תשלום %s, ושליחת קבלה %s, %s. הבקשה עצמה מטופלת בהרשמה, באפליקציית ההחזרים."
@@ -1206,7 +1207,9 @@ def query_exportable(q: str) -> bool:
     return bool(_EXPORTABLE_Q.fullmatch(q or ""))
 _PERIOD_KEY = re.compile(r"[0-9]{4}-[0-9]{2}(?:\+[0-9]{4}-[0-9]{2})?")
 # the list's order by the state chosen, as finance.js SC_SORT: (field, newest first); "החזר לביצוע" has its own
-B2C_SORT = {"refunded": ("refund_date", True)}
+# (key, newest first) of a state's list; every other state: ("date", True). A pending receipt is a queue: the one that has
+# waited longest first (Nadav 26.11, receipts take too long to go out; finance.js SC_SORT holds the same)
+B2C_SORT = {"refunded": ("refund_date", True), "receipt_pending": ("date", False)}
 
 
 def refund_order(row: dict) -> tuple:

@@ -2120,3 +2120,18 @@ def test_check_1_draws_the_self_check_with_the_pages_sdk_and_never_mounts_the_de
     got = glue(search="?check=1", context={"boardId": 1})
     assert got["ran"] == ["sdk"] and got["mounted"] == [] and got["fetches"] == []
     assert got["check"] is False and got["shown"] == [] and got["classes"] == ["is-check"]
+
+
+# --- the pending receipts' queue (Nadav 26.11: receipts go out slowly) ------------------------------------------------------
+def test_a_pending_receipt_says_how_long_it_has_waited_beside_its_date_and_in_its_details():
+    """3102 was paid on 3.11 and its receipt has not gone out; the reading's day is 24.11: 21 days, said beside its date in
+    the list (every list it is in) and in its details' first line. No other row says it."""
+    got = drive(answer(), [
+        {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}},
+        {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {"3102": True}}}},
+        {"show": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}}])
+    queue, details, everything = (step["html"] for step in got["steps"])
+    assert "ממתין 21 ימים" in queue and queue.count("ממתין ") == 1
+    assert details.count("ממתין 21 ימים") == 2      # beside its date, and in the details' line
+    assert everything.count("ממתין 21 ימים") == 1 and everything.count("fin-waited") == 1
+

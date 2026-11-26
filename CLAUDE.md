@@ -148,7 +148,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   also for "ייצוא לאקסל עם ת.ז", D4, into that file alone), kept in the page's memory and sent nowhere; a read on its way shows its own spinner in its cell, and nothing of the page covers the
   desk (`READING`; QA 26.11: the grey on the visit's first details is monday's, around the view, on its first monday.api). A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review); a "not yet" (429) is a flash counted down to the wait's end, and
-  gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). At
+  gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). A pending
+  receipt ("שולם, שליחת קבלה: טרם") is a queue: its list is the oldest first, on the page and in the file alike (view.py
+  `B2C_SORT`, finance.js `SC_SORT`, held together by tests/test_desk_parity_js.py), and beside its date, in every list, and in its
+  details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים"; Nadav 26.11, receipts go out slowly). At
   the desk's foot, "חסר כאן משהו? פנייה לנדב" is back as analiza-metrics' desk had it (`ASK_URL`, usage `ask`; QA 26.11).
   Until 24.12.2026 a closable "מה השתנה" of four lines under the top bar (`WHATS_NEW`), closed for good in the browser
   (localStorage, best effort; QA 26.11); the browser tests open the desk as one who closed it (`qa_visit(whats_new=False)`). A row's action in its details floats beside its control, as a batch

@@ -450,7 +450,7 @@
   }
   function termsMark(terms) { return terms ? " <bdi class=\"fin-subtle\">" + esc(terms) + "</bdi>" : " " + NO_TERMS; }
   var COLS = {
-    date: { h: "תאריך תקבול", c: function (r) { return paidDate(r); } },
+    date: { h: "תאריך תקבול", c: function (r) { return paidDate(r) + waitedMark(r); } },
     student: { h: "סטודנט/ית", c: function (r) { return nameLink(r, esc(r.name)) + writtenMark(r) + whereMark(r) + foundMark(r); } },
     /* Student Charge's "נציג מכירות" (17.11): the Owner of the payment's lead, read with the lead (app/finance.py lead_rep) */
     rep: { h: "נציג מכירות", xs: 1, c: function (r) { return r.rep ? esc(r.rep) : NOT_SET; } },
@@ -558,7 +558,9 @@
     refunded: ["refund_date", "last_day", "planned", "student", "cohort", "refunded", "method", "invoice", "credit_ref", "open"]
   };
   /* "החזר לביצוע" has its own order (refundKey); every other state is a field */
-  var SC_SORT = { refunded: "-refund_date" };
+  /* a pending receipt is a queue: the one that has waited longest first (Nadav 26.11: receipts go out slowly; app/desk/view.py
+     B2C_SORT holds the same) */
+  var SC_SORT = { refunded: "-refund_date", receipt_pending: "date" };
 
   function sortRows(rows, key) {
     var desc = key.charAt(0) === "-", k = desc ? key.slice(1) : key;
@@ -590,6 +592,19 @@
   var CREATED_BY = "(לפי " + CREATED_WORD + ")";
   function paidDate(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
+  }
+  /* how long a payment whose receipt has not gone out has waited, from its date (the payment's, else the row's creation, as
+     the date beside it says): "ממתין היום", "ממתין יום אחד", "ממתין 14 ימים" (Nadav 26.11: receipts go out slowly). Nothing for
+     any other state, or for a date ahead. */
+  function waitedText(r) {
+    if (r.state !== "receipt_pending") { return ""; }
+    var n = daysFrom(r.date);
+    if (n === null || n > 0) { return ""; }
+    return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
+  }
+  function waitedMark(r) {
+    var t = waitedText(r);
+    return t ? " <span class=\"fin-waited\">· " + t + "</span>" : "";
   }
   function paidDateSaid(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
@@ -933,7 +948,8 @@
     var paid = "שולם " + money2(r.money_in) + " ב-" + d(r.date) + (r.date_from === "paid" ? "" : " " + CREATED_BY) +
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
-      case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>";
+      case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>" +
+        (waitedText(r) ? " · " + waitedText(r) : "");
       /* the two dates side by side: the legal day and its lateness, then the transfer round set at approval. The amount is
          monday's "סכום לזיכוי", never a word of its own (QA 2.5: "להחזיר") */
       case "refund_to_execute": return "<b>סכום לזיכוי " + money2(r.credit_approved) + "</b> · " + LAST_DAY_LABEL + " " +

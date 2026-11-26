@@ -78,6 +78,10 @@ def test_the_page_and_the_file_pick_the_same_payments_in_the_same_order():
                "٤٠٠٠", "４０００", "8192.885", "-4000", "תלמיד", "inv-ai", "ZK", "00123", "a", "0", "2900"]
     refunds = [x["id"] for x in fd.filter_b2c(b2c, "refund_to_execute", "", "")]
     assert len(refunds) == 11 and refunds.index("22") < refunds.index("21")      # 16.11 before 18.11 on one planned day
+    # a pending receipt is a queue: the one that has waited longest first (Nadav 26.11), on the page as in the file
+    pending = fd.filter_b2c(b2c, "receipt_pending", "", "")
+    assert len(pending) >= 2 and [x["date"] for x in pending] == sorted(x["date"] for x in pending)
+    assert pending[0]["date"] < pending[-1]["date"]
     cases = list(itertools.product(states, periods, queries))
     data = json.dumps(json_safe({"rows": b2c["rows"], "b2c": {"states": b2c["states"], "periods": b2c["periods"]},
                                  "cases": cases}), default=str)
