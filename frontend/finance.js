@@ -604,7 +604,9 @@
   }
   function waitedMark(r) {
     var t = waitedText(r);
-    return t ? " <span class=\"fin-waited\">· " + t + "</span>" : "";
+    /* its own line under the date, free to wrap: on the date's line it widened the column, and at 1280 the books' chips of
+       "לטיפול" went to three lines (tests/test_desk_books_page.py, the QA's widths) */
+    return t ? "<span class=\"fin-waited\">" + t + "</span>" : "";
   }
   function paidDateSaid(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
