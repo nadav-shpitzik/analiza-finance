@@ -40,7 +40,7 @@
 | `MONDAY_TOKEN` | **כן**, ב-Secrets של ה-Repl | טוקן monday לקריאה בלבד (R0, ושולחן הכספים) |
 | `MONDAY_CLIENT_SECRET` | **כן**, ב-Secrets של ה-Repl | ה-Client Secret של אפליקציית monday: מאמת את ה-sessionToken של התצוגה "כספים" (D1) |
 | `WIZ_LEDGER_REPORT` | **כן**, ב-Secrets של ה-Repl | קובץ ה-External של דוח הכרטסת, כל ה-JSON כמחרוזת אחת (B3). ‏`/health` אומר רק `set`, ‏`missing` או `bad` |
-| `LEDGER_SALARY_CODES` | **כן**, ב-Secrets של ה-Repl | קודי המיון של השכר, רשימה מופרדת בפסיקים (`731,610`), שאדם בוחר (B3). בלעדיה ריצה לא שומרת דבר. ‏`/health` אומר רק `set`, ‏`missing` או `bad`, אף פעם לא את הרשימה |
+| `LEDGER_SALARY_CODES` | **כן**, ב-Secrets של ה-Repl | קודי המיון של השכר, רשימה מופרדת בפסיקים (`731,610`), שנבחרת מתוך הרשימה היבשה (B3). בלעדיה ריצה לא שומרת דבר. ‏`/health` אומר רק `set`, ‏`missing` או `bad`, אף פעם לא את הרשימה |
 | `GITHUB_DEPLOY_TOKEN` | **כן**, סוד חשבון של Replit, מקושר לאפליקציה | קריאת `main` מ-GitHub בבנייה |
 | `WIZ_COMPANY` | לא | `demo` (ברירת מחדל, `wizdb2245n4`) או `analiza` (`wizdb2245n5`, אנליזה מודיעין סייבר) |
 | `WIZ_SERVER` | לא | ברירת מחדל `lb19.wizcloud.co.il` |
@@ -242,6 +242,12 @@ curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/probe -H "Au
 ריצה קוראת וסופרת, ולא שומרת דבר** (`salary_codes_not_set`; רשימה שאינה רשימה של מספרים היא `salary_codes_bad`). מייק יקרא לה כל לילה
 (עוד לא מחובר).
 
+**הרשימה היבשה** היא אותה קריאה עם `"dry": true`: `{"months": ["2026-09", "2026-10"], "dry": true}`. היא קוראת את החודשים באותה דרך ולא
+שומרת דבר, ועונה לכל קוד מיון: הקוד, השם שלו, ומספר החשבונות השונים שלו בחודשים האלה (גם מפתחות מוסתרים נספרים, ו-`masked_keys` אומר
+כמה). אף סכום. השמות הם קטגוריות ולא אנשים, ולכן מותר להראות אותם. כשהרשימה מוגדרת, כל קוד אומר גם אם הוא בה (`salary`), ו-
+`salary_codes_unseen` סופר קודים ברשימה שאף שורה לא נושאת (טעות הקלדה?). כך בוחרים את קודי השכר. **קוד ההתחייבויות של השכר משקף את
+ההוצאה**, ולכן גם הוא צריך להיות ברשימה: אחרת הוא מראה את סך השכר של החודש בשורה משלו.
+
 **הסכומים** נקראים ב-`GET /api/books/ledger/totals?from=2026-09&to=2026-10` (`to` לא חובה, עד 60 חודשים), מאחורי אותו מפתח: השורות
 שנשמרו, כל אחת עם שם הקוד, חובה, זכות, שורות, חשבונות ו-`masked_keys`, והשורה המאוחדת (`sort_code: -1`, ‏`merged: true`) בשם הקבוע
 שלה; ולכל חודש הספירות ומנה 9998. סכום נשלח כטקסט מדויק (`"5463.18"`).
@@ -255,10 +261,15 @@ curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/probe -H "Au
    `Now at: <sha7 של main>`, אחר כך `database: helium/...` (הפיתוח), ובסוף שורת `ok:`.
 3. ‏Republish בממשק, וקוראים את ה-SQL שהוא מראה: רק `CREATE`. כל `DROP` הוא Cancel.
 4. ‏`/health`: ‏`build.sha` הוא של `main`, חמש הטבלאות `ledger_*` הן `"present"` ב-`store.tables`, ו-`store.missing_columns` הוא `[]`.
-5. בוחרים את קודי השכר (ההוצאה, וגם ההתחייבויות שלה: קוד ההתחייבויות משקף את ההוצאה, ואחרת הוא מראה את סך השכר בשורה משלו),
-   ומגדירים את `LEDGER_SALARY_CODES` ב-Secrets של ה-Repl, לסביבת העבודה ולפריסה, ואז Republish (שינוי קוד בלבד). ‏`/health`:
-   ‏`books.ledger.salary_codes` הוא `set`.
-6. ריצה ראשונה:
+5. הרשימה היבשה, מה-Shell, על שלושה חודשים:
+
+```bash
+curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/run -H "Authorization: Bearer $BOOKS_SYNC_KEY" -H "Content-Type: application/json" -d '{"months": ["2026-08", "2026-09", "2026-10"], "dry": true}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=1))'
+```
+
+6. בוחרים מתוכה את קודי השכר (ההוצאה, וגם ההתחייבויות שלה), ומגדירים את `LEDGER_SALARY_CODES` ב-Secrets של ה-Repl, לסביבת העבודה
+   ולפריסה, ואז Republish (שינוי קוד בלבד). ‏`/health`: ‏`books.ledger.salary_codes` הוא `set`.
+7. ריצה ראשונה:
 
 ```bash
 curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/run -H "Authorization: Bearer $BOOKS_SYNC_KEY" -H "Content-Type: application/json" -d '{"months": ["2026-10"]}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=1))'

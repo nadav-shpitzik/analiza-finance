@@ -16,8 +16,8 @@ Never kept: an account's name, details, a reference, a counter-account, a cost c
 
 **The merge (the owner's decision, 26.11): salaries, and every line few accounts fill, are one line a month.** A month's
 line goes into the merged line when
-1. its sort code is a salary code: listed explicitly in LEDGER_SALARY_CODES (a Replit Secret, chosen by a person),
-   never guessed by a name. Until the list is set, a run stores nothing (`salary_codes_not_set`);
+1. its sort code is a salary code: listed explicitly in LEDGER_SALARY_CODES (a Replit Secret, chosen from the dry
+   listing), never guessed by a name. Until the list is set, a run stores nothing (`salary_codes_not_set`);
 2. it has fewer than MIN_ACCOUNTS (3) distinct accounts (`small`): a code that holds one person's account exposes their
    monthly amount (ADR-0187 "שארית ידועה");
 3. its debit or its credit is filled by fewer than MIN_ACCOUNTS accounts (`side`): with one account debited and others
@@ -49,6 +49,10 @@ A month is replaced only when it was read whole:
    the cap the vendor applies: the External file's `limit` is not sent (app/books/ledger.py), so an answer cut by a lower
    cap of the server's would pass `hit_limit`. A hypothesis the first run settles.
 4. an answer of no rows ("data not found") for a month the store holds rows of is doubted, not trusted (`emptied`).
+
+**The dry listing** (`listing`) reads the same months the same way and stores nothing: per sort code its name and its
+distinct accounts in those months, masked keys counted too - the categories a person chooses the salary codes from. Never
+an amount.
 
 The rows live only in the run's memory (ADR-0187 §3): read, summed and dropped, never logged, kept or returned. The answers
 are counts and closed words; no message here ever carries a value of a row.
@@ -609,3 +613,45 @@ def run(client, store, company: str, months: list, text: Optional[str], deadline
         ok = not reasons
         held.finish_run(run_id, ok, reasons)
     return {"ok": ok, "skipped": False, "reasons": reasons, "run_id": run_id, "months": out}
+
+
+def listing(client, months: list, text: Optional[str], deadline: float, clock: Callable[[], float] = time.monotonic,
+            salary_text: Optional[str] = None) -> dict:
+    """The dry listing: the months read whole the way a run reads them, and nothing stored, logged or kept. Per sort code
+    seen outside batch 9998 in those months: its name, its distinct accounts (masked keys counted too, and how many), and,
+    when the salary list is set, whether it is on it - categories and counts, never an amount. A month that cannot be read
+    whole says why and lists nothing."""
+    definition, refused = _definition(text)
+    if refused is not None:
+        return {**refused, "dry": True}
+    state, salary = salary_codes(salary_text)
+    seen: dict = {}  # sort code -> [identities, masked identities, Counter of names]
+    out: dict = {}
+    with client.connection():
+        for month in months:
+            result, acc = read_month(_caller(client, definition), definition, month, deadline, clock)
+            if acc is not None:
+                acc.counts(result)
+                for code, (_rows, accounts) in acc.lines.items():
+                    entry = seen.setdefault(code, [set(), set(), Counter()])
+                    entry[0].update(accounts)
+                    entry[1].update(who for who in accounts if who in acc.masked)
+                    entry[2].update(acc.names.get(code, {}))
+            del acc
+            answer = result.answer()
+            out[month] = {"read": result.reason is None, "reason": result.reason, "cut": result.cut, "parts": result.parts,
+                          "rows": result.rows, "sort_codes": result.sort_codes,
+                          **{k: answer[k] for k in ("kind", "vendor", "unreadable", "outside") if k in answer}}
+    codes = []
+    for code in sorted(seen):
+        who, masked, names = seen[code]
+        entry = {"sort_code": code, "name": _best(names) if names else None, "accounts": len(who), "masked_keys": len(masked)}
+        if state == "set":
+            entry["salary"] = code in salary
+        codes.append(entry)
+    seen.clear()
+    reasons = _reasons(answer["reason"] for answer in out.values() if answer["reason"])
+    answer = {"ok": not reasons, "dry": True, "reasons": reasons, "salary_codes": state, "months": out, "codes": codes}
+    if state == "set":
+        answer["salary_codes_unseen"] = len(salary - {entry["sort_code"] for entry in codes})
+    return answer

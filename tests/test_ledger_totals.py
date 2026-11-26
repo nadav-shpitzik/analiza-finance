@@ -1,6 +1,6 @@
 """B3's totals (backlog 0301; ADR-0187 §2-§5; the owner's merge of 26.11): months of the ledger report summed by sort code,
 the salary codes and every line fewer than three accounts fill merged into one line a month, and each month replaced whole
-(app/books/ledger_totals.py, app/books/ledger_store.py, migrations/007); the routes POST
+(app/books/ledger_totals.py, app/books/ledger_store.py, migrations/007); the dry listing; the routes POST
 /api/books/ledger/run and GET /api/books/ledger/totals; /health's books.ledger. Synthetic data only: four months of a small
 company's books, every transaction balanced, with the expected totals written out by hand below - never computed by the
 code under test."""
@@ -160,7 +160,8 @@ NAMES = {code: name for code, name, _ in ACCOUNTS.values()}
 MAP = {key: code for key, (code, _, _) in ACCOUNTS.items() if key not in ID_KEYS}  # (c): the keys that are no ID number
 
 ROWS = JULY + AUGUST + SEPTEMBER + OCTOBER
-# What a row holds that no answer may say: everything but the sort code and its name, which the totals say by design.
+# What a row holds that no answer may say: everything but the sort code and its name, which the totals and the dry listing
+# say by design.
 PRIVATE = targets([{k: v for k, v in r.items() if k not in ("קוד מיון", "שם קוד מיון")} for r in ROWS]) - {"9998"}
 EVERYTHING = targets(ROWS) - {"9998"}  # the transfer batch's number is a constant the answers name ("batch_9998_rows")
 TOTALS = {format(v, "f") for _, lines in MONTHS.values() for line in lines.values() for v in line[:2] if v} | {
@@ -301,6 +302,10 @@ def pg():
 def run(books, url, months, text=SECRET, box_s=60.0, salary=SALARY):
     return ledger_totals.run(books.client(), LedgerStore(url), DEMO, months, text, time.monotonic() + box_s, trigger="test",
                              salary_text=salary)
+
+
+def dry(books, months, text=SECRET, salary=SALARY, box_s=60.0):
+    return ledger_totals.listing(books.client(), months, text, time.monotonic() + box_s, salary_text=salary)
 
 
 def sql(url, query, args=()):
@@ -510,6 +515,43 @@ def test_an_id_like_key_is_never_stored_hashed_or_kept_in_any_form(pg):
 
 def dump_answer(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+# ---- the dry listing -----------------------------------------------------------------------------------------------------
+
+LISTED = [  # Sep and Oct: per code its name, its distinct accounts in both months (masked counted too), on the list or not
+    (105, 3, 2, False), (300, 1, 0, False), (410, 3, 0, False), (610, 3, 0, True), (720, 2, 0, False), (731, 3, 0, True),
+    (733, 1, 0, True), (942, 3, 0, False), (951, 3, 0, False), (960, 3, 0, False)]
+
+
+@needs_pg
+def test_the_dry_listing_names_each_code_counts_its_accounts_and_stores_nothing(pg):
+    books = Books()
+    out = dry(books, ["2026-09", "2026-10"])
+    assert (out["ok"], out["dry"], out["reasons"], out["salary_codes"], out["salary_codes_unseen"]) == (
+        True, True, [], "set", 0)
+    assert out["codes"] == [{"sort_code": c, "name": NAMES[c], "accounts": n, "masked_keys": m, "salary": s}
+                            for c, n, m, s in LISTED]  # 990, seen only in the transfer, is no line: not listed
+    assert out["months"]["2026-10"] == {"read": True, "reason": None, "cut": False, "parts": 1, "rows": 42, "sort_codes": 10}
+    assert counts(pg, *LEDGER_TABLES) == dict.fromkeys(LEDGER_TABLES, 0)
+    text = dump_answer(out)
+    assert scan(text, PRIVATE - SAID) == [] and [t for t in TOTALS if t in text] == []  # no amount, no row's value
+    # without the list: the same categories, and nothing said of a list
+    out = dry(books, ["2026-09", "2026-10"], salary=None)
+    assert out["ok"] and out["salary_codes"] == "missing" and "salary_codes_unseen" not in out
+    assert [(c["sort_code"], c["accounts"]) for c in out["codes"]] == [(c, n) for c, n, _, _ in LISTED]
+    assert all("salary" not in c for c in out["codes"])
+    assert dry(books, ["2026-10"], salary="731,9999")["salary_codes_unseen"] == 1  # a listed code no row carries
+
+
+@needs_pg
+def test_a_month_the_dry_listing_cannot_read_whole_is_said_and_lists_nothing(pg):
+    books = Books([r for r in ROWS if not (r["מספר תנועה"] == 88405 and r["מפתח חשבון"] == "70010")])  # unbalanced
+    out = dry(books, ["2026-09", "2026-10"])
+    assert (out["ok"], out["reasons"]) == (False, ["unbalanced"])
+    assert out["months"]["2026-10"]["read"] is False and out["months"]["2026-10"]["reason"] == "unbalanced"
+    assert [c["sort_code"] for c in out["codes"]] == [300, 942, 951]  # September's only
+    assert dry(Books(), ["2026-10"], text=None)["reasons"] == ["not_set"]
 
 
 # ---- a month, replaced -------------------------------------------------------------------------------------------------
@@ -751,6 +793,7 @@ def test_both_routes_need_the_sync_key_before_anything(app, pg):
     client, books = app
     for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": SYNC_KEY}):
         assert client.post(RUN, json={"months": ["2026-10"]}, headers=headers).status_code == 401
+        assert client.post(RUN, json={"months": ["2026-10"], "dry": True}, headers=headers).status_code == 401
         assert client.post(RUN, content=b"{not json", headers=headers).status_code == 401
         assert client.get(TOTALS_URL + "?from=2026-10", headers=headers).status_code == 401
     assert books.requests == [] and sql(pg, "SELECT count(*) FROM ledger_runs")[0][0] == 0
@@ -771,6 +814,21 @@ def test_the_run_route_runs_the_last_two_months_in_israel_time_and_says_counts_o
     assert scan(r.text, EVERYTHING) == [] and scan(caplog.text, EVERYTHING) == [] and KEY not in caplog.text
 
 
+@needs_pg
+def test_the_dry_listing_through_the_route_stores_nothing_and_says_no_amount(app, pg, caplog):
+    client, books = app
+    caplog.set_level(logging.DEBUG)
+    r = client.post(RUN, json={"months": ["2026-09", "2026-10"], "dry": True}, headers=AUTH)
+    body = r.json()
+    assert r.status_code == 200 and body["dry"] is True and body["ok"] is True and body["company"] == "demo"
+    assert [(c["sort_code"], c["name"], c["accounts"], c["salary"]) for c in body["codes"]] == [
+        (c, NAMES[c], n, s) for c, n, _, s in LISTED]
+    assert counts(pg, *LEDGER_TABLES) == dict.fromkeys(LEDGER_TABLES, 0)
+    assert scan(r.text, PRIVATE - SAID) == [] and [t for t in TOTALS if t in r.text] == []
+    assert scan(caplog.text, EVERYTHING) == []
+    assert client.post(RUN, json={"dry": False, "months": ["2026-10"]}, headers=AUTH).json()["months"]["2026-10"]["stored"]
+
+
 @pytest.mark.parametrize("now,months", [
     ("2026-10-31T22:30:00+00:00", ["2026-10", "2026-11"]),  # already November in Israel
     ("2026-10-31T21:30:00+00:00", ["2026-09", "2026-10"]),
@@ -789,7 +847,7 @@ def test_the_default_months_are_israels(now, months):
 @pytest.mark.parametrize("content", [
     b"{not json", b"\xff\xfe", b"[]", b'"2026-10"', b'{"months": []}', b'{"months": "2026-10"}', b'{"months": ["2026-13"]}',
     b'{"months": ["2026-10", "2026-10"]}', b'{"months": [202610]}', b'{"months": ["2026-10"], "company": "analiza"}',
-    b'{"company": "demo"}', b'{"dry": true}',
+    b'{"company": "demo"}', b'{"dry": "true"}', b'{"dry": 1, "months": ["2026-10"]}', b'{"dry": null}',
     json.dumps({"months": [f"2026-{m:02d}" for m in range(1, 13)] + ["2025-12"]}).encode(),
 ])
 def test_a_body_that_is_not_one_is_bad_request_never_echoed_and_never_run(app, pg, content):
@@ -817,9 +875,10 @@ def test_a_crash_in_the_route_is_a_200_with_its_class_only(app, pg, monkeypatch)
         raise ValueError("ישראל ישראלי 48213.77")
 
     monkeypatch.setattr(ledger_totals, "read_month", boom)
-    r = client.post(RUN, json={"months": ["2026-10"]}, headers=AUTH)
-    assert r.status_code == 200 and (r.json()["reasons"], r.json()["error"]) == (["crashed"], "ValueError")
-    assert "48213" not in r.text and "ישראל" not in r.text
+    for payload in ({"months": ["2026-10"]}, {"months": ["2026-10"], "dry": True}):
+        r = client.post(RUN, json=payload, headers=AUTH)
+        assert r.status_code == 200 and (r.json()["reasons"], r.json()["error"]) == (["crashed"], "ValueError")
+        assert "48213" not in r.text and "ישראל" not in r.text
 
 
 @needs_pg

@@ -95,9 +95,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   `MAX_PARTS` calls, else `cut`); every row readable and inside its cut (`unreadable`, `outside`, `columns`); the month
   balanced (`unbalanced`, the guard that does not depend on the vendor's own cap, since `limit` is not sent; a hypothesis
   the first run settles); an empty answer for a month held with rows is `emptied`, never trusted. Routes behind the sync
-  key: `POST /api/books/ledger/run` (`{"months": [...]}`, 1 to 12, default the previous and the current month in Israel
-  time; boxed like a tick, always 200, counts and closed `reasons` only) and `GET /api/books/ledger/totals?from=&to=` (the
-  kept lines and the merged one, money as text). `/health`
+  key: `POST /api/books/ledger/run` (`{"months": [...], "dry": false}`, 1 to 12, default the previous and the current month
+  in Israel time; boxed like a tick, always 200, counts and closed `reasons` only; `"dry": true` is the dry listing the
+  salary codes are chosen from: per code its name and its distinct accounts in those months, never an amount, nothing
+  stored) and `GET /api/books/ledger/totals?from=&to=` (the kept lines and the merged one, money as text). `/health`
   `books.ledger`: `salary_codes` (`set`, `missing` or `bad`, never the list), the last run's times, ok and reasons, and the
   months held, never a total. `tests/test_ledger_totals.py` scans every table for every form of the fixture's ID keys, and
   every answer and log for every fixture value. Deploy it as a schema change (below); Make's nightly call is not wired yet.

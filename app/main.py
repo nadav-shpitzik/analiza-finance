@@ -609,25 +609,30 @@ def _month_text(value: Any) -> Optional[str]:
 
 
 def _run_input(payload: Any, now_ts: float) -> tuple:
-    """(the months to run, None), or (None, a fixed detail) for a bad request. No body, or a body without `months`, is the
-    previous and the current month (Israel time); otherwise `months` is 1 to MAX_MONTHS distinct "YYYY-MM", run oldest
-    first. Any other key is refused: a body that names a company is never run on this deployment's instead."""
+    """(the months to run, dry, None), or (None, None, a fixed detail) for a bad request. No body, or a body without
+    `months`, is the previous and the current month (Israel time); otherwise `months` is 1 to MAX_MONTHS distinct
+    "YYYY-MM", run oldest first. `dry` (true or false, false by default) asks for the dry listing. Any other key is
+    refused: a body that names a company is never run on this deployment's instead."""
     from .books.ledger_totals import MAX_MONTHS
 
-    shape = f'the body is {{"months": ["YYYY-MM", ...]}} with 1 to {MAX_MONTHS} months, or nothing for the last two'
+    shape = (f'the body is {{"months": ["YYYY-MM", ...], "dry": true|false}} with 1 to {MAX_MONTHS} months, both '
+             'optional: the last two months, stored')
     if payload is None:
-        return default_months(now_ts), None
-    if not isinstance(payload, dict) or set(payload) - {"months"}:
-        return None, shape
+        return default_months(now_ts), False, None
+    if not isinstance(payload, dict) or set(payload) - {"months", "dry"}:
+        return None, None, shape
+    dry = payload.get("dry", False)
+    if not isinstance(dry, bool):
+        return None, None, shape
     if "months" not in payload:
-        return default_months(now_ts), None
+        return default_months(now_ts), dry, None
     asked = payload["months"]
     if not isinstance(asked, list) or not 1 <= len(asked) <= MAX_MONTHS:
-        return None, shape
+        return None, None, shape
     months = [_month_text(m) for m in asked]
     if None in months or len(set(months)) != len(months):
-        return None, shape
-    return sorted(months), None
+        return None, None, shape
+    return sorted(months), dry, None
 
 
 def salary_state(text: str) -> str:
@@ -641,12 +646,13 @@ def salary_state(text: str) -> str:
 async def ledger_run(request: Request) -> JSONResponse:
     """B3 (backlog 0301; ADR-0187 §2-§5): the ledger report run for whole months, each summed by sort code, its salary codes
     and its thin lines merged into one line, and replaced in one transaction (app/books/ledger_totals.py). Behind the sync
-    key, checked before the body is read. The body is `{"months": ["YYYY-MM", ...]}` (1 to 12 months), or nothing for the
-    previous and the current month in Israel time. Always 200 after the key, boxed like a tick
+    key, checked before the body is read. The body is `{"months": ["YYYY-MM", ...], "dry": false}` (1 to 12 months), or
+    nothing for the previous and the current month in Israel time. Always 200 after the key, boxed like a tick
     (REQUEST_BOX_S from the request's arrival): `ok`, `skipped`, `reasons` (closed: ledger_totals.RUN_REASONS), and per
     month its counts - rows, sort_codes, kept_lines, merged_codes, merged, merged_by, masked_keys, batch_9998_rows, cut,
-    parts, stored and why not. Without LEDGER_SALARY_CODES nothing is stored (`salary_codes_not_set`). Never a value of a
-    row, never a total: the totals are read behind the same key
+    parts, stored and why not. Without LEDGER_SALARY_CODES nothing is stored (`salary_codes_not_set`). `"dry": true` is
+    the dry listing instead: per sort code its name and its distinct accounts in those months, nothing stored - how the
+    salary codes are chosen. Never a value of a row, never a total: the totals are read behind the same key
     (GET /api/books/ledger/totals). Make will call it nightly."""
     started = time.monotonic()
     cfg = config.load()
@@ -659,7 +665,7 @@ async def ledger_run(request: Request) -> JSONResponse:
         payload = json.loads(raw) if raw.strip() else None
     except (ValueError, RecursionError):  # not JSON, or not UTF-8
         payload = _NOT_JSON
-    months, problem = _run_input(payload, state.clock())
+    months, dry, problem = _run_input(payload, state.clock())
     if problem is not None:
         answer = {"ok": False, "skipped": False, "reasons": ["bad_request"], "months": {}, "detail": problem}
     else:
@@ -670,6 +676,9 @@ async def ledger_run(request: Request) -> JSONResponse:
             from .books.ledger_store import LedgerStore
 
             try:
+                if dry:
+                    return ledger_totals.listing(get_client(state, cfg), months, cfg.ledger_report, deadline,
+                                                 salary_text=cfg.ledger_salary_codes)
                 return ledger_totals.run(get_client(state, cfg), LedgerStore(cfg.database_url), cfg.db, months,
                                          cfg.ledger_report, deadline, salary_text=cfg.ledger_salary_codes)
             except Exception as exc:  # noqa: BLE001 - by class, never the text: a message could carry what a row held
