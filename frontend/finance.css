@@ -432,7 +432,8 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
    beside what was pressed, over the list and never in it, so no row moves when it opens or closes (finance.js placePop
    places it in the view, and the focus on it scrolls nothing). Opaque, over the rows; the bar's place is held, empty, while
    the batch's rows offer no box any more */
-#screen-finance .fin-batch.fin-pop, #screen-finance .fin-act-box.fin-pop { position: fixed; z-index: 20; top: 8px; left: 8px;
+#screen-finance .fin-batch.fin-pop, #screen-finance .fin-act-box.fin-pop, #screen-finance .fin-nag-box.fin-pop { position: fixed;
+  z-index: 20; top: 8px; left: 8px;
   width: min(520px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; margin: 0; padding: 10px 14px;
   border: 1px solid var(--fin-focus); border-radius: 8px; background: var(--fin-panel); font-size: 14px;
   box-shadow: 0 8px 24px rgba(15, 20, 30, .2); }
@@ -480,3 +481,14 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-books .fin-fill .fin-btn { height: 26px; padding: 0 10px; font-size: 13px; }
 #screen-finance .fin-books .fin-actions .fin-btn { gap: 6px; }
 #screen-finance .fin-acts .fin-fill-said { margin: 8px 0 0; }
+
+/* R5 ("לא פער"): the press beside a mark's sentence, a document and a proposal; what came back; and under a list what is
+   hidden of it, opened by "הוסתרו כלא פער (N)". Its confirmation floats as a batch does (fin-pop, above) */
+#screen-finance .fin-nag { font-size: 13px; white-space: nowrap; }
+#screen-finance .fin-dx-warn .fin-nag { color: var(--fin-bad-ink); margin-inline-start: 6px; }
+#screen-finance table.fin-books-t td.b-nag { white-space: nowrap; }
+#screen-finance .fin-nag-back { margin-top: 3px; color: var(--fin-muted); font-size: 12.5px; }
+#screen-finance .fin-nag-box p { margin: 0 0 6px; }
+#screen-finance .fin-nag-hidden { margin: 10px 16px 4px; font-size: 13px; }
+#screen-finance .fin-nag-list { margin: 6px 0 0; padding-inline-start: 18px; }
+#screen-finance .fin-nag-list li + li { margin-top: 4px; }

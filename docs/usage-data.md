@@ -30,6 +30,9 @@
 | `open_item` | שורה נפתחה במאנדיי | `where`: ‏`name` (השם), ‏`icon`, ‏`details` (הכפתור בפרטים) |
 | `act` | פעולה (סימון "תשלום הוחזר", "יצאה", "חויב"...) | `action`, `phase` (‏`start`, ‏`shown`, ‏`confirm`, ‏`done`, ‏`failed`, ‏`nothing`, ‏`invalid`, ‏`cancel`), `code` למה נכשלה |
 | `books_fill` | "רישום מחשבשבת" נלחץ (D4, ‏26.11); מה שקורה אחר כך הוא `act` עם `action` ‏`books_fill` | `from`: ‏`detail` (בפרטים של שורה), ‏`list` (ליד מסמך ברשימה), ‏`all` ("לרשום את כל ההצעות"); `rows` כמה שורות באצווה |
+| `not_a_gap` | "לא פער" או "לא להציע" נלחץ (R5, ‏26.11): נפתח, בוטל, נשמר או נדחה | `alert` סוג ההתראה (‏`books_ref_invalid`, ‏`books_doc_students`, ‏`books_ref_fill` וכו'), `phase` (‏`open`, ‏`cancel`, ‏`done`, ‏`failed`), `code` למה נדחה (מילת השרת), `from` (‏`detail` בפרטים של שורה, ‏`list` ברשימת המסמכים) |
+| `not_a_gap_undo` | "החזרה" של הסתרה (R5) | `alert`, `phase` (‏`done`, ‏`failed`), `code` |
+| `not_a_gap_list` | "הוסתרו כלא פער (N)" נפתח או נסגר (R5) | `open`, `list` (‏`b2c`, ‏`b2b`, ‏`unclear`) |
 | `bill` | פרטי חיוב של חברה. **לא נשלח מאז המעבר:** פרטי החיוב מוצגים לקריאה בלבד עד שהעריכה תחזור מהדפדפן (ADR-0188); נשאר ברשימה בשבילה, ובשביל ההיסטוריה שמיובאת | `phase` (‏`edit`, ‏`confirm`, ‏`done`, ‏`failed`, ‏`nothing`, ‏`invalid`, ‏`cancel`), `code`, `fields` כמה פרטים |
 | `export` | ייצוא לאקסל | `list` (‏`b2c`, ‏`b2b`, ‏`b2b_customers`, ‏`b2c_cohorts`: "לפי מחזור", D4) |
 | `legend` / `notes` | "מקרא" / "פרטים על הנתונים" | `open` |

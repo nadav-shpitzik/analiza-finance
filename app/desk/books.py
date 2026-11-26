@@ -105,6 +105,8 @@ from ..recon.cards import day_of as _day
 from ..recon.cards import money_of as _money
 from ..recon.cards import number_of as _number
 from ..recon.reading import Board, check_board
+from . import dismissals as dz
+from .dismissals_store import DismissalRefused
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
 from .view import (BOOKS_FILL_BUTTON, BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID,
                    TASK_STATES, status_word)
@@ -549,6 +551,18 @@ def _with_why(candidate: dict, why: Optional[dict]) -> dict:
     return dict(candidate, why=why["text"], why_key=why["key"]) if why else candidate
 
 
+def dismissable(e: dict, doc: dict, place: str, side: str) -> dict:
+    """R5: a listed document's entry with what a press of "לא פער" names - its kind (the list's, dz.DOC_KINDS), its subject
+    (its number as A1 reads one) and its evidence (dz.document_evidence, `side` its list or why its side is unclear). A
+    document with no number of digits has none: it cannot be dismissed."""
+    subject = _number(doc)
+    if subject is None or len(subject) > dz.SUBJECT_MAX:
+        return e
+    kind = dz.DOC_KINDS[place]
+    e.update(kind=kind, subject=subject, evidence=dz.digest(dz.document_evidence(kind, doc, side)))
+    return e
+
+
 def _newest(entries: list) -> list:
     return sorted(entries, key=lambda e: (e["date"], int(e["number"]) if e["number"].isdigit() else 0), reverse=True)
 
@@ -570,9 +584,17 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     idx = index_copy(documents)
     marks, notes = marks_of(analysis, rows_by_id, idx)
     c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]       # FR-C2, once: the proposals and why none (QA 9)
+    # R5: each alert's evidence ("לא פער" keeps it, app/desk/dismissals.py) and its row's name (the hidden list says it)
+    held = dz.held_by_number(documents)
+    for item_id, ms in marks.items():
+        for m in ms:
+            m.update(name=rows_by_id[item_id].get("name", ""), evidence=dz.digest(dz.mark_evidence(
+                m["kind"], item_id, analysis["rows"][item_id], rows_by_id[item_id], held)))
     fills = proposals(sc_raw, b2_raw, documents, keys, rows_by_id, c2)
-    for fill in fills.values():
+    for item_id, fill in fills.items():
         fill["mark"] = fill_mark(fill, idx)
+        fill["mark"].update(name=rows_by_id[item_id].get("name", ""), evidence=dz.digest(dz.fill_evidence(
+            fill["mark"]["kind"], item_id, fill["values"])))
     # the document each proposed number names (FR-3: one status-1 document carries it), and the row it is proposed to
     proposed = {idx["by_number"][f["values"]["number"]][0]["stock_id"]: (i, f["values"]["number"])
                 for i, f in fills.items() if "number" in f["values"]}
@@ -601,15 +623,22 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
             if d["stock_id"] in proposed:  # D4: the row the books propose to write its number in
                 item_id, number = proposed[d["stock_id"]]
                 e["proposal"] = {"item_id": item_id, "name": rows_by_id[item_id].get("name", ""), "number": number}
-            lists["students"].append(e)
+            lists["students"].append(dismissable(e, d, place, place))
         elif place == "companies":
             e = _entry(d)
             e["accounts"] = sorted(set(keys.get(norm_key(d.get("account_key")), [])))
-            lists["companies"].append(e)
+            lists["companies"].append(dismissable(e, d, place, place))
         elif place == "unclear":
             e = _entry(d)
             e.update(why=why, why_text=UNCLEAR_WHY.get(why, ""))
-            lists["unclear"].append(e)
+            lists["unclear"].append(dismissable(e, d, place, "unclear:" + why))
+    # R5: a number two documents of one list carry (FR-3: a number names one document; A1 calls one so held ambiguous) names
+    # neither - a press would name the other's evidence - so neither carries evidence: neither is pressed, hidden or "חזר"
+    for entries in lists.values():
+        held = Counter(e.get("subject") for e in entries if e.get("subject"))
+        for e in entries:
+            if held[e.get("subject")] > 1:
+                e.pop("evidence", None)
     return {"marks": marks, "notes": notes, "fills": fills, "reading_at": reading.get("read_at"),
             "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
             "unclear": _newest(lists["unclear"]), "vouchers": vouchers, "places": places,
@@ -649,6 +678,32 @@ def _tasks_of(rows: list, months: list) -> int:
                and (r["state"] in keep or r.get("books_task")))
 
 
+# what a row's `books` says of each mark and proposal: its words, its documents, and since R5 its evidence (what a press of
+# "לא פער" or "לא להציע" names) and, when it came back from one, `returned` (who, when); since the QA of 26.11 (D) a mark's
+# whole words too (`long`: its chip is short, and the Excel file's "מה לבדוק" says these)
+BOOK_KEYS = ("kind", "chip", "long", "text", "documents", "evidence", "returned")
+
+
+def lays_fills(part: dict, read_at: Any) -> bool:
+    """D4: what the books propose is laid only from a current part computed on this very reading - never from a held one,
+    and never from one of another reading laid over this one (an answer at once may carry the last part computed)."""
+    return part.get("state") == "ok" and bool(part.get("reading_at")) and part.get("reading_at") == read_at
+
+
+def _laid(m: dict) -> dict:
+    return {k: m[k] for k in BOOK_KEYS if k in m}
+
+
+def _dismissed(part: dict, tab: str, laid: bool) -> list:
+    """R5: what the part holds hidden ("לא פער") of one tab or of the unclear list - a proposal only where proposals are
+    laid."""
+    return [x for x in (part.get("hidden") or {}).get(tab) or [] if laid or x["kind"] not in dz.FILL_KINDS]
+
+
+def _by_kind(items: list) -> dict:
+    return dict(Counter(x["kind"] for x in items))
+
+
 def merge(view: dict, part: dict) -> dict:
     """The view with the part laid over it, for every reader (app/desk/view.py `visible_part` then removes what a reader
     may not see): the marks on their rows - each mark's kind added to the row's flags, so the page's column "מה לבדוק" and
@@ -659,14 +714,15 @@ def merge(view: dict, part: dict) -> dict:
     under `books_unclear`, and the part's state under `books`. D4: on a row the books propose a fill to, its chip (a flag,
     beside the marks' in `books`), its values (`books_fill`: {number?, date?}) and the action that writes them, and on its
     document in the students' list its `proposal` - only from a current part of this very reading (`laid`); a proposal
-    neither moves a row nor joins "לטיפול"."""
+    neither moves a row nor joins "לטיפול". R5: each list's part also carries what is hidden as "לא פער" of it (`hidden`,
+    with who and when; app/desk/dismissals.py `hide` took them out of the marks and the lists, so out of "לטיפול" and its
+    counts too) and, by kind, how many are hidden and how many came back (`hidden_counts`, `returned_counts`): the
+    students' tab its marks, proposals and documents, the companies' tab its documents, `books_unclear` its own."""
     out = dict(view)
     out["books"] = public(part)
     marks, notes = part.get("marks") or {}, part.get("notes") or {}
     era = ERA_FROM.isoformat()
-    # D4: what the books propose is laid only from a current part computed on this very reading - never from a held one,
-    # and never from one of another reading laid over this one (an answer at once may carry the last part computed)
-    laid = part.get("state") == "ok" and bool(part.get("reading_at")) and part.get("reading_at") == view.get("read_at")
+    laid = lays_fills(part, view.get("read_at"))
     fills = (part.get("fills") or {}) if laid else {}
     if view.get("b2c") is not None:
         b2c = dict(view["b2c"])
@@ -675,29 +731,36 @@ def merge(view: dict, part: dict) -> dict:
             mine = marks.get(r["id"])
             if mine:
                 r = dict(r, flags=list(r["flags"]) + [m["kind"] for m in mine if m["kind"] not in r["flags"]],
-                         books=[{k: m[k] for k in ("kind", "chip", "long", "text", "documents") if k in m} for m in mine],
-                         books_task=bool(r.get("date")) and r["date"] >= era)
+                         books=[_laid(m) for m in mine], books_task=bool(r.get("date")) and r["date"] >= era)
             if notes.get(r["id"]):  # a number it cites is not yet in the copy: said in its details, no mark
                 r = dict(r, books_note=notes[r["id"]])
             fill = fills.get(r["id"])
             if fill:  # D4: its chip beside the row's others, its values for the action, and the action itself
                 m = fill["mark"]
-                r = dict(r, flags=list(r["flags"]) + [m["kind"]],
-                         books=list(r.get("books") or []) + [{k: m[k] for k in ("kind", "chip", "text", "documents")}],
+                r = dict(r, flags=list(r["flags"]) + [m["kind"]], books=list(r.get("books") or []) + [_laid(m)],
                          books_fill=dict(fill["values"]), actions=list(r.get("actions") or []) + [FILL_ACTION])
             rows.append(r)
         b2c["rows"] = rows
         b2c["periods"] = [dict(p, tasks=_tasks_of(rows, p.get("months") or [])) for p in b2c["periods"]]
         documents = [e if laid else {k: v for k, v in e.items() if k != "proposal"} for e in part.get("students") or []]
-        b2c["books"] = {"title": BOOKS_LIST_TITLE, "about": STUDENTS_ABOUT, "documents": documents}
+        hidden = _dismissed(part, "b2c", laid)
+        came_back = [b for x in rows for b in x.get("books") or [] if b.get("returned")] + [
+            e for e in documents if e.get("returned")]
+        b2c["books"] = {"title": BOOKS_LIST_TITLE, "about": STUDENTS_ABOUT, "documents": documents, "hidden": hidden,
+                        "hidden_counts": _by_kind(hidden), "returned_counts": _by_kind(came_back)}
         out["b2c"] = b2c
     if view.get("b2b") is not None:
         n = int(part.get("vouchers") or 0)
+        documents, hidden = list(part.get("companies") or []), _dismissed(part, "b2b", laid)
         out["b2b"] = dict(view["b2b"], books={
-            "title": BOOKS_LIST_TITLE, "about": COMPANIES_ABOUT, "documents": list(part.get("companies") or []),
+            "title": BOOKS_LIST_TITLE, "about": COMPANIES_ABOUT, "documents": documents,
             "vouchers": n, "vouchers_said": (VOUCHERS_SAID % (VOUCHER_CARD, "מסמך אחד" if n == 1 else "%d מסמכים" % n))
-            if n else ""})
-    out["books_unclear"] = {"title": BOOKS_UNCLEAR_TITLE, "about": UNCLEAR_ABOUT, "documents": list(part.get("unclear") or [])}
+            if n else "", "hidden": hidden, "hidden_counts": _by_kind(hidden),
+            "returned_counts": _by_kind([e for e in documents if e.get("returned")])})
+    documents, hidden = list(part.get("unclear") or []), _dismissed(part, "unclear", laid)
+    out["books_unclear"] = {"title": BOOKS_UNCLEAR_TITLE, "about": UNCLEAR_ABOUT, "documents": documents, "hidden": hidden,
+                            "hidden_counts": _by_kind(hidden),
+                            "returned_counts": _by_kind([e for e in documents if e.get("returned")])}
     return out
 
 
@@ -706,6 +769,43 @@ def reading_whole(reading: dict) -> bool:
     from a board read short would turn its documents into documents no row cites)."""
     checks = reading.get("checks") or {}
     return not reading.get("error") and all((checks.get(k) or {}).get("ok") is True for k in ("student_charge", "b2b_charge"))
+
+
+# ---- R5: what a press may name ---------------------------------------------------------------------------------------------
+HIDDEN = object()   # `alerts_of`: an alert the part holds hidden
+# what a press of "לא פער" and of "החזרה" may be answered (app/desk/routes.py says each with its status)
+DISMISS_ERRORS = ("dismissals_unavailable", "busy", "other_reading", "not_shown", "already_hidden", "evidence_changed")
+UNDO_ERRORS = ("dismissals_unavailable", "busy", "not_shown", "not_live", "not_yours")
+
+
+def alerts_of(part: dict, read_at: Any) -> dict:
+    """{(kind, subject): its evidence} of every alert of the books the part shows - its marks, the documents of its three
+    lists, and its proposals where it lays them on the reading of `read_at` (`lays_fills`) - and HIDDEN for each it holds
+    hidden. What a press of "לא פער" may name, and the evidence kept for it (the server's, never the page's)."""
+    out: dict = {}
+    laid = lays_fills(part, read_at)
+    for items in (part.get("hidden") or {}).values():
+        for x in items:
+            if laid or x["kind"] not in dz.FILL_KINDS:
+                out[(x["kind"], x["subject"])] = HIDDEN
+    for item_id, ms in (part.get("marks") or {}).items():
+        for m in ms:
+            if m.get("evidence"):
+                out[(m["kind"], str(item_id))] = m["evidence"]
+    for item_id, fill in ((part.get("fills") or {}) if laid else {}).items():
+        if fill["mark"].get("evidence"):
+            out[(fill["mark"]["kind"], str(item_id))] = fill["mark"]["evidence"]
+    for place in dz.DOC_KINDS:
+        for e in part.get(place) or []:
+            if e.get("evidence"):
+                out[(e["kind"], e["subject"])] = e["evidence"]
+    return out
+
+
+def hidden_of(part: dict, kind: str, read_at: Any) -> list:
+    """What the part holds hidden of one kind, as its list shows it (a proposal only where proposals are laid)."""
+    return [x for x in (part.get("hidden") or {}).get(dz.TAB[kind]) or []
+            if x["kind"] == kind and (x["kind"] not in dz.FILL_KINDS or lays_fills(part, read_at))]
 
 
 # ---- the Accounts' keys ----------------------------------------------------------------------------------------------
@@ -767,15 +867,30 @@ class DeskBooks:
     computed when the reading or the copy changed (the cache's key: the reading's time and the last finished run of the
     copy), else the part already computed. One computation at a time; a request that waits longer than WAIT_S gets the
     last part, and an answer at once does not wait at all. `current()` is the part last answered (the totals and the files use it: they never read). `health()`: its
-    state, its copy's time and its reasons, and the Accounts' keys' time - never a count."""
+    state, its copy's time and its reasons, and the Accounts' keys' time - never a count.
+
+    R5, "לא פער" (app/desk/dismissals.py): the live dismissals are read once per computation - with the copy's last run, at
+    most every RUN_CHECK_S, so another instance's press shows here within that - and the part shown is the last whole
+    computation with what they hold hidden (`hide`). When only the dismissals changed, nothing of the books is computed
+    again: the same computation is shown by them (`_reshown`), under a key of its own. A read that fails keeps the ones
+    held (with none held, nothing is hidden) and is said in /health. `dismiss` and `undo` are a press's: in the one lock,
+    against the part shown now, the evidence the server's own; after the write this instance shows the part by the
+    dismissals read again at once."""
 
     def __init__(self, make_store: Callable[[str], Any], make_reader: Callable[[], MondayReader],
-                 clock: Callable[[], float] = time.monotonic, now: Optional[Callable[[], datetime]] = None):
+                 clock: Callable[[], float] = time.monotonic, now: Optional[Callable[[], datetime]] = None,
+                 make_dismissals: Optional[Callable[[str], Any]] = None):
         self.make_store, self.clock = make_store, clock
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.keys = AccountKeys(make_reader, clock, self.now)
         self._lock = threading.Lock()
-        self.last_ok: Optional[dict] = None  # the last part computed from a whole copy on a whole reading
+        self.last_ok: Optional[dict] = None  # the last part computed from a whole copy on a whole reading, as it is shown
+        # R5: that computation with nothing hidden (what `hide` starts from), the store of the dismissals (None: nothing
+        # is ever hidden), the live ones last read (None before a read worked), and the last read's time and error
+        self._raw_ok: Optional[dict] = None
+        self.make_dismissals = make_dismissals
+        self._live: Optional[tuple] = None
+        self._live_trace: dict = {"read_at": None, "error": None}
         self.part: Optional[dict] = None  # the part last answered
         self._key: Optional[tuple] = None  # what self.part was answered for
         self._store_failed_at: Optional[float] = None
@@ -846,8 +961,10 @@ class DeskBooks:
         # which of this instance's: two in one second, a copy whose run moved and kept its time, are two) and their reasons
         # (the review of dfa967b: two `held` parts with other reasons had one key, so the page was shown the reason of the
         # part before). Bounded by construction: the reasons are a closed list (BOOKS_KEY_MAX)
-        part["key"] = "%s|%s|%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "",
-                                          part.get("computation") or "", ",".join(reasons))
+        # R5: and the live dismissals it is shown by (a signature of their ids): one computation shown before and after a
+        # press is two parts
+        part["key"] = "%s|%s|%s|%s|%s|%s" % (state, part.get("as_of") or "", part.get("computed_at") or "",
+                                             part.get("computation") or "", ",".join(reasons), part.get("dismissals") or "")
         return part
 
     def _not_ok(self, reasons: list) -> dict:
@@ -870,8 +987,11 @@ class DeskBooks:
         except BooksStoreError as exc:
             return self._store_failed(exc)
         self._checked_at = self.clock()
+        self._read_live(cfg)
+        self._sync()
         key = (reading.get("read_at"), run[0] if run else None)
         if self._key == key and self.part is not None:
+            self.part = self._reshown(self.part)   # the same computation, shown by the dismissals read now
             return self.part
         if not reading_whole(reading):
             part = self._not_ok(["reading_incomplete"])
@@ -920,10 +1040,124 @@ class DeskBooks:
         self._computations += 1
         got.update(as_of=_iso(snapshot.get("last_run_finished_at")), computed_at=_iso(self.now()),
                    reading_at=reading.get("read_at"), computation=self._computations)
-        part = self._made("ok", [], got)
-        self.last_ok = part
+        self._raw_ok = got
+        part = self.last_ok = self._shown_ok()
         self.trace.update(computed_at=got["computed_at"], seconds=round(self.clock() - started, 2), error=None)
         return part
+
+    # ---- R5: "לא פער" ----------------------------------------------------------------------------------------------------
+    def _read_live(self, cfg: Any) -> None:
+        """The live dismissals, read again. A read that fails keeps the ones held - with none held, nothing is hidden - and
+        is said in /health by its kind or class, never its text."""
+        if self.make_dismissals is None:
+            return
+        try:
+            rows = self.make_dismissals(cfg.database_url).live(cfg.db)
+        except Exception as exc:  # noqa: BLE001 - said by its kind or class: a dismissal never takes the books part down
+            self._live_trace["error"] = getattr(exc, "kind", None) or type(exc).__name__
+            logger.warning("desk books: the dismissals were not read (%s)", self._live_trace["error"])
+            return
+        self._live = tuple(rows)
+        self._live_trace.update(read_at=_iso(self.now()), error=None)
+
+    def _shown_ok(self) -> Optional[dict]:
+        """The last whole computation as it is shown: an `ok` part, with what the live dismissals held now hold hidden."""
+        if self._raw_ok is None:
+            return None
+        shown = dz.hide(self._raw_ok, self._live or ())
+        shown["dismissals"] = dz.live_signature(self._live)
+        return self._made("ok", [], shown)
+
+    def _sync(self) -> None:
+        """`last_ok` shown by the live dismissals held now (a `held` part is made of it)."""
+        if self._raw_ok is not None and (self.last_ok or {}).get("dismissals") != dz.live_signature(self._live):
+            self.last_ok = self._shown_ok()
+
+    def _reshown(self, part: Optional[dict]) -> Optional[dict]:
+        """`part` as the live dismissals held now show it: itself when they showed it already; else the same computation
+        shown by them, in the part's own state and with its own reasons (an `ok` part and a `held` one are both the last
+        whole computation; `none` and `off` hold nothing to hide)."""
+        self._sync()
+        if part is None or part["state"] not in ("ok", "held") or self.last_ok is None:
+            return part
+        if part.get("dismissals") == self.last_ok.get("dismissals"):
+            return part
+        if (part["state"], list(part.get("reasons") or [])) == ("ok", []):
+            return self.last_ok
+        return self._made(part["state"], part.get("reasons") or [], self.last_ok)
+
+    def dismiss(self, cfg: Any, kind: str, subject: str, seen: str, key: str, read_at: Any, user_id: int) -> dict:
+        """A press of "לא פער" (or "לא להציע"): {"ok": True, "id", "replaced"} or {"error": a word of DISMISS_ERRORS}.
+        Against the part shown now and only it: the page's part (`key`) must be it (`other_reading`), the alert must be one
+        it shows (`not_shown`; `already_hidden` when it holds it hidden), and what the page saw (`seen`) must be the
+        evidence the server computed for it (`evidence_changed`: a hash the page made up, or a part that moved). The
+        evidence kept is the server's own. Then the write (app/desk/dismissals_store.py), and this instance shows the part
+        by the dismissals read again at once - with the one just kept, whatever that read finds."""
+        if self.make_dismissals is None or not getattr(cfg, "database_url", ""):
+            return {"error": "dismissals_unavailable"}
+        if not self._lock.acquire(timeout=WAIT_S):
+            return {"error": "busy"}
+        try:
+            part = self._current(self.part)
+            if part is None or part.get("key") != key:
+                return {"error": "other_reading"}
+            evidence = alerts_of(part, read_at).get((kind, subject))
+            if evidence is None:
+                return {"error": "not_shown"}
+            if evidence is HIDDEN:
+                return {"error": "already_hidden"}
+            if seen != evidence:
+                return {"error": "evidence_changed"}
+            try:
+                got = self.make_dismissals(cfg.database_url).dismiss(cfg.db, kind, subject, evidence, user_id)
+            except DismissalRefused as refused:
+                self._read_live(cfg)   # another press kept one a moment ago: shown as it is now
+                self.part = self._reshown(part)
+                return {"error": refused.code}
+            except Exception as exc:  # noqa: BLE001 - said by its kind or class, never its text
+                return self._not_kept(exc)
+            self._live = tuple(d for d in self._live or () if d["id"] != got["replaced"]) + (
+                {"id": got["id"], "kind": kind, "subject": subject, "evidence": evidence, "by": int(user_id),
+                 "at": got["at"]},)
+            self._read_live(cfg)
+            self.part = self._reshown(part)
+            return {"ok": True, "id": got["id"], "replaced": got["replaced"]}
+        finally:
+            self._lock.release()
+
+    def undo(self, cfg: Any, kind: str, subject: str, dismissal_id: int, read_at: Any, user_id: int) -> dict:
+        """A press of "החזרה" in the hidden list: {"ok": True} or {"error": a word of UNDO_ERRORS}. Only a dismissal the
+        part shown now holds hidden (`not_shown`), and only by its own dismisser (`not_yours`, the store's rule: ADR-0190
+        §6's norm, and there is no admin); `not_live` when it ended since. This instance then shows the part by the
+        dismissals read again at once."""
+        if self.make_dismissals is None or not getattr(cfg, "database_url", ""):
+            return {"error": "dismissals_unavailable"}
+        if not self._lock.acquire(timeout=WAIT_S):
+            return {"error": "busy"}
+        try:
+            part = self._current(self.part)
+            if part is None or not any(x["subject"] == subject and x["id"] == dismissal_id
+                                       for x in hidden_of(part, kind, read_at)):
+                return {"error": "not_shown"}
+            try:
+                self.make_dismissals(cfg.database_url).undo(cfg.db, kind, subject, dismissal_id, user_id)
+            except DismissalRefused as refused:
+                self._read_live(cfg)
+                self.part = self._reshown(part)
+                return {"error": refused.code}
+            except Exception as exc:  # noqa: BLE001 - said by its kind or class, never its text
+                return self._not_kept(exc)
+            self._live = tuple(d for d in self._live or () if d["id"] != dismissal_id)
+            self._read_live(cfg)
+            self.part = self._reshown(part)
+            return {"ok": True}
+        finally:
+            self._lock.release()
+
+    def _not_kept(self, exc: Exception) -> dict:
+        code = getattr(exc, "kind", None) or type(exc).__name__
+        logger.warning("desk books: a dismissal was not written (%s)", code)
+        return {"error": "dismissals_unavailable"}
 
     def health(self) -> dict:
         """For the public /health: the state of the part last answered, as it may be shown now (a copy grown stale since
@@ -933,4 +1167,4 @@ class DeskBooks:
         return {"state": part["state"] if part else None, "as_of": part.get("as_of") if part else None,
                 "reasons": list(part.get("reasons") or []) if part else [],
                 "computed_at": self.trace["computed_at"], "seconds": self.trace["seconds"], "error": self.trace["error"],
-                "accounts": self.keys.health()}
+                "accounts": self.keys.health(), "dismissals": dict(self._live_trace)}

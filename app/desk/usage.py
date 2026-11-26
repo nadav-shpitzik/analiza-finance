@@ -3,8 +3,9 @@
 
 Ported on 24.11 from analiza-metrics app/usage.py at `da671b2`, faithfully: the same kinds, detail keys, ranges and
 alphabets, so a row written here reads like a row written there, and the history D5 imports (the desk move plan §4.4) is
-one vocabulary. New here: this paragraph, the note on `bill`, the one kind the ported page no longer sends, and D4's
-`books_fill` with its count `rows`. Since the
+one vocabulary. New here: this paragraph, the note on `bill`, the one kind the ported page no longer sends, D4's
+`books_fill` with its count `rows`, and R5's three kinds of "לא פער" (`not_a_gap`, `not_a_gap_undo`, `not_a_gap_list`).
+Since the
 review of D2 (a32395f), three alphabets are narrower than analiza-metrics', each to what its page sends: the visit's id is
 letters only, a word carries no number (WORD_RUN, WORD_DIGITS), and a period is a period key the page can name - so a
 digit run long enough to be an ID number has no place left in a row. And a kind that is not a string is refused and
@@ -56,6 +57,13 @@ KINDS: dict[str, tuple[str, ...]] = {
     # D4 (26.11), new here: "רישום מחשבשבת" pressed - from a row's details, from its document in the books' list, or every
     # proposal at once (`from`: detail, list, all) - and how many rows its batch takes; its life is `act`'s (books_fill)
     "books_fill": ("from", "rows"),
+    # R5 (26.11), new here: "לא פער" or "לא להציע" pressed (`phase` open, `from` detail or list), its confirmation
+    # cancelled, kept (done) or refused (failed, `code` the server's word) - `alert` the alert's kind, a word of the server's
+    # closed list (app/desk/dismissals.py KINDS); "החזרה" of one's own (done, or failed and why); and "הוסתרו כלא פער (N)"
+    # opened or closed, under which list (`list`: b2c, b2b, unclear)
+    "not_a_gap": ("alert", "phase", "code", "from"),
+    "not_a_gap_undo": ("alert", "phase", "code"),
+    "not_a_gap_list": ("open", "list"),
     # a company's billing details: edit, confirm, done, failed. Not sent since the port: the page shows them read only
     # until their edit comes back from the browser (finance.js, its change 4; ADR-0188). Kept for that, and for the
     # history D5 imports, which may hold such rows
