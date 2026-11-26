@@ -1070,8 +1070,8 @@
   function cohortsHtml() {
     var c = cohortsPart(), shown = cohortsShown(), t = c.totals, w = c.words || {};
     if (c.state && c.state !== "ok") {
-      /* the review of D4: the view not read in this reading - no cohort and no money, and why in the server's words where
-         the table would be; the list and the rest of the desk are as they are */
+      /* the review of D4: the view not read in this reading, or not computed - no cohort and no money, and why in the
+         server's words where the table would be; the list and the rest of the desk are as they are */
       return panel("<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><p class=\"fin-badtext\">" +
         esc(c.said) + "</p></div><div class=\"fin-actions\">" + scViews() + "</div></div>");
     }

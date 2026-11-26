@@ -36,9 +36,9 @@ aliased request (analiza-metrics `items_query`), so a refresh that changed two p
 Since D4 (26.11, Analiza-Monday backlog 0313) the desk asks one more thing: the ids of a board's items whose status column
 holds one of some label indexes (`status_rule`: monday's documented status filter, `items_page(query_params: {rules:
 [{column_id, compare_value: [indexes], operator: any_of}]})`, answered live read only on 26.11) - the cohorts on the voucher
-track (`filtered_ids`). In a request of its own, never an alias of a request the desk cannot do without: monday refuses a
-request whole when one field of it is invalid, so a filter it refuses rode the columns check of every reading and the windows
-of every refresh to the ground with it (the review of D4, 26.11). One request, and one more per page after the first
+track (`filtered_ids`). In a request of its own, never an alias of a request the desk cannot do without: monday refuses
+a request whole when one field of it is invalid, so a filter it refused took the columns check of every reading and the
+windows of every refresh down with it (the review of D4, 26.11). One request, and one more per page after the first
 (PAGE_LIMIT items).
 """
 

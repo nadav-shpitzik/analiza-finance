@@ -3,11 +3,11 @@ backlog 0313), drawn from the server's own view (app/desk/view.py build_view of 
 in node, and in Chromium through Playwright. Needs node (and Playwright for the browser); skipped without them.
 
 What is held: the switch "רשימה | לפי מחזור" in the list's head; "אושר - ממתין לתשלום" the first figure and the one tinted
-column; a cohort opening to its students, each balance in its own part's column and what a waived or out student paid in
-the line's paid (the review of D4); the cohorts without a price listed on demand with why; the search picking the cohorts the server's
-filter_cohorts picks (the file and the totals are built from it); every label the view draws defined in the tab's legend,
-whose part "לפי מחזור" is the server's; the file asked as the list `b2c_cohorts`; and the usage events in the server's
-vocabulary."""
+column; a cohort opening to its students, each balance in its own part's column and what a waived or out student paid
+in the line's paid (the review of D4); the cohorts without a price listed on demand with why; the search picking the
+cohorts the server's filter_cohorts picks (the file and the totals are built from it); every label the view draws defined
+in the tab's legend, whose part "לפי מחזור" is the server's; the file asked as the list `b2c_cohorts`; the view not read,
+or not computed, saying why in the server's words; and the usage events in the server's vocabulary."""
 from __future__ import annotations
 
 import json

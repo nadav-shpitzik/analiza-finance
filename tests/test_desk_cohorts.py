@@ -670,8 +670,11 @@ def test_a_reading_with_no_cohort_with_a_price_reads_what_it_read_before():
 def test_the_body_schema_moved_so_a_reading_kept_before_d4_is_read_whole():
     assert rd.BODY_SCHEMA.startswith("4:")
     for key, col in (("cohorts", rd.CO["price"]), ("cohorts", rd.CO["roster"]), ("enrollments", rd.EN["status"]),
-                     ("enrollments", rd.EN["person"])):
+                     ("enrollments", rd.EN["person"]),
+                     # the review of D4: a payment filed by its lead is the student's by these two links
+                     ("enrollments", rd.EN["lead"]), ("leads", rd.LD["person"])):
         assert col in rd.ROW_COLUMNS[key] and col in rd.CHECKED_COLUMNS[key]
+    assert (rd.EN["lead"], rd.LD["person"]) == ("board_relation_mm1g8cvh", "board_relation_mm0sffws")
 
 
 def test_a_missing_new_column_ends_the_reading_instead_of_reading_as_empty():

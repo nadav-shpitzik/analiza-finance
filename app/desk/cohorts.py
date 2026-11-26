@@ -57,15 +57,15 @@ balance was waived, or they left - and their balance 0, so the line still ties; 
 paid. And the line ties to the payments, summed apart from its students (the review of D4): everything the list files under
 the cohort (`filed`: the payments whose `cohort_id` is the cohort, and one it files under none because its enrollments name
 more than one, under each of them) is what its students paid - counted, waived and out - and what is said beside them,
-`unlinked` and `shared`, in money and in payments; so a payment lost between the list and the view, or counted twice, is
-said, never shown as a line.
+`unlinked` and `shared`, in money and in the number of payments; so a payment lost between the list and the view, or
+counted twice, is said above the table (NOT_TIED), and the file is never complete.
 
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
-failed), or the enrollments of those with a price (step 5). The part then holds no cohort and no money, `state` "unread", and says why in its own words (UNREAD_SAID); the
-rest of the desk is read and shown as always. And when its own computation fails (app/desk/view.py `_cohorts_of`): the
-part alone says so (`state` "error"), never the view of both tabs. A part that is not "ok" is never exported as complete
-(`checks["ties"]`).
+failed), or the enrollments of those with a price (step 5). The part then holds no cohort and no money, `state` "unread",
+and says why in its own words (UNREAD_SAID); the rest of the desk is read and shown as always. And when its own
+computation fails (app/desk/view.py `_cohorts_of`): the part alone says so (`state` "error"), never the view of both tabs.
+A part that is not "ok" is never exported as complete (`checks["ties"]`).
 
 WHAT IT IS NOT: a writer, or a second money rule. It reads the reading and the desk's own payment rows; nothing here asks
 monday, and the page adds no money up (frontend/finance.js draws these sums, and the totals of a filtered list come from
@@ -199,7 +199,8 @@ UNREAD_SAID = OrderedDict([
 UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
 UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."
 # said in its place when its own computation failed (app/desk/view.py `_cohorts_of`): a fault of the server's
-CRASHED_SAID = "התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל." % _q(VIEW_WORD)
+CRASHED_SAID = ("התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל."
+                % _q(VIEW_WORD))
 OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
@@ -265,7 +266,8 @@ def _label_said(idx: str, label: str) -> str:
     return label or (UNNAMED_LABEL if idx else "ריק")
 
 
-def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list, by_lead: frozenset = frozenset()) -> dict:
+def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list,
+             by_lead: frozenset = frozenset()) -> dict:
     """One student of a cohort: their enrollments there (id order), what they paid, and where their balance is. `by_lead`:
     the payments of theirs the desk files by their lead (`_lead_payer`), said on them."""
     ins = [e for e in enrollments if not _why_out(e, cohorts_of)]
@@ -397,8 +399,8 @@ def not_shown(state: str, reason: str) -> dict:
 
 
 def _unread(snapshot: dict) -> str:
-    """Why the reading could not read the students by cohort (its `cohorts_read`), "" when it could. A snapshot without one -
-    a reading of before it, a test's - said nothing against them; one of another shape is not trusted: "track_failed"."""
+    """Why the reading could not read the students by cohort (its `cohorts_read`), "" when it could. A snapshot without
+    one - a reading of before it, a test's - said nothing against them; one of another shape is not trusted: "track_failed"."""
     got = snapshot.get("cohorts_read")
     if got is None or (isinstance(got, dict) and got.get("ok") is True):
         return ""
