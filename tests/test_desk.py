@@ -819,9 +819,10 @@ def test_the_page_is_revalidated_on_every_open_and_links_its_assets_by_version(d
     links = re.findall(r'(?:src|href)="(/desk/[^"]+)"', resp.text)
     # D2: the desk (finance.js, finance.css), its glue (desk.js), the self-check (check.js), the frame and the SDK
     assert sorted(x.split("?")[0] for x in links) == sorted(dr.STATIC_FILES)
-    # the glue runs last: it mounts what finance.js and check.js define, with the SDK they all share
+    # the glue runs last: it mounts what finance.js and check.js define, with the SDK they all share; D4: xlsx.js, the
+    # writer of the students' file with the ID number, before the desk that uses it
     scripts = [x.split("?")[0] for x in re.findall(r'<script src="([^"]+)"', resp.text)]
-    assert scripts == ["/desk/vendor/monday-sdk.js", "/desk/finance.js", "/desk/check.js", "/desk/desk.js"]
+    assert scripts == ["/desk/vendor/monday-sdk.js", "/desk/xlsx.js", "/desk/finance.js", "/desk/check.js", "/desk/desk.js"]
     assert all(re.search(r"\?v=[0-9a-f]{12}$", x) for x in links)
     again = desk.client.get("/desk/", headers={"If-None-Match": resp.headers["ETag"]})
     assert again.status_code == 304
@@ -859,12 +860,12 @@ def test_the_sdk_is_analiza_metrics_copy_byte_for_byte():
 def test_the_page_draws_text_only_and_writes_no_em_dash():
     """The glue and the self-check draw with textContent only. The desk (finance.js) builds HTML, as it did in
     analiza-metrics, and escapes every value of an answer into it: tests/test_desk_page.py holds that."""
-    for name in ("desk.js", "check.js"):
+    for name in ("desk.js", "check.js", "xlsx.js"):
         js = (ROOT / "frontend" / name).read_text(encoding="utf-8")
         assert not re.search(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function", js), name
     finance = (ROOT / "frontend" / "finance.js").read_text(encoding="utf-8")
     assert not re.search(r"outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function", finance)
-    for name in ("index.html", "desk.js", "desk.css", "check.js", "finance.js", "finance.css"):
+    for name in ("index.html", "desk.js", "desk.css", "check.js", "finance.js", "finance.css", "xlsx.js"):
         assert "—" not in (ROOT / "frontend" / name).read_text(encoding="utf-8"), name
 
 

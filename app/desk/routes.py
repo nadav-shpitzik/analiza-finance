@@ -4,9 +4,10 @@
   A; its External hosting URL is https://analiza-finance.replit.app/desk/). Served `no-cache` with an ETag of its bytes,
   its assets linked as `?v=<hash of their bytes>` and kept a year: monday reloads the iframe on every open, and a stale
   script against a new answer is a blank view (analiza-metrics app/main.py, the same rule).
-- GET /desk/desk.js, /desk/desk.css, /desk/finance.js, /desk/finance.css, /desk/check.js, /desk/vendor/monday-sdk.js: the
-  assets. D2: finance.js and finance.css are the desk, ported from analiza-metrics; desk.js mounts it; check.js is D1's
-  self-check, drawn on /desk/?check=1. The SDK is analiza-metrics' copy, byte for byte (monday-sdk-js 0.4.12; a test holds
+- GET /desk/desk.js, /desk/desk.css, /desk/finance.js, /desk/finance.css, /desk/check.js, /desk/xlsx.js,
+  /desk/vendor/monday-sdk.js: the assets. D2: finance.js and finance.css are the desk, ported from analiza-metrics; desk.js
+  mounts it; check.js is D1's self-check, drawn on /desk/?check=1; D4: xlsx.js writes the students' file with the ID
+  number in the browser. The SDK is analiza-metrics' copy, byte for byte (monday-sdk-js 0.4.12; a test holds
   its sha256).
 - GET /api/desk: the gate (app/desk/gate.py), then who the reader is and the desk's reading (app/desk/reading.py) as
   counts, for the tabs the reader may see (D1), and the desk itself (D2): `view`, those tabs built from that reading
@@ -83,13 +84,14 @@ STATIC_FILES = {
     "/desk/finance.js": ("finance.js", "application/javascript; charset=utf-8"),
     "/desk/finance.css": ("finance.css", "text/css; charset=utf-8"),
     "/desk/check.js": ("check.js", "application/javascript; charset=utf-8"),
+    "/desk/xlsx.js": ("xlsx.js", "application/javascript; charset=utf-8"),
     "/desk/vendor/monday-sdk.js": ("vendor/monday-sdk.js", "application/javascript; charset=utf-8"),
 }
 PAGE = "index.html"
 # the page's links to its assets, rewritten to `?v=<hash>` when the page is served
 ASSET_LINKS = (("/desk/desk.js", 'src="/desk/desk.js"'), ("/desk/desk.css", 'href="/desk/desk.css"'),
                ("/desk/finance.js", 'src="/desk/finance.js"'), ("/desk/finance.css", 'href="/desk/finance.css"'),
-               ("/desk/check.js", 'src="/desk/check.js"'),
+               ("/desk/check.js", 'src="/desk/check.js"'), ("/desk/xlsx.js", 'src="/desk/xlsx.js"'),
                ("/desk/vendor/monday-sdk.js", 'src="/desk/vendor/monday-sdk.js"'))
 ASSET_VERSION_CHARS = 12
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -334,6 +336,11 @@ def desk_finance_css(request: Request):
 @router.get("/desk/check.js")
 def desk_check_js(request: Request):
     return _static(request, "/desk/check.js")
+
+
+@router.get("/desk/xlsx.js")
+def desk_xlsx_js(request: Request):
+    return _static(request, "/desk/xlsx.js")
 
 
 @router.get("/desk/vendor/monday-sdk.js")

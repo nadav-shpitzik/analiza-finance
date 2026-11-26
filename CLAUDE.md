@@ -224,7 +224,13 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   view, books' part, `about` and name for both), its columns with an empty "ת.ז" right after "סטודנט/ית" (analiza-metrics'
   place, `b2c_columns`; `id_column`), "פרטים"'s line `ID_NUMBERS_IN_FILE`, and each row's item id and `lead_ids` in monday's
   order (`keys`); money as strings, never floats. Since D4 every file is one description (`book`: its sheets, columns, cells
-  and "פרטים" as data) written by `write` (openpyxl), byte for byte the file it was. Tests: `tests/test_desk_export_ids.py`.
+  and "פרטים" as data) written by `write` (openpyxl), byte for byte the file it was. The browser writes the same description
+  with `frontend/xlsx.js` (our own, about 260 lines and 16 KB, no library, no network; served as `/desk/xlsx.js` before
+  finance.js): a stored zip (method 0) with each part's CRC-32, inline strings as openpyxl 3.1 writes them, so a text is
+  always a string (never a formula, an error or a number: "=...", "+972", "00123" stay as typed), the server's styles,
+  right to left, the frozen header with its filter and the SUBTOTAL under the rows; a number or a date that is not one
+  throws (`code` "file"), never an empty cell. Read back with openpyxl, its file is the server's of the same description,
+  cell for cell, format for format (`tests/test_desk_xlsx.py`). Tests: `tests/test_desk_export_ids.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

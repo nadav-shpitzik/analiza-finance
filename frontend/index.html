@@ -11,7 +11,8 @@
 <!-- The finance desk's page (Analiza-Monday backlog 0301). D2: the desk itself (finance.js, ported from analiza-metrics),
      mounted by desk.js into #fin-root; /desk/?check=1 draws D1's self-check (check.js) instead. The page ships no data:
      everything comes from /api/desk behind the sessionToken, and what the server never reads (an ID number, a bank
-     account, a ח.פ) is read by the page from monday, as the person. -->
+     account, a ח.פ) is read by the page from monday, as the person. D4: xlsx.js writes the students' file with the ID
+     number here, in the browser (finance.js reads the numbers, as the person). -->
 <section id="screen-loading">
   <div class="loader"><div class="spinner"></div><div id="loader-text" role="status">טוען כספים</div></div>
 </section>
@@ -48,6 +49,7 @@
   <p id="foot" class="foot"></p>
 </main>
 <script src="/desk/vendor/monday-sdk.js"></script>
+<script src="/desk/xlsx.js"></script>
 <script src="/desk/finance.js"></script>
 <script src="/desk/check.js"></script>
 <script src="/desk/desk.js"></script>
