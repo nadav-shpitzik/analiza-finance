@@ -38,6 +38,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from . import config
 from .books.ledger import definition_state as ledger_state
@@ -75,6 +76,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=SERVICE, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
+# QA of 26.11 (B): the desk's answer is about 1 MB of JSON (58 KB in analiza-metrics' desk, which read less), and a refresh
+# took 7-8 s against 3-4 s. Every answer of 1,000 bytes or more is sent gzipped to a client that asks for it (the page's
+# fetch always does; one that does not gets it as before). Never the Excel file: an xlsx is a zip already, and it goes out
+# byte for byte as before, as do the types Starlette leaves alone (images, zips, a stream). Registered before
+# `security_headers`, so it sits inside it and sees each answer whole - outside it, every answer arrives streamed and would
+# be compressed whatever its size - and the security headers are set on what it sends.
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+GZIP_MINIMUM = 1000
+
+
+def gzip_answers(target: FastAPI) -> None:
+    """The compression, once: this app's, and the page's test stub's (tests/test_desk_browser.py), so the page's fetches are
+    tested as they are served."""
+    target.add_middleware(GZipMiddleware, minimum_size=GZIP_MINIMUM,
+                          exclude_content_types=DEFAULT_EXCLUDED_CONTENT_TYPES + (XLSX,))
+
+
+gzip_answers(app)
+
+
 class NoQueryInAccessLog(logging.Filter):
     """uvicorn's access line carries the path with its query string, and on this service a query can carry what no log may
     keep: the sessionToken monday may load the page with, a search's text (a student's name, `/api/desk/totals?q=`, sent at
@@ -106,6 +127,7 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
+
 
 
 @app.exception_handler(RequestValidationError)

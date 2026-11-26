@@ -318,3 +318,60 @@ def test_a_new_desk_state_has_its_own_press_limit(desk, monkeypatch):  # noqa: F
     st = dr.desk_state(main.app.state, config.load())
     assert st.refresh.check(1, now=0) is None and st.refresh.check(2, now=0.5) == 1
     assert st.refresh.check(2, now=1.5) is None
+
+
+# ---- QA 26.11 (B): the answers gzipped ----------------------------------------------------------------------------------
+def big_reading(n: int = 700) -> dict:
+    """A reading whose desk answer is about 1 MB of JSON, as the live one was on 26.11: n payments, 15 voucher cohorts of 40
+    students each (invented names, never a real one)."""
+    from tests.test_desk_cohorts import coh, enr
+    cohorts = [coh("C%d" % c, "A7%02d" % c, roster=["E%d_%d" % (c, i) for i in range(40)]) for c in range(1, 16)]
+    enrollments = [enr("E%d_%d" % (c, i), "C%d" % c, voucher=str(i % 5), person="P%d_%d" % (c, i),
+                       name="סטודנט/ית בדוי/ה %d-%d" % (c, i)) for c in range(1, 16) for i in range(40)]
+    payments = [sc(i, paid=str(3000 + i % 7 * 500), enr=["E%d_%d" % (i % 15 + 1, i % 40)], invoice=str(62000 + i))
+                for i in range(1, n + 1)]
+    for p in payments:
+        p["name"] = "תלמיד/ה בדוי/ה %s" % p["id"]
+    return snap(payments, cohorts=cohorts, enrollments=enrollments)
+
+
+def test_the_desks_answer_goes_gzipped_to_a_client_that_asks_and_as_before_to_one_that_does_not(desk, monkeypatch):  # noqa: F811
+    """QA 26.11 (B): the answer was about 1 MB uncompressed (58 KB in analiza-metrics' desk), and a refresh took 7-8 s against
+    3-4 s. It goes gzipped to a client that asks - the page's fetch always does - with its security headers, and as before
+    to one that does not. Measured here on an answer of that size: well under a tenth of it on the wire."""
+    import gzip
+    import json
+
+    served(monkeypatch, big_reading())
+    tok = {"Authorization": "Bearer " + session_token(1)}
+    with desk.client.stream("GET", "/api/desk", headers=dict(tok, **{"Accept-Encoding": "gzip"})) as r:
+        raw, headers = b"".join(r.iter_raw()), r.headers
+    body = gzip.decompress(raw)
+    plain = desk.client.get("/api/desk", headers=dict(tok, **{"Accept-Encoding": "identity"}))
+    assert headers["content-encoding"] == "gzip" and "accept-encoding" in headers["vary"].lower()
+    assert headers["content-security-policy"] == main.CSP and headers["cache-control"] == "no-store"
+    assert "content-encoding" not in plain.headers and json.loads(body)["view"] == plain.json()["view"]
+    assert len(body) > 900_000 and len(raw) * 10 < len(body), (len(body), len(raw))
+    # an answer under the floor goes as it is
+    small = desk.client.get("/api/desk/totals?tab=b2c&taken=x", headers=dict(tok, **{"Accept-Encoding": "gzip"}))
+    assert len(small.content) < main.GZIP_MINIMUM and "content-encoding" not in small.headers
+
+
+def test_the_excel_file_and_health_are_as_before_with_the_answers_gzipped(desk, monkeypatch):  # noqa: F811
+    """The Excel file is a zip already: it goes byte for byte as before, never gzipped again, whatever the client asks.
+    /health says the same, gzipped or not."""
+    import io
+
+    import openpyxl
+
+    served(monkeypatch, big_reading(60))
+    desk.get(session_token(1))
+    url = desk.client.post("/api/desk/export-link", headers=auth(), json={"tab": "b2c"}).json()["url"]
+    with desk.client.stream("GET", url, headers={"Accept-Encoding": "gzip"}) as r:
+        raw, headers = b"".join(r.iter_raw()), r.headers
+    assert r.status_code == 200 and "content-encoding" not in headers and headers["content-type"].startswith(main.XLSX)
+    assert openpyxl.load_workbook(io.BytesIO(raw)).sheetnames[0] == "תקבולים"
+    zipped = desk.client.get("/health", headers={"Accept-Encoding": "gzip"})
+    as_is = desk.client.get("/health", headers={"Accept-Encoding": "identity"})
+    assert zipped.status_code == as_is.status_code == 200 and "content-encoding" not in as_is.headers
+    assert zipped.json().keys() == as_is.json().keys() and zipped.json()["service"] == as_is.json()["service"]

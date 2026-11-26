@@ -55,9 +55,12 @@ def stub_app(log: list, v: dict | None = None, refreshed: dict | None = None, op
     from fastapi.responses import Response
 
     from app.desk.routes import router as desk_router
-    from app.main import CSP
+    from app.main import CSP, gzip_answers
 
     app = FastAPI()
+    # QA 26.11 (B): served gzipped as this service serves it (inside the recording, as inside main's own middleware), so
+    # the page's fetches here are the ones Chava's browser makes
+    gzip_answers(app)
     count = {"n": 0}
     held = {"view": v if v is not None else view()}       # the reading this stub holds: the latest it answered
 
@@ -525,6 +528,27 @@ def long_view(copies: int = 3) -> dict:
                          invoice="50%03d" % i, ctx=ctx, deal=ctx["deal"], **kw))
     v["b2b"]["rows"] = b2
     return with_counts(v)
+
+
+def test_the_page_takes_the_desks_answers_gzipped_and_draws_them(serve):
+    """QA 26.11 (B): the page's own fetches - the desk, its totals - arrive gzipped (served as this service serves them, the
+    stub using main's `gzip_answers`) and are drawn as before; the Excel file's link is untouched."""
+    base, _log = serve(long_view())
+    got = qa_visit(r"""
+  await page.waitForSelector("tr[data-row]");
+  await page.click('[data-bstate=""]');
+  await page.waitForSelector('tr[data-row="5020"]');
+  await page.waitForTimeout(300);
+  out.steps.rows = await page.$$eval("tr[data-row]", (r) => r.length);
+  out.steps.answers = seen;
+""", base, fake_sdk({}), setup=r"""
+  const seen = [];
+  page.on("response", (r) => { const u = new URL(r.url());
+    if (u.pathname.startsWith("/api/desk")) { seen.push([u.pathname, r.headers()["content-encoding"] || ""]); } });
+""")
+    assert got["errors"] == []
+    steps = got["steps"]
+    assert steps["rows"] == 21 and ["/api/desk", "gzip"] in steps["answers"], steps
 
 
 def test_the_desk_holds_its_place_sideways_when_the_page_gets_shorter_and_its_scrollbar_goes(serve):
