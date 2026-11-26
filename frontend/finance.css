@@ -278,6 +278,8 @@ body[data-theme="dark"] #screen-finance {
    heavier. A cohort's students sit under it on the page's grey, indented, a student out of the count quieter; what is said
    of a cohort closes its list */
 #screen-finance .fin-figs .fin-hi { padding: 4px 10px 5px; border-radius: 8px; background: color-mix(in srgb, var(--fin-wait) 16%, var(--fin-panel)); }
+/* QA 26.11 (E): the view's figures are the voucher cohorts' only, said above them on a line of its own */
+#screen-finance .fin-figs-title { flex: 1 1 100%; margin: 0 0 -4px; font-size: 13px; font-weight: 600; }
 #screen-finance table.fin-cohorts-t .fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-panel)); }
 #screen-finance table.fin-cohorts-t th.fin-hi { color: var(--fin-ink); }
 #screen-finance table.fin-cohorts-t tr.fin-rowbtn td.fin-hi, #screen-finance table.fin-cohorts-t tfoot td.fin-hi { font-weight: 600; }

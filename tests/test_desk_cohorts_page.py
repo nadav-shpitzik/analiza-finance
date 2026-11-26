@@ -136,6 +136,45 @@ def test_the_figures_the_table_and_the_excel_file_say_the_money_in_one_order():
     assert [c["header"] for c in ch.columns_for(part["cohorts"]) if c["header"] in order] == order
 
 
+def test_the_views_figures_say_they_are_the_voucher_cohorts_only():
+    """QA 26.11 (E): the view's figures stand where the list's stood, so the tab showed two "paid" numbers - "שולם בפועל"
+    of the voucher cohorts only, and "התקבלו" of every payment. Above the figures, on a line of its own, "מחזורי שוברים
+    בלבד", and their note says why its paid is smaller than "התקבלו"; the legend says it too."""
+    v = real_view()
+    cohorts, listed = render([case(), case("list")], v)
+    figs = cohorts[cohorts.index('<div class="fin-figs">'):cohorts.index("</dl>")]
+    assert figs.startswith('<div class="fin-figs"><p class="fin-figs-title">%s</p><dl>' % ch.TRACK_ONLY)
+    assert '<span class="fin-figs-note">%s</span>' % ch.FIGS_NOTE.replace('"', "&quot;") in cohorts
+    assert "התקבלו" in ch.FIGS_NOTE and ch.TRACK_ONLY not in listed
+    terms = {x["term"]: x["text"] for x in v["b2c"]["cohorts"]["legend"]["items"]}
+    assert ch.TRACK_ONLY in terms and '"התקבלו"' in terms[ch.TRACK_ONLY]
+
+
+def test_an_answer_without_the_cohorts_leaves_the_list_and_a_later_one_never_switches_the_view_without_her_click():
+    """QA 26.11 (E): once, after an automatic refresh, the view went from "רשימה" to "לפי מחזור" with no click. The choice
+    is kept nowhere but the page's memory, and only her click on the switch sets it; but an answer without the cohorts (an
+    instance of an older build, during a deploy) drew the list and hid the switch while the choice stayed "לפי מחזור", and
+    the next answer that had them showed that view again. The choice now follows what is shown: back on the view, the list
+    stays the list, through answers with and without the cohorts, until she clicks."""
+    from tests.test_desk_page import drive as page_drive
+
+    whole = real_view()
+    without = {k: v for k, v in whole.items()}
+    without["b2c"] = {k: v for k, v in whole["b2c"].items() if k != "cohorts"}
+    later = lambda v, t: {"body": dict(body_of(v), taken_at=t)}  # noqa: E731
+    got = page_drive(answers={"GET /api/desk": [{"body": body_of(whole)}],
+                              "POST /api/desk/refresh": [later(without, "2026-11-24T08:00:30+00:00"),
+                                                         later(whole, "2026-11-24T08:01:00+00:00")]},
+                     monday={"absent": True}, clock=True,
+                     steps=[{"show": {"tab": "b2c", "sc": {"view": "cohorts"}}, "raw": True},
+                            {"back": [25_000, "visible"], "raw": True}, {"back": [25_000, "visible"], "raw": True}])
+    chosen, gone, back = got["steps"]
+    assert "fin-cohorts-t" in chosen["html"]
+    assert "fin-cohorts-t" not in gone["html"] and "data-scview" not in gone["html"]       # no cohorts: the list, no switch
+    assert "fin-cohorts-t" not in back["html"] and 'aria-pressed="true" data-scview="list"' in back["html"]
+    assert [c for c in got["calls"] if "refresh" in c] == ["POST /api/desk/refresh"] * 2
+
+
 def test_a_cohort_opens_to_its_students_each_balance_in_its_own_parts_column():
     shut, opened = render([case(), case(cohorts={"C1": True})])
     assert "fin-subrow" not in shut and 'aria-expanded="false"' in shut

@@ -138,6 +138,11 @@ UNPRICED_WHY = OrderedDict([("empty", "אין מחיר"), ("unreadable", "המח
 
 # what the page says above the table, and the legend's part on the students' tab
 TRACK_LABEL = "שוברים משרד העבודה"   # Registration Flow's label at VOUCHER_TRACK, as monday spells it
+# QA of 26.11 (E): the view's figures stand where the list's "התקבלו" (every payment) stood, and its "שולם בפועל" is the
+# voucher cohorts' only: said above them, and in the legend
+TRACK_ONLY = "מחזורי שוברים בלבד"
+FIGS_NOTE = ("הסכומים כולל מע\"מ, רק במחזורי השוברים עם מחיר, ולכן %s כאן קטן מ\"התקבלו\" ברשימה, שהוא כל התקבולים."
+             % "\"שולם בפועל\"")
 # the one sentence that says which cohorts the view holds (above the table, and in the legend)
 TRACK_SAID = ("רק מחזורים שנוהל ההרשמה שלהם %s: החלקים הם סטטוסי שובר, ומחזור במסלול אחר לא מוצג ולא נספר, גם כשיש לו "
               "מחיר." % _q(TRACK_LABEL))
@@ -149,6 +154,8 @@ ABOUT = ("לכל מחזור עם מחיר: %s (המחיר כפול הסטודנ�
 LEGEND_TITLE = VIEW_WORD
 LEGEND = [
     (VIEW_WORD, ABOUT),
+    (TRACK_ONLY, "מעל התצוגה %s: הנתונים שלה הם רק של מחזורי השוברים עם מחיר. %s ברשימת התקבולים הוא כל מה שנכנס, ולכן "
+                 "הוא גדול מ%s כאן." % (_q(VIEW_WORD), _q("התקבלו"), _q(PAID_WORD))),
     (STUDENTS_WORD,
      "ההרשמות של המחזור בלוח ההרשמות ש%s שלהן %s, הרשמה אחת לכל אדם (לפי Person); בלי מי שהשובר שלו נדחה, ביטל "
      "השתתפות או לא רלוונטי. גם מי שלא שילם/ה כלום." % (ENROLLMENT_STATUS_WORD, _IN_LABELS)),
@@ -410,7 +417,8 @@ def _frame() -> dict:
             # the view's own words, which the page draws beside the server's numbers
             "words": {"view": VIEW_WORD, "expected": EXPECTED_WORD, "paid": PAID_WORD, "balance": BALANCE_WORD,
                       "students": STUDENTS_WORD, "waived": WAIVED_WORD, "out": OUT_WORD, "overpaid": OVERPAID_WORD,
-                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED},
+                      "unlinked": UNLINKED_WORD, "shared": SHARED_WORD, "unpriced": UNPRICED_TITLE, "not_tied": NOT_TIED,
+                      "track_only": TRACK_ONLY, "figs_note": FIGS_NOTE},
             "unpriced_why": [{"key": k, "label": v} for k, v in UNPRICED_WHY.items()]}
 
 

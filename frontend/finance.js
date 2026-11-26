@@ -219,6 +219,10 @@
  * D  A red chip of the books wrapped to four lines in the narrow "שיבוץ" (six at 1280). The server sends it short (the
  *      legend's term: "חשבשבת: לא נמצא", "חשבשבת: סכום שונה", "חשבשבת: שולם"), its sentence its title (chipTitle), the
  *      details' sentence and the Excel file's whole words as before. Two lines at most at monday's widths.
+ * E  "לפי מחזור" stood where the list's figures stand, its "שולם בפועל" the voucher cohorts' only against "התקבלו" of every
+ *      payment: "מחזורי שוברים בלבד" above its figures, and their note says why. And the view once went from "רשימה" to "לפי
+ *      מחזור" after an automatic refresh: the choice is kept nowhere but here, set by her click alone, but an answer without
+ *      the cohorts drew the list while the choice stayed theirs. It follows what is shown now (b2cHtml).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -964,6 +968,10 @@
   }
 
   function b2cHtml() {
+    /* QA 26.11 (E): an answer without the cohorts (an instance of an older build, during a deploy) draws the list and no
+       switch, so the choice is the list's from then on: a later answer that has them never shows "לפי מחזור" without her
+       click on it */
+    if (state.sc.view === "cohorts" && !cohortsPart()) { state.sc.view = "list"; }
     if (state.sc.view === "cohorts" && cohortsPart()) { return cohortsHtml(); }   /* D4: the students by cohort */
     var v = VIEW.b2c, p = scPeriod(), rows = scRows(), q = searching();
     var key = state.sc.state, one = key && key !== "tasks" ? key : "";
@@ -1176,10 +1184,12 @@
        its part "אושר - ממתין לתשלום", the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount as the table writes
        it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel while the table under
        them was not) */
-    var figures = "<div class=\"fin-figs\"><dl>" + [[w.expected, cash(t.expected)], [w.paid, cash(t.paid)],
+    /* QA 26.11 (E): they stand where the list's "התקבלו" (every payment) stood, and are the voucher cohorts' only: said */
+    var figures = "<div class=\"fin-figs\"><p class=\"fin-figs-title\">" + esc(w.track_only) + "</p><dl>" +
+      [[w.expected, cash(t.expected)], [w.paid, cash(t.paid)],
       [w.balance, cash(t.balance)], [c.parts[0].label, cash(t.part_approved), true]].map(function (x) {
       return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
-    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
+    }).join("") + "</dl><span class=\"fin-figs-note\">" + esc(w.figs_note) + "</span></div>";
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +
       plural(shown.length, "מחזור אחד", "מחזורים") + " עם מחיר" + (searching() ? " מתאימים לחיפוש" : "") + "</div>" +
       "<p class=\"fin-about\">" + esc(c.about) + "</p>" +
