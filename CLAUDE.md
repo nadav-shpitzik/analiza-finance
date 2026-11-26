@@ -123,7 +123,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
   page's memory and sent nowhere. A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review). A row's action in its details floats beside its control, as a batch
-  does (`actPop`), so no row moves. One flash shows at a time: a new one takes the place of the one on the screen. Tests:
+  does (`actPop`), so no row moves. One flash shows at a time: a new one takes the place of the one on the screen. The root
+  keeps its scrollbar's room (desk.css `scrollbar-gutter: stable`), so the desk never moves sideways when the page gets
+  shorter (QA 26.11; measured with real scrollbars, `qa_visit(scrollbars=True)`). Tests:
   `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
 - **The desk's usage (D2):** `POST /api/usage` keeps what the page sends in `desk_events` (`app/desk/usage_store.py`; `migrations/005`
   is analiza-metrics' 004 statement for statement, so D5 imports that history row for row): closed words and counts, checked

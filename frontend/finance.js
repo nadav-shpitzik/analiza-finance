@@ -195,6 +195,9 @@
  *      marked (cohortOpen); a click closes it under that search only (SEARCH_SHUT), and her own opened cohorts stay hers.
  * 5  "מחזורים בלי מחיר" drew nothing at all while every cohort on the track was priced (all 14): one line says "אין
  *      מחזורים בלי מחיר" (unpricedHtml).
+ * 6  When the page got shorter (a search with few results, "ללא תקבול", a cohort closed) its scrollbar went and the centered
+ *      desk moved about 7 pixels sideways, so a click on the search's X missed. desk.css keeps the bar's room on the root
+ *      (`scrollbar-gutter: stable`); tests/test_desk_browser.py measures it with the scrollbars that take room.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one

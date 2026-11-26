@@ -360,9 +360,12 @@ QA_CODA = r"""
 """
 
 
-def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),), setup: str = "") -> dict:
-    """`setup` runs before the page opens (a route that holds a request, a clock)."""
+def qa_visit(script: str, base: str, sdk: str, sizes=((1434, 900),), setup: str = "", scrollbars: bool = False) -> dict:
+    """`setup` runs before the page opens (a route that holds a request, a clock). `scrollbars`: the page's scrollbars take
+    their room, as in Chava's browser - Playwright's headless Chromium hides them by default (`--hide-scrollbars`)."""
     prelude = QA_PRELUDE.replace("/*SETUP*/", setup)
+    if scrollbars:
+        prelude = prelude.replace("chromium.launch()", 'chromium.launch({ ignoreDefaultArgs: ["--hide-scrollbars"] })')
     run = subprocess.run([NODE, "-e", prelude + script + QA_CODA, base, sdk, json.dumps([list(s) for s in sizes])],
                          capture_output=True, text=True, timeout=180, env=dict(os.environ, NODE_PATH=PW_ROOT))
     assert run.returncode == 0, (run.stdout[-3000:], run.stderr[-3000:])
@@ -456,6 +459,41 @@ def long_view(copies: int = 3) -> dict:
                          invoice="50%03d" % i, ctx=ctx, deal=ctx["deal"], **kw))
     v["b2b"]["rows"] = b2
     return with_counts(v)
+
+
+def test_the_desk_holds_its_place_sideways_when_the_page_gets_shorter_and_its_scrollbar_goes(serve):
+    """QA 26.11 (6): when the page got shorter - a search with few results, "ללא תקבול", a cohort closed - its scrollbar went
+    and the whole desk moved sideways by about 7 pixels (half the bar: the desk is centered), so a click aimed at the
+    search's X missed it. The page keeps the bar's room (desk.css: `scrollbar-gutter: stable` on the root, which scrolls
+    the view's frame), and the desk stays where it was. Measured with the scrollbars Chava has, which take room."""
+    base, _log = serve(long_view())
+    got = qa_visit(r"""
+  const where = () => page.evaluate(() => ({ q: document.getElementById("fin-q").getBoundingClientRect().left,
+    wrap: document.querySelector(".fin-wrap").getBoundingClientRect().left,
+    right: document.querySelector(".fin-wrap").getBoundingClientRect().right,
+    bar: window.innerWidth - document.documentElement.clientWidth,
+    scrolls: document.documentElement.scrollHeight > window.innerHeight }));
+  await page.click('[data-bstate=""]');
+  await page.waitForSelector('tr[data-row="5020"]');
+  out.steps[at] = { long: await where() };
+  await page.click('[data-bstate="no_money"]');
+  await page.waitForFunction(() => document.querySelectorAll("tr[data-row]").length === 3, null, { timeout: 15000 });
+  out.steps[at].tile = await where();
+  await page.click('[data-bstate=""]');
+  await page.waitForSelector('tr[data-row="5020"]');
+  await page.fill("#fin-q", "ארוך-ארוך 20");
+  await page.waitForFunction(() => document.querySelectorAll("tr[data-row]").length === 1, null, { timeout: 15000 });
+  out.steps[at].search = await where();
+""", base, fake_sdk({}), sizes=((1280, 1000), (1400, 1000)), scrollbars=True)
+    assert got["errors"] == []
+    for size, steps in got["steps"].items():
+        long = steps["long"]
+        # the long list scrolls, and the bar takes room, as in Chava's browser
+        assert long["scrolls"] and long["bar"] > 0, (size, long)
+        for name in ("tile", "search"):
+            short = steps[name]
+            assert not short["scrolls"], (size, name, short)           # the page got shorter than the view: no bar
+            assert (short["q"], short["wrap"], short["right"]) == (long["q"], long["wrap"], long["right"]), (size, name, long, short)
 
 
 def test_every_column_of_a_general_list_fits_its_frame_at_chavas_width(serve):

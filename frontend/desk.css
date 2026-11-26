@@ -31,6 +31,10 @@ body[data-theme="dark"] {
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+/* QA 26.11 (6): the root scrolls the view's frame, and when the page got shorter than the view (a search with few results,
+   "ללא תקבול", a cohort closed) its scrollbar went and the centered desk moved sideways by half of it, about 7 pixels: a
+   click aimed at the search's X missed it. The bar's room is kept whether the page scrolls or not */
+html { scrollbar-gutter: stable; }
 body {
   background: var(--page);
   color: var(--fg);
