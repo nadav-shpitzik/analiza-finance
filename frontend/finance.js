@@ -171,6 +171,10 @@
  *      search went with it (QA 24.11, left for D4). The desk stays, and the line beside the reading's time says the refresh
  *      failed and why (REFRESH_FAILED), until a reading is taken or "רענון" is pressed again; only a page with no desk yet
  *      says the error in its place.
+ * 4b The plan of an action in a row's details - QA2 3 had left it "as it was: under its button" - pushed every row below
+ *      it down, and so did its reading, its progress and its result. Each floats now beside the action's control (actPop,
+ *      fin-pop, placed by placePop, following a scroll), as a batch does beside what was pressed: never over the button or
+ *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1960,10 +1964,11 @@
     act.phase = plan.steps.length ? "confirm" : "nothing";
     /* the plan on the screen ("shown"), or nothing to write since monday already holds it */
     use("act", { action: act.action, phase: plan.steps.length ? "shown" : "nothing" });
-    /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write) */
+    /* the plan is read out where it appears: focus on the box itself, never on "כתיבה" (a key held down must not write).
+       It floats in the view (D4's review, 4b), so the focus scrolls nothing */
     landed(function () {
-      var box = root && root.querySelector ? root.querySelector(".fin-act-plan") : null;
-      if (box && box.focus) { box.focus(); }
+      var box = root && root.querySelector ? root.querySelector(".fin-act-box.fin-act-plan") : null;
+      if (box && box.focus) { box.focus({ preventScroll: true }); }
     });
     return true;
   }
@@ -2035,23 +2040,29 @@
       }
     });
   }
+  /* QA 24.11, left for D4 (its review, 4b): what a row's action shows - its reading, its plan, its progress, its result -
+     opened inside the row's details, under its button, and pushed every row below it down. It floats now beside the
+     action's control (fin-pop, placed by placePop as a batch is), so nothing of the list moves; it stays the details' own,
+     and closes with them */
+  function actPop(inner) { return "<div class=\"fin-act-box fin-pop\">" + inner + "</div>"; }
   function actStatus(act) {
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-act-close=\"1\">סגירה</button>";
     switch (act.phase) {
-      case "invalid": return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + "</p>";
-      case "reading": return "<p class=\"fin-act-msg\" role=\"status\">קורא את השורה במאנדיי...</p>";
-      case "nothing": return (act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
-        "<p class=\"fin-act-msg\" role=\"status\">הכל כבר כך במאנדיי: אין מה לכתוב. " + close + "</p>";
-      case "writing": return "<p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי...</p>";
+      /* floating, it can be closed: it no longer sits in the details out of the way */
+      case "invalid": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>");
+      case "reading": return actPop("<p class=\"fin-act-msg\" role=\"status\">קורא את השורה במאנדיי...</p>");
+      case "nothing": return actPop((act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
+        "<p class=\"fin-act-msg\" role=\"status\">הכל כבר כך במאנדיי: אין מה לכתוב. " + close + "</p>");
+      case "writing": return actPop("<p class=\"fin-act-msg\" role=\"status\">כותב במאנדיי...</p>");
       /* a status written moves the row to its state once the server reads it; a reference typed does not move it */
-      case "done": return "<p class=\"fin-act-msg ok\" role=\"status\">נכתב במאנדיי בשמך. המסך מתעדכן" +
+      case "done": return actPop("<p class=\"fin-act-msg ok\" role=\"status\">נכתב במאנדיי בשמך. המסך מתעדכן" +
         (act.plan.lines.some(function (l) { return l.kind === "status" && !l.same; }) ? ", והשורה תעבור לשיבוץ שלה. " : ". ") +
-        close + "</p>";
-      case "failed": return "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>" +
-        (act.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(act.detail) + "</p>" : "");
+        close + "</p>");
+      case "failed": return actPop("<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.error) + " " + close + "</p>" +
+        (act.detail ? "<p class=\"fin-subtle fin-act-detail\" dir=\"auto\">מאנדיי: " + esc(act.detail) + "</p>" : ""));
       case "confirm": {
         var p = act.plan, two = p.steps.length > 1;
-        return "<div class=\"fin-act-plan\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
+        return "<div class=\"fin-act-plan fin-act-box fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
           (act.notice ? "<p class=\"fin-act-msg bad\" role=\"alert\">" + esc(act.notice) + "</p>" : "") +
           "<p>ייכתב במאנדיי בשורה " + esc("\"" + act.live.name + "\"") +
           ", בשמך" + (two ? ", בשני שלבים" : "") + ":</p><ul>" + p.lines.map(planLine).join("") + "</ul>" +
@@ -3294,9 +3305,15 @@
      has left the list (a reading moved it), beside the bar */
   var POP_GAP = 6, POP_EDGE = 8;
   function popAnchor(pop) {
+    var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
+    /* D4's review (4b): a row's own action, in its details - beside its button, never over it nor over the boxes it takes
+       what is typed from (its .fin-act) */
+    if (pop.classList && pop.classList.contains("fin-act-box")) {
+      var btn = ACT && root.querySelector ? root.querySelector("[data-act=\"" + quote(ACT.key + ":" + ACT.action) + "\"]") : null;
+      return btn ? { v: (btn.closest && btn.closest(".fin-act")) || btn, h: btn } : null;
+    }
     var panel = pop.closest ? pop.closest(".fin-panel") : null, b = BATCH, v = null, h = null;
     if (!panel || !b) { return null; }
-    var quote = function (s) { return String(s).replace(/["\\]/g, "\\$&"); };
     if (b.from === "row") {
       v = panel.querySelector("tr[data-row=\"" + quote(b.items[0].row.id) + "\"]");
       h = panel.querySelector("[data-row-act=\"" + quote(b.items[0].key + ":" + b.action) + "\"]");
@@ -3329,7 +3346,7 @@
   }
   var follow = false;
   function onScroll() {
-    if (follow || !BATCH) { return; }
+    if (follow || !(BATCH || ACT)) { return; }
     follow = true;
     var again = function () { follow = false; placePop(); };
     if (window.requestAnimationFrame) { window.requestAnimationFrame(again); } else { setTimeout(again, 16); }

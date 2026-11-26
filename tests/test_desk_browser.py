@@ -722,6 +722,85 @@ def many_receipts(n: int = 16) -> dict:
     return with_counts(v)
 
 
+def test_a_details_plan_floats_beside_its_button_and_no_row_moves_when_it_opens_or_closes(serve):
+    """QA 24.11, left for D4 (its review, 4b): the plan of an action in a row's details ("סימון "תשלום הוחזר"" there, and
+    every action that has a box to type in) opened inside the details, under its button, and pushed every row below it
+    down. It floats now beside its button, as a batch does beside what was pressed: no row moves - nor the details' own
+    facts, nor the page - while it reads, while it is shown and after it closes; it is in the view, never over the button,
+    so the pointer is not on "כתיבה"; the focus is on it. At monday's view widths, at the list's top and scrolled down."""
+    from app.desk import view as fd
+
+    v = long_view()
+    v["b2c"]["actions"]["list"].append(dict(fd.DESK_ACTIONS["refund_partial"], key="refund_partial"))
+    for r in v["b2c"]["rows"]:
+        if r["state"] == "refund_to_execute":
+            r["actions"] = ["refund_done", "refund_partial"]    # the partial one takes its amount from a box beside its button
+    base, _log = serve(v)
+    store = {"5093448677": {rid: {"__name": "תלמיד/ה לדוגמה", "color_mm1kxpvt": {"text": "שולם", "index": 1, "label": "שולם"}}
+                            for rid in ("5001", "5008", "5015")}}
+    labels = {"5093448677": {"color_mm1kxpvt": {"1": "שולם", "4": "תשלום הוחזר", "5": "הוחזר חלקי"}}}
+    got = qa_visit(r"""
+  await page.click('[data-bstate="refund_to_execute"]');
+  await page.waitForSelector('tr[data-row="5015"]');
+  const rows = () => page.evaluate(() => [...document.querySelectorAll("tr[data-row], .fin-detail dt")].map((r, i) =>
+    [r.dataset.row || "dt" + i, Math.round(r.getBoundingClientRect().top)]));
+  const center = (sel) => page.$eval(sel, (el) => { const b = el.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+  const box = (pressed, at) => page.evaluate(([pressed, at]) => {
+    const pop = document.querySelector(".fin-act-plan"), p = pop.getBoundingClientRect();
+    const r = document.querySelector(pressed).getBoundingClientRect(), go = pop.querySelector("[data-act-go]").getBoundingClientRect();
+    const c = document.querySelector(pressed).closest(".fin-act").getBoundingClientRect();
+    return { y: Math.round(window.scrollY), focus: document.activeElement === pop, inView: p.top >= 0 && p.bottom <= window.innerHeight,
+      clear: p.bottom <= r.top || p.top >= r.bottom || p.right <= r.left || p.left >= r.right,
+      /* and of the whole control, the box she typed into with it */
+      ctlClear: p.bottom <= c.top || p.top >= c.bottom || p.right <= c.left || p.left >= c.right,
+      /* beside the action's control: just above it or just below it */
+      beside: Math.min(Math.abs(c.top - p.bottom), Math.abs(p.top - c.bottom)) <= 8,
+      onGo: at[0] >= go.left && at[0] <= go.right && at[1] >= go.top && at[1] <= go.bottom, inDetails: !!pop.closest(".fin-acts"),
+      text: pop.innerText };
+  }, [pressed, at]);
+  out.steps[at] = {};
+  for (const [name, row, key] of [["top", "5001", "refund_done"], ["scrolled", "5015", "refund_done"],
+                                  ["typed", "5008", "refund_partial"]]) {
+    await page.click('tr[data-row="' + row + '"] td.k-to_refund');
+    const act = '[data-act="sc:' + row + ':' + key + '"]';
+    await page.waitForSelector(act);
+    if (key === "refund_partial") { await page.fill('[data-act-input="sc:' + row + ':numeric_mm62za1f"]', "100"); }
+    await page.$eval(act, (el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(100);
+    const before = await rows(), y = Math.round(await page.evaluate(() => window.scrollY)), spot = await center(act);
+    await page.mouse.click(spot[0], spot[1]);
+    await page.waitForSelector(".fin-act-plan [data-act-go]");
+    const open = await rows(), shown = await box(act, spot);
+    /* the page scrolled a little with the plan open: it follows its button */
+    const held = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollBy(0, 40));
+    await page.waitForTimeout(100);
+    shown.followed = (await box(act, [-1, -1])).beside && (await page.evaluate(() => window.scrollY)) !== held;
+    await page.evaluate((y) => window.scrollTo(0, y), held);
+    await page.waitForTimeout(100);
+    await page.click('[data-act-close="1"]');
+    await page.waitForSelector(".fin-act-plan", { state: "detached" });
+    out.steps[at][name] = { before: before, y: y, open: open, box: shown, closed: await rows(),
+      after: Math.round(await page.evaluate(() => window.scrollY)) };
+    await page.click('tr[data-row="' + row + '"] td.k-to_refund');            /* its details closed again */
+    await page.waitForSelector('tr[data-row="' + row + '"][aria-expanded="false"]');
+  }
+""", base, fake_sdk(store, labels), sizes=((1280, 748), (1400, 748)))
+    assert got["errors"] == [], got["errors"]
+    for size in ("1280x748", "1400x748"):
+        for name in ("top", "scrolled", "typed"):
+            step, box = got["steps"][size][name], got["steps"][size][name]["box"]
+            # every row and every fact of the details where it was, while the plan is open and after it closed; the page too
+            assert step["open"] == step["before"] and step["closed"] == step["before"], (size, name, step["before"], step["open"])
+            assert box["y"] == step["y"] == step["after"], (size, name, box["y"], step["y"], step["after"])
+            # in the view, clear of the button, the pointer not on "כתיבה", the focus on it - and still the details' own
+            assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"] and box["inDetails"], (size, name, box)
+            assert box["beside"] and box["followed"] and box["ctlClear"], (size, name, box)
+        assert 'סטטוס תשלום: עכשיו "שולם", ייכתב "תשלום הוחזר"' in got["steps"][size]["top"]["box"]["text"]
+        typed = got["steps"][size]["typed"]["box"]["text"]
+        assert "סכום החזר: עכשיו ריק, ייכתב 100.00 ₪" in typed and 'ייכתב "הוחזר חלקי"' in typed, typed
+
+
 def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_closes(serve):
     """QA2 3 (24.11): "the confirmation screen pushes the table down, and the mouse stays over the button of another row". It
     took the bar's place above the table, taller than it - every row 69 pixels lower - and with the list scrolled down the
