@@ -53,9 +53,10 @@ they are, on the desk's own reading and the whole copy:
 **Only the desk's era** (ERA_FROM, Chava's start, ADR-0168 §5): a row the desk dates from ERA_FROM on, with a document
 dated from it on. Anything older - a row, or a row's document - is the cleanup a session runs (backlog 0301 C1), never a
 proposal here (spec §6.4.2). A proposal and a mark never meet on one row: every mark is of a row that cites a number,
-and FR-C2 proposes only to an empty cell; A1 gives a date only to a row whose status says the money came in, and
-`books_receipt_unpaid` only to one whose status says it did not. A proposal is laid on the view (`merge`) only from a
-part that is current (`ok`) and computed on the very reading shown, never from a held one: the page writes what it shows.
+and FR-C2 proposes only to an empty cell; a date comes only from A1's `fill`, which is no bucket a mark comes from, and
+only to a row whose status says the money came in, where `books_receipt_unpaid` is only of one whose status says it did
+not. A proposal is laid on the view (`merge`) only from a part that is current (`ok`) and computed on the very reading
+shown, never from a held one: the page writes what it shows.
 
 EVERY DOCUMENT OF THE ERA LANDS IN ONE PLACE (spec §6.3.1), the first that fits in PLACES: outside (another status or
 type, a cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row, answered
@@ -71,8 +72,8 @@ copy and why it is not newer; with none, `none` and why. A whole copy older than
 
 WHAT LEAVES. The result lives in this instance's memory and in the desk's gated answer only: the marks, the proposals and
 the students' list in the students' tab (Student Charge's members), the companies' list in the companies' tab (B2B
-Charge's), the unclear documents only to a member of both (app/desk/view.py `visible_part`). Nothing of it is logged, stored or put in
-/health, which says the state, the copy's time and the reasons - never a count. A card's name from the books was cleaned
+Charge's), the unclear documents only to a member of both (app/desk/view.py `visible_part`). Nothing of it is logged,
+stored or put in /health, which says the state, the copy's time and the reasons - never a count. A card's name from the books was cleaned
 of ID numbers before it was stored (spec §3.4), and no card key, no ID number and no business number is in an answer.
 """
 
