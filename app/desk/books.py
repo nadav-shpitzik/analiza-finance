@@ -566,6 +566,13 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
             e = _entry(d)
             e.update(why=why, why_text=UNCLEAR_WHY.get(why, ""))
             lists["unclear"].append(dismissable(e, d, place, "unclear:" + why))
+    # R5: a number two documents of one list carry (FR-3: a number names one document; A1 calls one so held ambiguous) names
+    # neither - a press would name the other's evidence - so neither carries evidence: neither is pressed, hidden or "חזר"
+    for entries in lists.values():
+        held = Counter(e.get("subject") for e in entries if e.get("subject"))
+        for e in entries:
+            if held[e.get("subject")] > 1:
+                e.pop("evidence", None)
     return {"marks": marks, "notes": notes, "fills": fills, "reading_at": reading.get("read_at"),
             "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
             "unclear": _newest(lists["unclear"]), "vouchers": vouchers, "places": places,

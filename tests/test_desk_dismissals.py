@@ -51,7 +51,7 @@ def alerts(part: dict) -> dict:
     """{(kind, subject): evidence} of every alert in a part compute gave."""
     out = {(m["kind"], i): m["evidence"] for i, ms in part["marks"].items() for m in ms}
     out.update({(f["mark"]["kind"], i): f["mark"]["evidence"] for i, f in part["fills"].items()})
-    out.update({(e["kind"], e["subject"]): e["evidence"] for p in dz.DOC_KINDS for e in part[p]})
+    out.update({(e["kind"], e["subject"]): e["evidence"] for p in dz.DOC_KINDS for e in part[p] if e.get("evidence")})
     return out
 
 
@@ -117,6 +117,8 @@ MARK_MOVES = [
     ("documents", "books_amount_differs", None, ("set", 62609, {"total_incl": Decimal("3000")})),
     ("documents", "books_receipt_unpaid", None, ("set", 62607, {"value_date": TODAY.replace(day=5)})),
     ("group", "books_amount_differs", None, ("row", pay(20, "רוני שגב", ref="62609", paid="500"))),
+    # another row joins the group and pays nothing: the sums do not move, the rows the mark compares do
+    ("group rows", "books_amount_differs", None, ("row", pay(20, "רוני שגב", ref="62609", paid="0"))),
 ]
 
 
@@ -144,6 +146,25 @@ def test_a_marks_evidence_stays_when_only_its_name_its_date_its_receipt_or_a_car
     number = {"books_receipt_unpaid": 62607, "books_amount_differs": 62609}.get(kind)
     docs = with_doc(ALL_DOCS, number, account_name="כרטיס בשם אחר") if number else ALL_DOCS
     assert evidence_of(kind, rows, docs) == evidence_of(kind)
+
+
+HELD_FIELDS = [("type", {"doc_type": 3}), ("status", {"status": 2}), ("total", {"total_incl": Decimal("3600")}),
+               ("date", {"value_date": TODAY.replace(day=4)}), ("missing", {"missing": True})]
+
+
+@pytest.mark.parametrize("field, change", HELD_FIELDS, ids=[f for f, _c in HELD_FIELDS])
+def test_what_the_copy_holds_under_a_cited_number_is_evidence_field_by_field(field, change):
+    """A mark's `documents`: every document of the copy under a number the row cites, in any status - a draft that is
+    cancelled, re-typed, re-totalled, re-dated or answered "not found" is new evidence, though the row still cites a number
+    that is no valid document (the mark stays `books_ref_invalid`)."""
+    draft = doc(40000, status=0, day="2026-11-02")
+    entry, row = {"documents": ["40000"], "group": None}, {"paid_raw": "3517", "status_idx": "1"}
+    base = dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, dz.held_by_number([draft])))
+    moved = dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, dz.held_by_number([dict(draft, **change)])))
+    assert moved != base, field
+    # and a document under a number the row does not cite is none of its evidence
+    other = dz.held_by_number([draft, doc(40001, status=0)])
+    assert dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, other)) == base
 
 
 DOC_FIELDS = [("number", {"doc_number": "50502"}), ("type", {"doc_type": 2}), ("status", {"status": 0}),
@@ -274,6 +295,21 @@ def test_each_kind_hides_while_its_evidence_is_the_same_and_comes_back_when_it_c
     # nothing else of the part moved: every other alert is shown as before
     others = {k: e for k, e in alerts(raw).items() if k != (kind, subject)}
     assert {k: e for k, e in alerts(dz.hide(raw, live)).items()} == others
+
+
+def test_a_number_two_documents_of_one_list_carry_names_neither_and_neither_is_hidden_or_came_back():
+    """FR-3: a number names one document. Two of one list under one number (a tax invoice and an invoice-receipt on one
+    student's card) carry no evidence: no press names either, and a live dismissal of that number hides neither and says
+    neither came back - each is shown as it is. A number of another list is untouched."""
+    twin = doc(62606, doc_type=1, card="20006", name="תומר נחום", day="2026-11-11")
+    raw, view, _r = computed(docs=ALL_DOCS + [twin])
+    twins = [e for e in raw["students"] if e["subject"] == "62606"]
+    assert len(twins) == 2 and not any(e.get("evidence") for e in twins)
+    assert ("books_doc_students", "62606") not in alerts(raw) and ("books_doc_students", "62613") in alerts(raw)
+    v = merged(raw, view, [live_row("books_doc_students", "62606", alerts(computed()[0])[("books_doc_students", "62606")])])
+    shown = [e for e in v["b2c"]["books"]["documents"] if e["subject"] == "62606"]
+    assert len(shown) == 2 and not any(e.get("returned") for e in shown)
+    assert v["b2c"]["books"]["hidden"] == [] and v["b2c"]["books"]["returned_counts"] == {}
 
 
 def test_a_word_is_said_for_each_press_and_a_proposal_is_not_to_be_proposed():
@@ -585,6 +621,25 @@ def test_a_press_is_a_member_of_each_of_its_alerts_boards(nag, user, kind, statu
         assert resp.json() == {"error": "not_a_board_member"} and nag.mem.rows == []
     else:
         assert [(r["kind"], r["by"]) for r in nag.mem.rows] == [(kind, user)]
+
+
+def test_a_board_whose_members_could_not_be_read_is_no_membership_of_it(nag):
+    """Fail closed (app/desk/gate.py): a reader on both boards whose Student Charge's members could not be read passes the
+    gate by B2B Charge - and may press only B2B Charge's alerts, never one of the students' or an unclear document."""
+    from tests.test_desk import SC
+
+    first = nag.get(1)
+    sent = {k: body_of(first, k, s) for k, s in ROUTE_ALERTS.items()}
+    nag.w.members_fail = {SC}
+    main.app.state.desk.members._held.clear()
+    shown = nag.get(1)
+    assert shown["tabs"] == {"b2c": None, "b2b": True}
+    for kind in ("books_receipt_unpaid", "books_ref_fill", "books_doc_students", "books_doc_unclear"):
+        resp = nag.post(NAG, dict(sent[kind], taken=shown["taken_at"], books=shown["view"]["books"]["key"]))
+        assert (resp.status_code, resp.json()) == (403, {"error": "not_a_board_member"}), kind
+    assert nag.mem.rows == []
+    resp = nag.post(NAG, dict(sent["books_doc_companies"], taken=shown["taken_at"], books=shown["view"]["books"]["key"]))
+    assert resp.status_code == 200 and [r["kind"] for r in nag.mem.rows] == ["books_doc_companies"]
 
 
 def test_the_evidence_is_the_servers_a_forged_or_moved_one_is_refused_and_nothing_is_kept(nag):

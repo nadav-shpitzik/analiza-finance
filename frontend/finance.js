@@ -177,6 +177,10 @@
  *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
  * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נכתב במאנדיי..." and the note
  *      on monday's card of the row just written). One shows at a time: a new one takes the place of the one on the screen.
+ * R5 (26.11, "לא פער", the spec §6.1 item 4): an alert of the books hidden for everyone while its evidence is the same -
+ *      its press beside each mark's sentence in a row's details, on each document of the books' lists, and ("לא להציע")
+ *      beside each proposal; a confirmation floating beside it, as a batch's does; what is hidden under each list, by whom
+ *      and when, with "החזרה" on one's own; "חזר" on an alert that came back. Nothing written to monday. Its block "R5".
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1330,6 +1334,11 @@
     not_yours: "רק מי שהסתיר יכול להחזיר.",
     not_live: "ההסתרה כבר הוחזרה או הוחלפה. המסך נטען מחדש."
   };
+  /* a refusal in the page's words; one it has none for is said as what did not happen, with the server's word */
+  function nagRefused(word, nothing) {
+    return NAG_ERRORS[word] || (word === "rate_limited" ? nothing + ": יותר מדי בקשות. אפשר לנסות שוב עוד רגע."
+      : nothing + " (" + (word || "שגיאה") + ").");
+  }
   /* what the server's answer to a refusal leaves on the screen behind: the desk is asked again */
   var NAG_RELOAD = { other_reading: 1, not_shown: 1, already_hidden: 1, evidence_changed: 1, not_live: 1 };
   var NAG = null;        /* the press on the screen: { kind, subject, evidence, from, what, phase, error } */
@@ -1405,7 +1414,7 @@
     }, function (e) {
       var word = (e && e.error) || "";
       use("not_a_gap", { alert: nag.kind, phase: "failed", code: useWord(word) || "unknown" });
-      if (NAG === nag) { nag.phase = "failed"; nag.error = NAG_ERRORS[word] || errorText(e); }
+      if (NAG === nag) { nag.phase = "failed"; nag.error = nagRefused(word, "לא הוסתר כלום"); }
       landed();
       if (NAG_RELOAD[word]) { load(false); }
     });
@@ -1456,7 +1465,7 @@
       var word = (e && e.error) || "";
       use("not_a_gap_undo", { alert: kind, phase: "failed", code: useWord(word) || "unknown" });
       landed();
-      flash(NAG_ERRORS[word] || errorText(e));
+      flash(nagRefused(word, "לא הוחזר כלום"));
       if (NAG_RELOAD[word]) { load(false); }
     });
   }

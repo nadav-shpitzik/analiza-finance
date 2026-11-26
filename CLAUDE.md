@@ -230,7 +230,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   `books_doc_companies`, `books_doc_unclear`; subject: its number as A1 reads one) and D4's two proposals (pressed "לא
   להציע"). Each kind's boards (`BOARDS`: Student Charge, B2B Charge, both for the unclear). **The evidence** is a sha256 over
   a fixed list per kind (`EVIDENCE`; why each field is in, and what is left out, in the module's docstring), computed by
-  the server in `compute` and carried on each alert; never a word, a name or a card key. `DeskBooks` reads the live
+  the server in `compute` and carried on each alert; never a word, a name or a card key. A number two documents of one
+  list carry (FR-3) names neither: neither carries evidence, so neither is pressed, hidden or "חזר". `DeskBooks` reads the live
   dismissals with the copy's run (once per computation, at most every RUN_CHECK_S: another instance's press shows within
   that) and shows its last whole computation by them (`hide`): out of the marks, the lists, the row and "לטיפול" and its
   counts; under `hidden` of its tab's books part (or `books_unclear`) with who and when, a proposal only where proposals are
