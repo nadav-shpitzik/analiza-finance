@@ -161,6 +161,21 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the desk's year) a part notes `student_window_ended` (NOTES: said after the reasons, by a current part too); `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`) and never waits for another request's computation. `/health` `desk.books`: state,
   as_of, reasons, never a count. No schema change. Tests: `tests/test_desk_books.py`, `tests/test_desk_books_page.py`.
+- **What the books propose to fill (D4, 26.11, "רישום מחשבשבת"):** `app/desk/books.py` `proposals`, in the same computation.
+  Never a rule of its own: FR-C2's `ref_fill.analyse` on the desk's own reading (Student Charge, B2B Charge, the Accounts'
+  keys) gives the number, and A1's `analyse` on the rows as they would be with those numbers written gives the date (its
+  `fill` bucket: an empty "תאריך תקבול" only; a row that already cites a valid invoice-receipt gets the date alone). Only a
+  row the desk dates from ERA_FROM on, with a document from it on (older is C1's cleanup). A proposal and a mark never meet
+  on a row; a proposal leaves the server only from an `ok` part computed on the reading shown (`merge`), never a held one.
+  The chips `books_ref_fill` / `books_date_fill` are the legend's. The action `books_fill` (DESK_ACTIONS) writes them as the
+  person: one step, the number (text) and the date (date), each only the value proposed and only into an empty cell
+  (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. `merge` lays on the row its chip (a flag, never
+  `books_task`), `books_fill` {number?, date?} and the action; on the document `proposal`. The page (finance.js D4): the
+  chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
+  ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
+  whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
+  pressed. Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
+  `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

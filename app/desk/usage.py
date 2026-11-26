@@ -3,7 +3,8 @@
 
 Ported on 24.11 from analiza-metrics app/usage.py at `da671b2`, faithfully: the same kinds, detail keys, ranges and
 alphabets, so a row written here reads like a row written there, and the history D5 imports (the desk move plan §4.4) is
-one vocabulary. New here: this paragraph, and the note on `bill`, the one kind the ported page no longer sends. Since the
+one vocabulary. New here: this paragraph, the note on `bill`, the one kind the ported page no longer sends, and D4's
+`books_fill` with its count `rows`. Since the
 review of D2 (a32395f), three alphabets are narrower than analiza-metrics', each to what its page sends: the visit's id is
 letters only, a word carries no number (WORD_RUN, WORD_DIGITS), and a period is a period key the page can name - so a
 digit run long enough to be an ID number has no place left in a row. And a kind that is not a string is refused and
@@ -52,6 +53,9 @@ KINDS: dict[str, tuple[str, ...]] = {
     "row": ("state", "open"),                  # a row's details opened or closed, and the row's state
     "open_item": ("where",),                   # a row opened in monday: by its name, the icon, or the details' button
     "act": ("action", "phase", "code"),        # an action written as the person: started, confirmed, done, failed
+    # D4 (26.11), new here: "רישום מחשבשבת" pressed - from a row's details, from its document in the books' list, or every
+    # proposal at once (`from`: detail, list, all) - and how many rows its batch takes; its life is `act`'s (books_fill)
+    "books_fill": ("from", "rows"),
     # a company's billing details: edit, confirm, done, failed. Not sent since the port: the page shows them read only
     # until their edit comes back from the browser (finance.js, its change 4; ADR-0188). Kept for that, and for the
     # history D5 imports, which may hold such rows
@@ -69,7 +73,7 @@ KINDS: dict[str, tuple[str, ...]] = {
     "ask": (),                                 # "חסר כאן משהו? פנייה לנדב" pressed
 }
 # the detail keys that are numbers, and the largest each may be
-NUMBERS = {"ms": 600_000, "len": 200, "results": 100_000, "unfiltered": 100_000, "fields": 10}
+NUMBERS = {"ms": 600_000, "len": 200, "results": 100_000, "unfiltered": 100_000, "fields": 10, "rows": 100}
 FLAGS = frozenset({"refreshing", "open"})
 # a word: a state, an action, a code, a kind of search - lowercase Latin, digits and "_" after a first letter, or empty
 WORD = re.compile(r"(?:[a-z][a-z0-9_]{0,39})?")

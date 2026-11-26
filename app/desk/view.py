@@ -51,6 +51,7 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..recon.ref_fill import FILL_WINDOW_DAYS
 from .reading import TAB_BOARDS
 from .reading import (AC, ACCOUNTS_BOARD, B2, B2B_CHARGE, BOARDS, CO, COHORTS_BOARD, DEALS_BOARD, DL, EN,  # noqa: F401
                       ENROLLMENTS_BOARD, LD, LEADS_BOARD, SC, STUDENT_CHARGE, _uniq, cohort_ids, enrollment_cohorts,
@@ -304,6 +305,10 @@ BOOKS_LIST_TITLE = "מסמכים בחשבשבת בלי חיוב במאנדיי"
 BOOKS_UNCLEAR_TITLE = "מסמכים בחשבשבת שלא ברור אם הם של סטודנט/ית או של חברה"
 BOOKS_CANDIDATE = "מועמדת לפי שם"
 BOOKS_AS_OF_WORD = "לפי הספרים"
+# D4: the action that writes what the books propose (DESK_ACTIONS `books_fill`), and the list's words for a proposal
+BOOKS_FILL_BUTTON = "רישום מחשבשבת"
+BOOKS_PROPOSAL = "הצעה"
+BOOKS_FILL_ALL = "לרשום את כל ההצעות"
 # the list's columns: the document as the books hold it, and its total (the legend defines each)
 BOOKS_DOC_HEADS = ("מספר מסמך", "סוג מסמך", "תאריך מסמך", "שם בכרטיס")
 BOOKS_SUM_WORD = "סכום בחשבשבת"
@@ -379,7 +384,16 @@ LEGEND = {
                            "לבדו, וחשבונית מס/קבלה בו נחשבת של סטודנט/ית. %s" % (BOOKS_ERA_SAID, _BOOKS_LATE)),
         (BOOKS_CANDIDATE, "ליד מסמך ברשימה: שורה בלוח Student Charge ששמה זהה לשם בכרטיס בחשבשבת, באותן מילים ובכל סדר "
                           "(מילים של שתי אותיות ומעלה, בלי ספרות). השם הוא רמז בלבד: התאמה נעשית רק לפי מספר המסמך "
-                          "באסמכתת חשבונית, ולכן המסך לא מקשר שורה למסמך לפי שם ולא ממלא דבר."),
+                          "באסמכתת חשבונית, ולכן המסך לא מקשר שורה למסמך לפי שם, ולא כותב דבר בלי אישור שלך."),
+        # D4 (app/desk/books.py `proposals`; DESK_ACTIONS `books_fill`)
+        ("%s · %s · %s" % (BOOKS_FILL_BUTTON, BOOKS_PROPOSAL, BOOKS_FILL_ALL),
+         "כשחשבשבת מציעה מה לרשום בתקבול (\"בחשבשבת: ...\" או \"תאריך מחשבשבת: ...\" ליד השורה, ו%s ליד המסמך ברשימה של "
+         "מסמכים בחשבשבת בלי חיוב במאנדיי): %s כותב במאנדיי, בשמך ובהרשאות שלך, את מספר המסמך באסמכתת חשבונית ואת "
+         "תאריך המסמך בתאריך תקבול, כל אחד רק כשחשבשבת מציעה אותו ורק כשהתא ריק. %s, מעל הרשימה, כותב את כולן יחד (עד 25 "
+         "בכתיבה אחת). לפני הכתיבה המסך קורא את השורות במאנדיי ומראה מה ייכתב בכל אחת; שורה שהשתנתה במאנדיי מאז הקריאה לא "
+         "נכתבת, ותא שאינו ריק לא נכתב אף פעם. אחרי הכתיבה המסך מבקש קריאה חדשה, והמסמך יוצא מהרשימה. רק בתקבולים "
+         "ובמסמכים מ-%s ואילך: מה שלפני כן מטופל בנפרד." % (_q(BOOKS_PROPOSAL), _q(BOOKS_FILL_BUTTON),
+                                                          _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
     ],
     "b2b": [
@@ -453,6 +467,10 @@ _REFUND_NOT_MARKED = "וההחזר עוד לא סומן %s" % _REFUNDED_LABELS
 # what every mark of the books says of where its row is (D3; spec §6.1.1, §6.4.2)
 _BOOKS_MARK_ROW = ("לא משנה את השיבוץ. תקבול מ-%s ואילך שיש בו סימון כזה מופיע גם ב\"לטיפול\"; תקבול ישן יותר נשאר "
                    "במשבצת שלו עם הסימון." % BOOKS_ERA_SAID)
+# D4 (app/desk/books.py `proposals`): what every proposal of the books says of where it is and who writes it
+_BOOKS_REF_FILL = "בחשבשבת: {number}"
+_BOOKS_FILL_ROW = ("בפרטים, %s כותב אותו במאנדיי בשמך, רק בתא ריק. רק בתקבול ובמסמך מ-%s ואילך. לא משנה את השיבוץ."
+                   % (BOOKS_FILL_BUTTON, BOOKS_ERA_SAID))
 LEGEND_FLAGS = {
     "b2c": [
         # "נבנה", not "נכתב", which is the word of the desk's own writes ("נכתב, מתעדכן"; QA 24.11)
@@ -487,8 +505,17 @@ LEGEND_FLAGS = {
         ("refund_exceeds_paid", "סכום החזר גדול מסכום ששולם", "ההחזר נספר עד סכום ששולם."),
         ("refund_last_day_unknown", LAST_DAY_LABEL + " לא ידוע", "אין תאריך בקשת ביטול: התקבול לא מקושר להרשמה, או "
                                                                  "שבהרשמה אין תאריך. הפרטים אומרים איזה מהשניים."),
-        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ: את "
-                                                   "האסמכתאות ימלא החיבור לחשבשבת." % _PAID),
+        ("invoice_missing", "חסרה אסמכתת חשבונית", "סטטוס תשלום %s, ואסמכתת חשבונית ריקה. לא משנה את השיבוץ. כשחשבשבת "
+                                                   "מציעה את המספר, לידה: \"בחשבשבת: ...\"." % _PAID),
+        # D4 (app/desk/books.py `proposals`): what the books propose to fill, written only by the person ("רישום מחשבשבת")
+        ("books_ref_fill", _BOOKS_REF_FILL,
+         "אסמכתת חשבונית ריקה, וחשבשבת מציעה מספר: חשבונית מס/קבלה תקפה אחת בלבד בכרטיס של סטודנט/ית, ששום שורה בלוחות "
+         "החיובים לא מפנה אליה, שהשם בכרטיס זהה לשם השורה (באותן מילים ובכל סדר), שהסכום שלה שווה לסכום ששולם עד שקל, "
+         "ושהתאריך שלה עד %d יום לפני תאריך התקבול או אחריו; ושום שורה אחרת בשם ובסכום האלה לא מחכה לה. %s"
+         % (FILL_WINDOW_DAYS, _BOOKS_FILL_ROW)),
+        ("books_date_fill", "תאריך מחשבשבת: {date}",
+         "באסמכתת חשבונית יש חשבונית מס/קבלה תקפה בחשבשבת, הסכום שווה, וסטטוס התשלום אומר שהכסף נכנס, ותאריך תקבול ריק: "
+         "חשבשבת מציעה את תאריך המסמך. %s" % _BOOKS_FILL_ROW),
         ("receipt_pending", "שליחת קבלה: טרם", "סטטוס תשלום %s, ושליחת קבלה %s או ריקה." % (_PAID, _q(RECEIPT[R_PENDING]))),
         ("credit_ref_missing", "חסרה אסמכתת זיכוי", "תשלום שהוחזר מ-%s ואילך, ואסמכתת זיכוי ריקה. לא משנה את השיבוץ."
                                                      % CREDIT_REF_FROM.strftime("%d.%m.%Y")),
@@ -589,7 +616,9 @@ def flag_legend_term(text: str) -> str:
 FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status", "receipt_no_money",
               "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid",   # D3: contradictions with the books
               "refund_last_day_passed", "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract",
-              "over_deal_value", "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending",
+              "over_deal_value", "refund_last_day_unknown", "invoice_missing",
+              "books_ref_fill", "books_date_fill",   # D4: what the books propose, beside what is missing
+              "billed_no_invoice", "receipt_pending",
               "credit_ref_missing", "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand",
               "partial_amount_unknown", "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"]
 
@@ -652,6 +681,17 @@ DESK_ACTIONS = OrderedDict([
                     "steps": [[_typed(SC["credit_ref"], "אסמכתת זיכוי", "text", required=False)]]}),
     ("sc_invoice", {"board": "sc", "button": "שמירה", "field": True,
                     "steps": [[_typed(SC["invoice"], "אסמכתת חשבונית", "text", required=False)]]}),
+    # D4: what the books propose for the row (app/desk/books.py `proposals`: FR-C2's number, A1's date) - offered only on a
+    # row that carries a proposal (`books_fill`, laid by books.merge), never typed: each write is the value the books
+    # propose under its key (`books`), sent only when proposed, and only into a cell that is empty (`if_empty`, as "חויב"
+    # writes its demand day). The page reads the row right before it writes, and a cell that is no longer what the desk
+    # read is skipped and said, never written over (frontend/finance.js planAction, and the batch's reading)
+    ("books_fill", {"board": "sc", "button": BOOKS_FILL_BUTTON,
+                    "steps": [[{"column": SC["invoice"], "title": "אסמכתת חשבונית", "kind": "text", "books": "number",
+                                "if_empty": True},
+                               {"column": SC["paid_date"], "title": "תאריך תקבול", "kind": "date", "books": "date",
+                                "if_empty": True}]],
+                    "after": "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."}),
     # a company charge billed: with its invoice's reference when typed (an empty box never clears one), and "מועד דרישת
     # תשלום" today when it is empty (MON-92: a charge that moves to "חויב" without one gets the day it moved)
     ("billed", {"board": "b2", "button": "סימון %s" % _q(BILLING[B_BILLED]),

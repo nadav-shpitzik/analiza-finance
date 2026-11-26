@@ -422,3 +422,11 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-books .fin-cand + .fin-cand { margin-top: 3px; }
 #screen-finance table.fin-books-t td { vertical-align: top; }
 #screen-finance .fin-dx-books { margin: 10px 0 0; color: var(--fin-muted); font-size: 13px; }
+
+/* D4: what the books propose (frontend/finance.js proposalHtml) - under a document's candidates, the row the books propose
+   and the button that writes it as the person */
+#screen-finance .fin-books .fin-fill { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px;
+  font-size: 13px; }
+#screen-finance .fin-books .fin-fill .fin-btn { height: 26px; padding: 0 10px; font-size: 13px; }
+#screen-finance .fin-books .fin-actions .fin-btn { gap: 6px; }
+#screen-finance .fin-acts .fin-fill-said { margin: 8px 0 0; }

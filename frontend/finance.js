@@ -141,6 +141,16 @@
  *      and the Excel link carries it too, so a file built from another part says so.
  * D3 5 A number a row cites that is just past the end of its series is not yet in the copy (read every hour): the server
  *      gives no mark for it, and the row's details say "עוד לא בהעתק של הספרים" (`books_note`, booksNote), quietly.
+ * D4 (26.11, "רישום מחשבשבת"): what the books propose to fill on a Student Charge row - FR-C2's invoice number and A1's
+ *      receipt date, of the desk's era, computed on the server (app/desk/books.py `proposals`) - written by the person.
+ *      A chip "בחשבשבת: N" (or "תאריך מחשבשבת: D" for the date alone) under the row's state and in "מה לבדוק", its
+ *      sentence and its button in the row's details; on the document's line in the books' list, "הצעה: לרשום בשורה של
+ *      ..." and the button; above that list, "לרשום את כל ההצעות (N)". Each is the batch of D2's 1.1 (one request reads the
+ *      rows, one confirmation, each row read again right before its write, the report row by row, one refresh), floating
+ *      beside what was pressed, so no row moves. A cell is written only empty, only with what the books propose (if_empty;
+ *      planAction), and a row whose cells are not what the desk read is skipped and said, never written over (fillMoved).
+ *      WRITABLE gained "תאריך תקבול" as a date, as the server's desk_writes did. A written date is shown on the row at once
+ *      (applyWritten), and the document leaves the list with the next reading.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -180,6 +190,8 @@
     books_ref_invalid: "מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: {why}",
     books_amount_differs: "בשורה {row}, בחשבשבת {books}",
     books_receipt_unpaid: "בחשבשבת חשבונית מס/קבלה {doc}, והסטטוס {status}",
+    /* D4: what the books propose to fill on the row - the server fills each "{...}" (the row's `books`; booksMark) */
+    books_ref_fill: "בחשבשבת: {number}", books_date_fill: "תאריך מחשבשבת: {date}",
     invoice_late: "מועד דרישת התשלום עבר", no_contract: "בהרצה ללא חוזה", over_deal_value: "מעל שווי עסקה",
     billed_no_due: "חויב בלי מועד דרישת תשלום", billed_before_demand: "חויב, ומועד דרישת התשלום עוד לא הגיע",
     partial_amount_unknown: "סכום ששולם (כולל מע\"מ) לא הוקלד", billed_no_invoice: "חסרה אסמכתת חשבונית",
@@ -193,11 +205,12 @@
     receipt_no_money: 1, books_ref_invalid: 1, books_amount_differs: 1, books_receipt_unpaid: 1 };
   var TASK = { refund_last_day_unknown: 1, invoice_missing: 1, receipt_pending: 1, credit_ref_missing: 1,
     refund_amount_missing: 1, refund_amount_zero: 1, billed_no_due: 1, billed_before_demand: 1, partial_amount_unknown: 1,
-    billed_no_invoice: 1, terms_missing: 1 };
+    billed_no_invoice: 1, terms_missing: 1, books_ref_fill: 1, books_date_fill: 1 };
   var FLAG_ORDER = ["status_unknown", "credit_on_status", "refund_amount_on_status", "refund_date_on_status",
     "receipt_no_money", "books_ref_invalid", "books_amount_differs", "books_receipt_unpaid", "refund_last_day_passed",
     "refund_overdue", "refund_exceeds_paid", "invoice_late", "no_contract", "over_deal_value",
-    "refund_last_day_unknown", "invoice_missing", "billed_no_invoice", "receipt_pending", "credit_ref_missing",
+    "refund_last_day_unknown", "invoice_missing", "books_ref_fill", "books_date_fill", "billed_no_invoice",
+    "receipt_pending", "credit_ref_missing",
     "refund_amount_missing", "refund_amount_zero", "billed_no_due", "billed_before_demand", "partial_amount_unknown",
     "amount_missing", "terms_missing", "unlinked", "paid_not_billed", "payer_mismatch"];
   var GROUP_NAME = { b2c: "סטודנטים", b2b: "לקוחות עסקיים" };
@@ -778,6 +791,7 @@
     books_ref_invalid: function (r) { return booksText(r, "books_ref_invalid"); },
     books_amount_differs: function (r) { return booksText(r, "books_amount_differs"); },
     books_receipt_unpaid: function (r) { return booksText(r, "books_receipt_unpaid"); }
+    /* D4: a proposal of the books is no warning - its sentence sits under its button, in the actions (fillSaid) */
   };
   function booksText(r, k) { var m = booksMark(r, k); return m ? m.text : FLAG[k]; }
   /* D3 fix 2: a number the row cites that is just past the end of its series is not yet in the copy of the books (read
@@ -915,7 +929,10 @@
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
     OUTSIDE = null;
-    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + (key === "tasks" && !q ? booksHtml("b2c") : "");
+    /* the books' list first: a batch pressed there floats in its panel, and the list's own box then draws none (D4) */
+    POP_IN_BOOKS = false;
+    var books = key === "tasks" && !q ? booksHtml("b2c") : "";
+    return figures + statesHtml(p) + panel(head + batchHtml(rows) + list) + books;
   }
   /* QA 2 (24.11): the file said nothing on the page - no word that it was on its way, nor how many rows it holds. The
      count is the list the reader sees when the file is asked (the server's filter picks the same rows: the parity tests) */
@@ -979,11 +996,37 @@
   function booksCalm() { var b = VIEW.books; return !b || b.state === "ok" || b.state === "off"; }
   function candidatesHtml(e) {
     var c = e.candidates || [];
-    if (!c.length) { return NOT_SET; }
+    if (!c.length) { return NOT_SET + proposalHtml(e); }
     return c.map(function (x) {
       return "<div class=\"fin-cand\">" + nameLink({ board: "sc", id: x.id }, esc(x.name)) + " " + stateChip(x.state) +
         " <span class=\"fin-subtle\">" + esc(x.status || "ריק") + "</span></div>";
-    }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "");
+    }).join("") + (e.candidates_more ? "<div class=\"fin-subtle\">ועוד " + NF.format(e.candidates_more) + "</div>" : "") +
+      proposalHtml(e);
+  }
+  /* D4: under a document's candidates, the row the books propose to write its number in (the server's `proposal`: one
+     document, one row, of the era) and the button that writes it, as the person - or that it was just written */
+  var PROPOSAL_SAID = "הצעה: לרשום בשורה של ";
+  function proposalHtml(e) {
+    var p = e.proposal, r = p ? rowByKey("sc:" + p.item_id) : null, a = r ? rowFill(r) : null;
+    if (!p) { return ""; }
+    return "<div class=\"fin-fill\">" + esc(PROPOSAL_SAID + p.name) + (r && r.written ? writtenMark(r)
+      : a && fillable(r) ? " <button type=\"button\" class=\"fin-btn fin-fill-btn\" data-books-fill=\"" + esc(rowKey(r)) +
+        "\" data-books-from=\"list\"" + (busy() ? " disabled" : "") + ">" + esc(a.button) + "</button>" : "") + "</div>";
+  }
+  /* above the students' list: every proposal at once, its count (the documents' and the dates alone, allFills), and under
+     the list how many of them are a date alone, whose rows already cite their number and are not on it */
+  var FILL_ALL = "לרשום את כל ההצעות";
+  function fillAllHtml(fills) {
+    return fills.length ? "<div class=\"fin-actions\"><button type=\"button\" class=\"fin-btn\" data-books-all=\"1\"" +
+      (busy() ? " disabled" : "") + ">" + esc(FILL_ALL) + " <span class=\"fin-subtle\">(" + NF.format(fills.length) +
+      ")</span></button></div>" : "";
+  }
+  function datesAloneSaid(fills) {
+    var n = fills.filter(function (r) { return !(r.books_fill || {}).number; }).length;
+    return !n ? "" : "<p class=\"fin-listnote\">" + esc(n === 1
+      ? "ועוד הצעה אחת לתאריך תקבול בלבד, בתקבול שכבר יש בו אסמכתת חשבונית: היא ליד השורה שלו, ו\"" + FILL_ALL + "\" כותב גם אותה."
+      : "ועוד " + NF.format(n) + " הצעות לתאריך תקבול בלבד, בתקבולים שכבר יש בהם אסמכתת חשבונית: הן ליד השורות שלהם, ו\"" +
+        FILL_ALL + "\" כותב גם אותן.") + "</p>";
   }
   function booksCell(k, e) {
     if (k === "number") { return ltr(e.number) || NOT_SET; }
@@ -1007,14 +1050,18 @@
   /* one list: its title, how many, its sentence and the books' state; its table, or that it is empty; the vouchers' line */
   function booksPanel(kind, part) {
     var docs = part.documents || [], none = VIEW.books.state === "none";
-    var said = booksSaid();
+    var said = booksSaid(), fills = kind === "b2c" ? allFills() : [];
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(part.title) + "</h2>" +
       (none ? "" : "<div class=\"fin-subtle\">" + plural(docs.length, "מסמך אחד", "מסמכים") + "</div>") +
       "<p class=\"fin-about\">" + esc(part.about) + "</p>" +
-      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div></div>";
+      (said ? "<p class=\"fin-books-asof" + (booksCalm() ? "" : " fin-badtext") + "\">" + esc(said) + "</p>" : "") + "</div>" +
+      fillAllHtml(fills) + "</div>";
     var body = docs.length ? booksTable(kind, docs) : none ? "" : "<div class=\"fin-empty\"><p>אין מסמכים כאלה.</p></div>";
-    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body +
-      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + "</div>";
+    /* D4: a batch pressed in this list floats here, beside what was pressed */
+    var pop = kind === "b2c" && popInBooks(BATCH) ? batchBox(BATCH) : "";
+    if (pop) { POP_IN_BOOKS = true; }
+    return "<div class=\"fin-panel fin-books\" data-books=\"" + kind + "\">" + head + body + datesAloneSaid(fills) +
+      (part.vouchers_said ? "<p class=\"fin-listnote\">" + esc(part.vouchers_said) + "</p>" : "") + pop + "</div>";
   }
   /* under "לטיפול" of a tab: its list, and the unclear documents when the server sent them (a member of both boards) */
   function booksHtml(tab) {
@@ -1263,7 +1310,7 @@
      and only on an account the desk shows (ITEM_GUARD). */
   var WRITABLE = {
     "5093448677": { color_mm1kxpvt: [4, 5], numeric_mm62za1f: "number", text_mm8fjzfj: "text", text_mm6d6s97: "text",
-      color_mm4cq1hw: [1] },
+      color_mm4cq1hw: [1], date_mm8yh4bn: "date" },
     "5097721228": { color_mm3zx2n7: [6], text_mm3y6snz: "text", date_mm4a6y8y: "date", color_mm4bhvta: [0, 1],
       numeric_mm8zqhag: "number" },
     "5089697343": { text_mm3y3gm7: "vat_id", text_mm3yprqa: "hash_key", text_mm3yfrew: "invoice_name",
@@ -1299,7 +1346,7 @@
   /* a written column on the row the page shows: its label and index, or its value (the row is patched until a reading
      shows the same) */
   var ROW_FIELD = { color_mm1kxpvt: ["status", "status_idx"], color_mm4cq1hw: ["receipt", "receipt_idx"],
-    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"],
+    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"], date_mm8yh4bn: ["paid_date"],
     color_mm3zx2n7: ["billing", "billing_idx"], color_mm4bhvta: ["payment", "payment_idx"], text_mm3y6snz: ["invoice"],
     date_mm4a6y8y: ["demand"], numeric_mm8zqhag: ["paid_so_far"] };
   var NUMERIC_FIELD = { refund_typed: 1, paid_so_far: 1 };
@@ -1508,6 +1555,14 @@
           if (cell.index === String(w.index)) { line.same = true; lines.push(line); return; }
           values[w.column] = { index: Number(w.index) };
           line.to = w.label;
+        } else if (w.books) {
+          /* D4: what the books propose for the row (the server's `books_fill`, given here in `typed` by column) - never
+             typed by the person, never today: not proposed, not written; an empty cell only (if_empty) */
+          var proposed = typed[w.column];
+          if (proposed === undefined || proposed === "") { return; }
+          if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
+          values[w.column] = w.kind === "date" ? { date: proposed } : proposed;
+          line.to = proposed;
         } else if (w.kind === "date") {
           if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
           values[w.column] = { date: today };
@@ -1609,6 +1664,8 @@
       /* column by column: one still behind is covered, one that shows a third value saw a later change and stays the
          truth (review 11.11: a status behind covered a "סכום החזר" changed after the write) */
       keys.forEach(function (f) { if (!sameField(f, row[f], w.fields[f]) && sameField(f, row[f], w.before[f])) { row[f] = w.fields[f]; } });
+      /* D4: a "תאריך תקבול" written from here is the day the row is shown by, as the next reading will file it */
+      if (w.fields.paid_date && row.paid_date === w.fields.paid_date) { row.date = row.paid_date; row.date_from = "paid"; }
       row.written = true;
     });
   }
@@ -1825,8 +1882,21 @@
     var off = CAN.state === "no" || busy() || (!!act && act.phase === "confirm");
     return "<section class=\"fin-dx-block fin-acts\" aria-label=\"פעולות\"><h3 class=\"fin-dx-h\">פעולות <span class=\"fin-dx-name\">" +
       "נכתבות במאנדיי בשמך</span></h3>" + (CAN.state === "no" ? "<p class=\"fin-act-why\">" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "</p>" : "") +
-      "<div class=\"fin-act-row\">" + list.map(function (a) { return actionControl(r, a, off); }).join("") + "</div>" +
-      (act ? actStatus(act) : "") + "</section>";
+      "<div class=\"fin-act-row\">" + list.map(function (a) {
+        return fillAction(a) ? fillControl(r, a, off) : actionControl(r, a, off);
+      }).join("") + "</div>" + fillSaid(r) + (act ? actStatus(act) : "") + "</section>";
+  }
+  /* D4: what the books propose for the row, in the server's sentence (the document, its day and total, what is written),
+     quietly under the actions: a proposal, never a warning */
+  function fillSaid(r) {
+    var m = booksMark(r, "books_ref_fill") || booksMark(r, "books_date_fill");
+    return m && rowFill(r) ? "<p class=\"fin-dx-books fin-fill-said\">" + esc(m.text) + "</p>" : "";
+  }
+  /* D4: "רישום מחשבשבת" in a row's details - nothing to type: the batch of one row, floating beside this button */
+  function fillControl(r, a, off) {
+    return "<div class=\"fin-act\"><button type=\"button\" class=\"fin-btn\" data-books-fill=\"" + esc(rowKey(r)) +
+      "\" data-books-from=\"detail\"" + (off || !fillable(r) ? " disabled" : "") +
+      (CAN.state === "no" ? " title=\"" + esc(ABILITY[CAN.why] || ABILITY.no_scope) + "\"" : "") + ">" + esc(a.button) + "</button></div>";
   }
   function writtenMark(r) { return r.written ? " <span class=\"fin-written\">נכתב, מתעדכן</span>" : ""; }
   /* whether this person may write, from monday's context: read once at mount (an app version's new permission is approved
@@ -1885,34 +1955,109 @@
      written from here (its new value waits for a reading) */
   function pickable(r) { return CAN.state !== "no" && !r.written && !!rowAction(r); }
   function pickedIn(rows) { return rows.filter(function (r) { return PICKED[rowKey(r)] && pickable(r); }); }
-  /* `from`: what was pressed - "row", the row's own button, or "bar", the bar's - beside which the batch floats (QA2 3) */
+
+  /* ---------- D4 (26.11): "רישום מחשבשבת" - what the books propose for a row, written as the person ----------
+     The server proposes (app/desk/books.py `proposals`: FR-C2's number and A1's date, the desk's era only) and sends, on
+     the row, its values (`books_fill`) and the action that writes them (DESK_ACTIONS `books_fill`: each write is the
+     proposal's value under its `books` key, only into an empty cell, if_empty). The page proposes nothing. From the row's
+     details, from its document in the books' list ("הצעה: לרשום בשורה של ..."), or every proposal at once ("לרשום את כל
+     ההצעות", above the list), it is the batch of 1.1: the rows read live as the person in one request, one confirmation
+     of what each row will be written, each row read again right before its write and checked after, the result said row
+     by row, one refresh after. A row whose cells are not what the desk read is skipped and said, never written over - but
+     a cell written since with the very value the books propose, which is not written again - and its box floats beside
+     what was pressed (QA2 3), so no row moves. */
+  function fillAction(a) {
+    var ws = a ? stepWrites(a) : [];
+    return !!ws.length && a.steps.length === 1 && ws.every(function (w) { return !!w.books && !w.input; });
+  }
+  function rowFill(r) { return rowActions(r).filter(fillAction)[0] || null; }
+  /* a row whose proposal may be written from here now: the person may write, it was not just written, the books propose */
+  function fillable(r) { return CAN.state !== "no" && !r.written && !!r.books_fill && !!rowFill(r); }
+  /* the books' proposal for a row, by column: what the batch writes in place of what a box would hold */
+  function proposalOf(r, a) {
+    var out = {};
+    stepWrites(a).forEach(function (w) { var v = (r.books_fill || {})[w.books]; if (v) { out[w.column] = String(v); } });
+    return out;
+  }
+  /* a cell's text as the desk's reading holds it and as monday holds it now: a date by its day */
+  function cellText(kind, text) { text = String(text == null ? "" : text); return kind === "date" ? text.slice(0, 10) : text; }
+  function shownField(r, w) { var f = (ROW_FIELD[w.column] || [])[0]; return cellText(w.kind, f ? r[f] : ""); }
+  /* why a row is not planned (""; when it may be): a cell that is not what the desk read - unless it holds now the very
+     value the books propose - or a cell the books propose a value for that is not empty (a mark a right-to-left editor
+     leaves reads as empty to the rules, never here) */
+  function fillMoved(a, r, live, typed) {
+    var why = "";
+    stepWrites(a).forEach(function (w) {
+      var cell = live.cells[w.column] || { text: "", index: null, label: "" }, now = cellText(w.kind, cell.text);
+      if (why || (typed[w.column] !== undefined && now === typed[w.column])) { return; }
+      if (now !== shownField(r, w)) { why = "השתנתה במאנדיי מאז הקריאה, ועכשיו " + w.title + " " + shownCell(w.kind, cell); }
+      else if (typed[w.column] !== undefined && now !== "") { why = "יש כבר ערך ב" + w.title + " במאנדיי: " + shownCell(w.kind, cell); }
+    });
+    return why;
+  }
+  function settleFills(batch, got) {
+    batch.items.forEach(function (it) {
+      var live = got[String(it.row.id)];
+      it.live = live || null;
+      if (!live) { it.verdict = "skip"; it.why = WRITE_ERRORS.not_found; return; }
+      it.name = live.name || it.name;
+      it.typed = proposalOf(it.row, batch.a);
+      var why = fillMoved(batch.a, it.row, live, it.typed), plan = planAction(batch.a, live, it.typed, israelToday(), {});
+      if (why) { it.verdict = "skip"; it.why = why; return; }
+      if (!plan.steps.length) { it.verdict = "skip"; it.why = "כבר כך במאנדיי"; return; }
+      it.verdict = "write";
+      it.plan = plan;
+    });
+  }
+  /* the rows "לרשום את כל ההצעות" takes: each document's of the books' list in its order, then the dates alone, newest first */
+  function allFills() {
+    var seen = {}, out = [];
+    (((VIEW.b2c || {}).books || {}).documents || []).forEach(function (e) {
+      var r = e.proposal ? rowByKey("sc:" + e.proposal.item_id) : null;
+      if (r && !seen[r.id] && fillable(r)) { seen[r.id] = true; out.push(r); }
+    });
+    return out.concat(sortRows(ROWS.sc.filter(function (r) { return !seen[r.id] && fillable(r); }), "-date"));
+  }
+  /* the batch's action for a row: one of the two on the row itself (pickable), or what the books propose (fillable) */
+  function batchAction(r, key) {
+    var a = ROW_ACTIONS[key] ? (pickable(r) ? rowAction(r) : null) : fillable(r) ? rowFill(r) : null;
+    return a && a.key === key ? a : null;
+  }
+  var BATCH_FROM = { row: 1, bar: 1, detail: 1, list: 1, all: 1 };
+  /* `from`: what was pressed - "row", the row's own button, or "bar", the bar's; D4: "detail", the row's details', "list",
+     its document's in the books' list, or "all", above that list - beside which the batch floats (QA2 3) */
   function startBatch(actionKey, keys, from) {
     if (CAN.state === "no" || busy()) { return; }
-    var items = [], a = null;
+    var items = [], a = null, left = 0;
     keys.forEach(function (k) {
-      var r = rowByKey(k), x = r && pickable(r) ? rowAction(r) : null;
-      if (!x || x.key !== actionKey || items.length >= BATCH_MAX) { return; }
+      var r = rowByKey(k), x = r ? batchAction(r, actionKey) : null;
+      if (!x) { return; }
+      if (items.length >= BATCH_MAX) { left += 1; return; }
       a = a || x;
       items.push({ key: k, row: r, name: r.name });
     });
     if (!items.length) { return; }
     /* one thing on the screen at a time: a single action's plan, not being written, gives way */
     if (ACT && !busyAct()) { ACT = null; }
+    var books = fillAction(a);
+    /* `bar`: the list's bar was there when it was pressed, so its place is held while the batch is on the screen */
     var batch = BATCH = { action: actionKey, a: a, items: items, phase: "reading", at: 0, total: 0, error: "",
-      from: from === "row" ? "row" : "bar" };
+      from: BATCH_FROM[from] ? from : "bar", left: left, bar: !books || scRows().some(pickable) };
     use("act", { action: actionKey, phase: "batch_start" });
+    if (books) { use("books_fill", { from: from === "all" ? "all" : from === "list" ? "list" : "detail", rows: Math.min(items.length, 100) }); }
     redraw();
-    var w = a.steps[0][0];
-    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), [w.column]).then(function (got) {
-      if (BATCH === batch) { settleBatch(batch, got); }
-    }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
+    readRows(boardIdOf(items[0].row), items.map(function (it) { return it.row.id; }), stepWrites(a).map(function (w) { return w.column; }))
+      .then(function (got) {
+        if (BATCH === batch) { settleBatch(batch, got); }
+      }, function (e) { if (BATCH === batch) { failBatch(batch, e); } });
   }
   /* a status cell as the desk's reading shows it: its index, "" when empty */
   function shownIndex(r, column) {
     var f = ROW_FIELD[column];
     return f && f.length === 2 ? String(r[f[1]] == null ? "" : r[f[1]]) : "";
   }
-  function settleBatch(batch, got) {
+  /* the two on the row itself: one status each. Whether a label moved (the whole batch then fails, before any write) */
+  function settleStatuses(batch, got) {
     var w = batch.a.steps[0][0], labelsMoved = false;
     batch.items.forEach(function (it) {
       var live = got[String(it.row.id)];
@@ -1932,7 +2077,13 @@
       it.verdict = "write";
       it.plan = plan;
     });
-    if (labelsMoved) { failBatch(batch, { code: "label_moved", text: w.title + " " + w.label }); return; }
+    return labelsMoved;
+  }
+  function settleBatch(batch, got) {
+    var w = batch.a.steps[0][0];
+    /* D4: what the books propose has its own rules (settleFills) */
+    if (fillAction(batch.a)) { settleFills(batch, got); }
+    else if (settleStatuses(batch, got)) { failBatch(batch, { code: "label_moved", text: w.title + " " + w.label }); return; }
     var n = batch.items.filter(function (it) { return it.verdict === "write"; }).length;
     batch.phase = n ? "confirm" : "nothing";
     use("act", { action: batch.action, phase: n ? "batch_shown" : "batch_nothing" });
@@ -1956,10 +2107,12 @@
     var batch = BATCH;
     if (!batch || batch.phase !== "confirm" || busyAct()) { return; }
     var w = batch.a.steps[0][0], boardId = boardIdOf(batch.items[0].row), stop = "", maybe = false;
+    var writes = stepWrites(batch.a), cols = writes.map(function (x) { return x.column; });
     var todo = batch.items.filter(function (it) { return it.verdict === "write"; });
     batch.phase = "writing"; batch.at = 0; batch.total = todo.length;
-    /* the picks are the batch's now: whatever happens, the report says it row by row */
-    batch.items.forEach(function (it) { delete PICKED[it.key]; });
+    /* the picks are the batch's now: whatever happens, the report says it row by row (D4: a proposal of the books takes
+       no pick, and leaves them as they are) */
+    if (!fillAction(batch.a)) { batch.items.forEach(function (it) { delete PICKED[it.key]; }); }
     use("act", { action: batch.action, phase: "batch_confirm" });
     redraw();
     todo.reduce(function (p, it) {
@@ -1969,13 +2122,15 @@
         landed();
         /* the row again, as the person, right before its write: written only if it still holds what the confirmation
            showed (and its label still stands for the index), as a single action's confirmAction */
-        return readRow(boardId, it.row.id, [w.column]).then(function (live) {
-          var now = planAction(batch.a, live, {}, israelToday(), {});
-          if (changedSince(it.live, live, [w.column]) || now.problems.length ||
+        return readRow(boardId, it.row.id, cols).then(function (live) {
+          var now = planAction(batch.a, live, it.typed || {}, israelToday(), {});
+          if (changedSince(it.live, live, cols) || now.problems.length ||
               JSON.stringify(now.steps) !== JSON.stringify(it.plan.steps)) {
+            /* the first cell that moved is said, as monday holds it now */
+            var x = writes.filter(function (c) { return changedSince(it.live, live, [c.column]); })[0] || w;
             it.result = "skipped";
-            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + w.title + " " +
-              shownCell("status", live.cells[w.column] || { index: null });
+            it.why = "השתנתה במאנדיי מאז שהתוכנית הוצגה, ועכשיו " + x.title + " " +
+              shownCell(x.kind, live.cells[x.column] || { index: null, text: "" });
             return null;
           }
           return runSteps(boardId, it.row.id, it.plan.steps).then(function (cells) {
@@ -2017,11 +2172,28 @@
      reading, its one confirmation, its progress, its report - floats beside what was pressed (fin-pop, placePop): above the
      row, or the bar, where the view has room, below it otherwise, never over it. No row moves when it opens or closes */
   function batchHtml(rows) {
-    return barHtml(rows) + (BATCH ? batchBox(BATCH) : "");
+    return barHtml(rows) + (BATCH && !POP_IN_BOOKS ? batchBox(BATCH) : "");
+  }
+  /* D4: a batch pressed in the books' list floats in that list's panel, beside what was pressed there, while the list is
+     drawn (booksPanel sets it); anywhere else, in the list's own (batchHtml) */
+  var POP_IN_BOOKS = false;
+  function popInBooks(b) { return !!b && (b.from === "list" || b.from === "all"); }
+  /* a row's plan as the confirmation says it, each write: now, and what will be written - or that it stays */
+  function planWords(p) {
+    return p.lines.map(function (l) {
+      return l.title + ": " + (l.same || l.kept ? "כבר " + shownCell(l.kind, l.now) + ", לא נכתב"
+        : "עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue(l.kind === "status" ? "text" : l.kind, l.to));
+    }).join(" · ");
+  }
+  /* what was written in a row, write by write (D4: each row its own values) */
+  function writtenWords(p) {
+    return p.lines.filter(function (l) { return !l.same && !l.kept; }).map(function (l) {
+      return l.title + " " + shownValue(l.kind === "status" ? "text" : l.kind, l.to);
+    }).join(", ");
   }
   function batchBox(b) {
     var close = "<button type=\"button\" class=\"fin-linkbtn\" data-batch-close=\"1\">סגירה</button>";
-    var w = b.a.steps[0][0];
+    var w = b.a.steps[0][0], books = fillAction(b.a);
     if (b.phase === "reading") {
       return "<div class=\"fin-batch fin-pop\"><p class=\"fin-act-msg\" role=\"status\">קורא במאנדיי " +
         (b.items.length === 1 ? "את השורה" : "את " + NF.format(b.items.length) + " השורות") + "...</p></div>";
@@ -2042,10 +2214,12 @@
       return "<div class=\"fin-batch fin-act-plan fin-batch-plan fin-pop\" role=\"group\" aria-label=\"מה ייכתב\" tabindex=\"-1\">" +
         "<p>" + (writes.length === 1 ? "ייכתב במאנדיי בשורה " + esc("\"" + writes[0].name + "\"") + ", בשמך:"
           : "ייכתב במאנדיי בשמך, ב-" + NF.format(writes.length) + " שורות:") + "</p><ul>" + writes.map(function (it) {
-          var l = it.plan.lines[0];
-          return batchLine(it, l.title + ": עכשיו " + shownCell(l.kind, l.now) + ", ייכתב " + shownValue("text", l.to));
+          return batchLine(it, planWords(it.plan));
         }).join("") + "</ul>" + notWritten +
         (b.a.after ? "<p class=\"fin-subtle\">" + esc(b.a.after) + "</p>" : "") +
+        /* D4: past one batch's worth, the rest of the proposals wait for the next press */
+        (b.left ? "<p class=\"fin-subtle\">" + esc((b.left === 1 ? "ועוד הצעה אחת" : "ועוד " + NF.format(b.left) + " הצעות") +
+          ": בלחיצה נוספת אחרי הכתיבה, עד " + BATCH_MAX + " שורות בכתיבה אחת.") + "</p>" : "") +
         "<div class=\"fin-act-go\"><button type=\"button\" class=\"fin-btn fin-primary\" data-batch-go=\"1\">כתיבה</button>" +
         "<button type=\"button\" class=\"fin-btn\" data-batch-close=\"1\">ביטול</button></div></div>";
     }
@@ -2057,11 +2231,14 @@
     var done = writes.filter(function (it) { return it.result === "written"; });
     var failed = writes.filter(function (it) { return it.result === "failed"; });
     var later = writes.filter(function (it) { return it.result === "skipped"; });
+    /* D4: a proposal written moves no row; its document leaves the books' list with the next reading */
     var head = done.length ? "נכתב במאנדיי בשמך ב" + (done.length === 1 ? "שורה אחת" : "-" + NF.format(done.length) + " שורות") +
-      ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן." : "לא נכתב כלום.";
+      (books ? ". המסך מתעדכן." : ". המסך מתעדכן, והשורות יעברו לשיבוץ שלהן.") : "לא נכתב כלום.";
     return "<div class=\"fin-batch fin-batch-done fin-pop\"><p class=\"fin-act-msg " + (failed.length ? "bad\" role=\"alert\">" : "ok\" role=\"status\">") +
       esc(head) + " " + close + "</p>" +
-      (done.length ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
+      (done.length && books ? "<p>נכתב:</p><ul>" + done.map(function (it) { return batchLine(it, writtenWords(it.plan)); }).join("") +
+        "</ul>" : "") +
+      (done.length && !books ? "<p>נכתב " + esc(w.title + " " + shownValue("text", w.label)) + ":</p><ul>" +
         done.map(function (it) { return "<li><b>" + esc(it.name) + "</b></li>"; }).join("") + "</ul>" : "") +
       (failed.length ? "<p>נכשל:</p><ul>" + failed.map(function (it) { return batchLine(it, it.why); }).join("") + "</ul>" : "") +
       (later.length || skips.length ? "<p>לא נכתב:</p><ul>" + later.concat(skips).map(function (it) { return batchLine(it, it.why); }).join("") +
@@ -2074,7 +2251,9 @@
      allowed), empty, so the list does not move under the batch's report (QA2 3) */
   function barHtml(rows) {
     if (!rows.some(pickable)) {
-      return BATCH ? "<div class=\"fin-batch fin-batchbar idle fin-hold\" aria-hidden=\"true\"></div>" : "";
+      /* D4: held only where it was there when the batch was pressed (`bar`): a proposal of the books, pressed where the list
+         had no box, adds none */
+      return BATCH && BATCH.bar ? "<div class=\"fin-batch fin-batchbar idle fin-hold\" aria-hidden=\"true\"></div>" : "";
     }
     var picked = pickedIn(rows);
     if (!picked.length) {
@@ -2809,6 +2988,11 @@
     if (b.from === "row") {
       v = panel.querySelector("tr[data-row=\"" + quote(b.items[0].row.id) + "\"]");
       h = panel.querySelector("[data-row-act=\"" + quote(b.items[0].key + ":" + b.action) + "\"]");
+    } else if (b.from === "detail" || b.from === "list" || b.from === "all") {
+      /* D4: the button pressed - in the row's details, on its document's line in the books' list (beside which the
+         document's row is never covered), or above that list */
+      h = panel.querySelector(b.from === "all" ? "[data-books-all]" : "[data-books-fill=\"" + quote(b.items[0].key) + "\"]");
+      v = h && b.from === "list" && h.closest ? h.closest("tr") : h;
     }
     if (!v) {
       v = panel.querySelector(".fin-batchbar");
@@ -3082,6 +3266,7 @@
     var el = ev.target.closest("[data-fintab],[data-open],[data-refresh],[data-notes],[data-legend],[data-bstate],[data-b2state],[data-b2view],[data-customer],[data-row],[data-export],[data-retry]," +
       "[data-act],[data-act-go],[data-act-close],[data-terms]," +
       "[data-pick],[data-pick-all],[data-pick-clear],[data-row-act],[data-batch],[data-batch-go],[data-batch-close]," +
+      "[data-books-fill],[data-books-all]," +
       "[data-bill-edit],[data-bill-go],[data-bill-save],[data-bill-back],[data-bill-close]," +
       "[data-id-copy],[data-id-retry],[data-bank-retry],[data-vat-retry]");
     if (!el || !root.contains(el)) { return; }
@@ -3103,6 +3288,17 @@
     }
     if (el.dataset.batch) {
       startBatch(el.dataset.batch, pickedIn(scRows()).map(rowKey), "bar"); return;
+    }
+    /* D4: what the books propose - one row's, from its details or its document in the books' list, or every one */
+    if (el.dataset.booksFill) {
+      var fillRow = rowByKey(el.dataset.booksFill), fillA = fillRow ? rowFill(fillRow) : null;
+      if (fillA) { startBatch(fillA.key, [el.dataset.booksFill], el.dataset.booksFrom === "list" ? "list" : "detail"); }
+      return;
+    }
+    if (el.dataset.booksAll) {
+      var fills = allFills();
+      if (fills.length) { startBatch(rowFill(fills[0]).key, fills.map(rowKey), "all"); }
+      return;
     }
     if (el.dataset.batchGo) { confirmBatch(); return; }
     if (el.dataset.batchClose) {

@@ -767,7 +767,9 @@ def test_the_done_refunds_tile_and_the_refunded_figure_have_different_names():
 # and since D2 (ADR-0188, the desk move plan §1b item 4) a customer's four billing details on Accounts, which the person
 # writes from the browser where analiza-metrics' server wrote them
 ALLOWED = {
-    fd.STUDENT_CHARGE: {"color_mm1kxpvt", "numeric_mm62za1f", "text_mm8fjzfj", "text_mm6d6s97", "color_mm4cq1hw"},
+    # D4: "תאריך תקבול" (date_mm8yh4bn), written by "רישום מחשבשבת" only, only empty (spec §7.3: the list gains one column)
+    fd.STUDENT_CHARGE: {"color_mm1kxpvt", "numeric_mm62za1f", "text_mm8fjzfj", "text_mm6d6s97", "color_mm4cq1hw",
+                        "date_mm8yh4bn"},
     fd.B2B_CHARGE: {"color_mm3zx2n7", "text_mm3y6snz", "date_mm4a6y8y", "color_mm4bhvta", "numeric_mm8zqhag"},
     fd.ACCOUNTS_BOARD: {"text_mm3y3gm7", "text_mm3yprqa", "text_mm3yfrew", "dropdown_mm3yd36d"},
 }
