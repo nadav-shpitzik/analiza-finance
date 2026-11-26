@@ -157,8 +157,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   also for "ייצוא לאקסל עם ת.ז", D4, into that file alone), kept in the page's memory and sent nowhere; a read on its way shows its own spinner in its cell, and nothing of the page covers the
   desk (`READING`; QA 26.11: the grey on the visit's first details is monday's, around the view, on its first monday.api). A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review); a "not yet" (429) is a flash counted down to the wait's end, and
-  gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). A pending
-  receipt ("שולם, שליחת קבלה: טרם") is a queue: its list is the oldest first, on the page and in the file alike (view.py
+  gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס אינו מציין שהתקבל כסף"). A pending
+  receipt ("שולם, קבלה לטיפול") is a queue: its list is the oldest first, on the page and in the file alike (view.py
   `B2C_SORT`, finance.js `SC_SORT`, held together by tests/test_desk_parity_js.py), and beside its date, in every list, and in its
   details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים", red from a week on, `WAIT_LATE_DAYS`;
   Nadav 26.11, receipts go out slowly),
@@ -168,7 +168,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   invoice-receipt carrying it, answered by the books (not `missing`) and on a card of the row's name, or when the desk proposes
   the row a number (D4's proposal: from the era on, and "לא להציע" takes the label with it, dismissals.py `hide`) - the second
   review of 26.11 found "issued" on another payment's, year's or person's receipt and on one the books answered "not found";
-  its number in the chip's title and in the details; "עוד לא בהעתק" when a number it cites is just past the end of its series
+  its number in the chip's title and in the details; "ממתין לעדכון" when a number it cites is just past the end of its series
   (`late_numbers`, counted `later`); else "לא זוהתה בחשבשבת", which is not "none issued" (the legend says so). A chip beside the
   books' others under the state, never in "שליחת קבלה" (a word wide: "בחשבשבת" broke in the middle there), two lines at most at
   1280 and 1400 (tests/test_desk_books_page.py); the line over the queue, its split, is GET /api/desk/totals `receipts`
@@ -259,7 +259,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   money; a payment filed by its lead with no enrollment is the student's whose enrollment links that lead, `EN["lead"]`
   "קישור לליד", or who is its lead's person, `LD["person"]`, when exactly one student is, `_lead_payer`; else it is said on
   the cohort's line, `unlinked`, and in no balance), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
-  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out: listed with why (the enrollment's Status said
+  17, a 4 with a balance left, and "שובר ללא סיווג"); 2/3 waived, 6/7/10 out: listed with why (the enrollment's Status said
   "סטטוס ההרשמה" in a Hebrew line, its label as monday has it, QA 26.11), in no balance, and what they paid is
   in "שולם בפועל", everything that came in (Chava's "כמה כבר התקבל בסך הכול"), and is their expected; the line's "שולם
   בפועל" holds `unlinked` and `shared` too (QA 26.11), in no student's row and no balance. A line is its students' sums and
@@ -283,7 +283,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   first of them and the one tinted; a cohort row opening to its students (a search that finds a student opens its cohort
   and marks her row, for that search only: `cohortOpen`, QA 26.11), the price and the count under the cohort's name
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
-  1400), the cohorts without a price under it ("אין מחזורים בלי מחיר" when none, QA 26.11), "מחזורי שוברים בלבד" above its
+  1400), the cohorts without a price under it ("אין מחזורים ללא חישוב" when none, QA 26.11), "מחזורי שוברים בלבד" above its
   figures and why its paid is less than the list's "התקבלו" (`TRACK_ONLY`, `FIGS_NOTE`), its legend part the server's; the
   choice of the view only in the page's memory, set by her click alone (an answer without the part draws the list and
   makes the choice the list's, QA 26.11);
@@ -331,7 +331,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   alert, the server's evidence, `taken_at` and `books.key`, and draws the desk the server answers (every count the
   server's); a refusal is said in the box, and one the screen is behind on (`NAG_RELOAD`) asks the desk again. A newer
   reading closes an open confirmation whose alert changed (`recheckNag`). "הוסתרו כלא פער (N)" under each list opens what
-  is hidden of it - what, "בידי אתה" or the monday user id (the page holds no other person's name), when - and "החזרה" on
+  is hidden of it - what, "על ידך" or the monday user id (the page holds no other person's name), when - and "החזרה" on
   one's own. "חזר" beside an alert that came back. Its words are the legend's (view.py `NAG_WORD` and the rest). Usage:
   `not_a_gap` (`alert`, `phase`, `code`, `from`), `not_a_gap_undo`, `not_a_gap_list` (`open`, `list`). Tests:
   `tests/test_desk_dismissals_page.py` (node, Playwright).
