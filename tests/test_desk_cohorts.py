@@ -221,7 +221,8 @@ def test_the_helpers_balance_row_is_paid_money_and_a_settled_student_owes_nothin
 def test_a_settled_voucher_whose_payments_fall_short_is_said_in_its_own_part():
     ln = line(part_of([sc(1, paid="4000", enr=["E1"])], [coh(roster=["E1"])], [enr("E1", voucher="4")]))
     assert ln["part_settled"] == D("6000") and ln["part_approved"] == 0
-    assert ch.columns_for([ln])[-2]["key"] == "part_no_status" and "part_settled" in [c["key"] for c in ch.columns_for([ln])]
+    # (QA 26.11, 2: the parts close the row, after "יתרה לגבייה")
+    assert ch.columns_for([ln])[-1]["key"] == "part_no_status" and "part_settled" in [c["key"] for c in ch.columns_for([ln])]
     quiet = line(part_of([sc(1, paid="10000", enr=["E1"])], [coh(roster=["E1"])], [enr("E1", voucher="4")]))
     assert "part_settled" not in [c["key"] for c in ch.columns_for([quiet])]
 
@@ -570,9 +571,10 @@ def test_the_search_and_the_columns():
     assert ch.filter_cohorts(part, "קורס זה לא קיים") == [] and ch.filter_cohorts(None, "") == []
     assert [x["code"] for x in ch.filter_unpriced(part, "a703")] == ["A703"] and ch.filter_unpriced(part, "a701") == []
     keys = [c["key"] for c in ch.columns_for(part["cohorts"])]
-    assert keys == ["cohort", "price", "students", "expected", "paid", "part_approved", "part_submitted", "part_hq",
-                    "part_not_submitted", "part_no_status", "balance"]
-    assert [c["key"] for c in part["columns"]] == keys[:9] + ["part_settled"] + keys[9:]
+    # changed deliberately (QA 26.11, 2): "יתרה לגבייה" after "שולם בפועל", then its parts - it stood last, after them
+    assert keys == ["cohort", "price", "students", "expected", "paid", "balance", "part_approved", "part_submitted", "part_hq",
+                    "part_not_submitted", "part_no_status"]
+    assert [c["key"] for c in part["columns"]] == keys[:10] + ["part_settled"] + keys[10:]
 
 
 def test_the_view_carries_the_cohorts_to_a_students_member_only_and_the_payments_rows_keep_their_cohort_id():
@@ -907,8 +909,9 @@ def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_coho
     ws = wb["לפי מחזור"]
     assert ws.sheet_view.rightToLeft is True and ws.freeze_panes == "A2"
     heads = [x.value for x in ws[1]]
-    assert heads[:8] == ["מחזור", "שם המחזור", fd.FLOW_LABEL, "מחיר", ch.STUDENTS_WORD, ch.EXPECTED_WORD, ch.PAID_WORD,
-                         ch.PARTS["approved"]["label"]]
+    # (QA 26.11, 2: the page's order - "יתרה לגבייה" before its parts)
+    assert heads[:9] == ["מחזור", "שם המחזור", fd.FLOW_LABEL, "מחיר", ch.STUDENTS_WORD, ch.EXPECTED_WORD, ch.PAID_WORD,
+                         ch.BALANCE_WORD, ch.PARTS["approved"]["label"]]
     # "אושר - יתרה שולמה, וחסר בתקבולים" holds nothing here, so it is not a column, as on the page
     assert ch.PARTS["settled"]["label"] not in heads and ch.PARTS["no_status"]["label"] in heads
     lines = {ws.cell(row=i, column=1).value: dict(zip(heads, [x.value for x in ws[i]])) for i in (2, 3)}

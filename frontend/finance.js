@@ -184,6 +184,9 @@
  *      floats beside it, as the confirmation did; once what was pressed has left the page (the next reading takes the
  *      document off the list), the box stays where it was on the page (POP_AT), never cut off at the view's edge. The box
  *      is a batch's one report: a flash says it only while the students' list, where the box is drawn, is off the screen.
+ * 2  "לפי מחזור" put "יתרה לגבייה" last, after its parts, and the figures above the table in another order. Both, and the
+ *      Excel file, are in one order now (app/desk/cohorts.py COLUMNS): "צפי תשלום", "שולם בפועל", "יתרה לגבייה", then the
+ *      parts, "אושר - ממתין לתשלום" the first of them and the one tinted.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -970,9 +973,10 @@
   }
   /* ---------- D4: the students by cohort ("לפי מחזור", knowledge backlog 0313; Chava 26.11) ----------
      A view of the students' tab beside its list, as "לפי לקוח" is of the companies': for each cohort with a price, what its
-     students should pay ("צפי תשלום"), what came in ("שולם בפועל") and the balance in Chava's parts by the voucher status,
-     "אושר - ממתין לתשלום" - money that should already have come in - its figure first and its column the one tinted; a
-     cohort opens to its students, each balance in its part's column, so a column of students sums to its cohort's cell.
+     students should pay ("צפי תשלום"), what came in ("שולם בפועל") and the balance ("יתרה לגבייה") in Chava's parts by the
+     voucher status, in that order in the figures and the table alike (QA 26.11, 2), "אושר - ממתין לתשלום" - money that
+     should already have come in - the first part and the one tinted; a cohort opens to its students, each balance in its
+     part's column, so a column of students sums to its cohort's cell.
      Every word, number and column is the server's (app/desk/cohorts.py, view.b2c.cohorts); the totals of the cohorts a
      search leaves are GET /api/desk/totals's (the list b2c_cohorts) - nothing is added up here. */
   var COHORTS_WORD = "לפי מחזור";
@@ -1109,11 +1113,12 @@
         esc(c.said) + "</p></div><div class=\"fin-actions\">" + scViews() + "</div></div>");
     }
     var ok = VIEW.checks.b2c_ok && c.checks.ties;
-    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount
-       as the table writes it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel
-       while the table under them was not) */
-    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, cash(t.part_approved), true], [w.balance, cash(t.balance)],
-      [w.paid, cash(t.paid)], [w.expected, cash(t.expected)]].map(function (x) {
+    /* the figures in the table's order (QA 26.11, 2: they stood in another): "צפי תשלום", "שולם בפועל", "יתרה לגבייה", then
+       its part "אושר - ממתין לתשלום", the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount as the table writes
+       it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel while the table under
+       them was not) */
+    var figures = "<div class=\"fin-figs\"><dl>" + [[w.expected, cash(t.expected)], [w.paid, cash(t.paid)],
+      [w.balance, cash(t.balance)], [c.parts[0].label, cash(t.part_approved), true]].map(function (x) {
       return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
     }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +

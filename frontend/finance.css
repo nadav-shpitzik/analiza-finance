@@ -274,8 +274,9 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance .fin-seg .fin-btn:last-child { border-start-end-radius: 8px; border-end-end-radius: 8px; margin-inline-start: -1px; }
 #screen-finance .fin-btn.on { background: var(--fin-sel); border-color: var(--fin-focus); font-weight: 600; position: relative; }
 /* D4, "לפי מחזור" (knowledge backlog 0313): "אושר - ממתין לתשלום", money that should already have come in, is the view's one
-   accent - its figure first, in a light amber, and its column lightly tinted, its amounts heavier. A cohort's students sit
-   under it on the page's grey, indented, a student out of the count quieter; what is said of a cohort closes its list */
+   accent - its figure, after "יתרה לגבייה" (QA 26.11, 2), in a light amber, and its column lightly tinted, its amounts
+   heavier. A cohort's students sit under it on the page's grey, indented, a student out of the count quieter; what is said
+   of a cohort closes its list */
 #screen-finance .fin-figs .fin-hi { padding: 4px 10px 5px; border-radius: 8px; background: color-mix(in srgb, var(--fin-wait) 16%, var(--fin-panel)); }
 #screen-finance table.fin-cohorts-t .fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-panel)); }
 #screen-finance table.fin-cohorts-t th.fin-hi { color: var(--fin-ink); }

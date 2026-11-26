@@ -214,8 +214,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
   file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per
   cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
-  "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first
-  figure and the one tinted column, a cohort row opening to its students, the price and the count under the cohort's name
+  "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): the figures, the table and the file
+  in one order (`COLUMNS`, QA 26.11): "צפי תשלום", "שולם בפועל", "יתרה לגבייה", then the parts, "אושר - ממתין לתשלום" the
+  first of them and the one tinted; a cohort row opening to its students, the price and the count under the cohort's name
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
   1400), its legend part the server's; its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).

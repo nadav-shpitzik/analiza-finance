@@ -107,7 +107,8 @@ _IN_LABELS = ", ".join(_q(x) for x in list(ENROLLMENT_IN.values())[:-1]) + " א�
 # legend's sentence, the part's label is its column's header
 PARTS = OrderedDict([
     ("approved", {"label": VOUCHER["1"], "about": "השובר אושר, והיתרה עוד לא שולמה: כסף שכבר היה צריך להיכנס, הכי חשוב. "
-                                                  "ראשון במסך, ומודגש. אחרי הגבייה מכירות מסמנים %s." % _q(VOUCHER["4"])}),
+                                                  "הראשון מבין החלקים, ומודגש. אחרי הגבייה מכירות מסמנים %s."
+                                                  % _q(VOUCHER["4"])}),
     ("submitted", {"label": VOUCHER["0"], "about": "הבקשה לשובר הוגשה, וממתינה להחלטה: צפי תוך שבועיים."}),
     ("hq", {"label": "%s / %s" % (VOUCHER["8"], VOUCHER["9"]),
             "about": "%s או %s: צפי תוך חודשיים." % (_q(VOUCHER["8"]), _q(VOUCHER["9"]))}),
@@ -206,11 +207,13 @@ OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "�
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
 # (a part's key) is drawn only when a cohort shown has money in it - on the page and in the file alike. The page says the
 # price and the students counted under the cohort's name (FOLDED), so its table fits monday's widths of 1280 and 1400 with
-# sums as long as real ones (QA 4 of 24.11); the file keeps them as columns
+# sums as long as real ones (QA 4 of 24.11); the file keeps them as columns. The money in one order, the figures above the
+# table's too (QA of 26.11, 2: "יתרה לגבייה" stood last, after its parts, and the figures in another order): what should
+# come in, what came in, what is still to come, then where it is - the parts, "אושר - ממתין לתשלום" first
 COLUMNS = [("cohort", "מחזור", "text", ""), ("price", PRICE_WORD, "amount", ""), ("students", STUDENTS_WORD, "int", ""),
-           ("expected", EXPECTED_WORD, "money", ""), ("paid", PAID_WORD, "money", "")] + \
-          [("part_" + k, p["label"], "money", k if k in PART_OPTIONAL else "") for k, p in PARTS.items()] + \
-          [("balance", BALANCE_WORD, "money", "")]
+           ("expected", EXPECTED_WORD, "money", ""), ("paid", PAID_WORD, "money", ""),
+           ("balance", BALANCE_WORD, "money", "")] + \
+          [("part_" + k, p["label"], "money", k if k in PART_OPTIONAL else "") for k, p in PARTS.items()]
 FOLDED = ("price", "students")
 # what a cohort's line and the totals sum (a part as part_<key>)
 SUM_FIELDS = ("expected", "paid", "balance", "overpaid", "waived_paid", "out_paid")
