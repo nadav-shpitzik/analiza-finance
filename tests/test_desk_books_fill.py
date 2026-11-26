@@ -50,7 +50,8 @@ ROWS = [pay(1, "נועה ברק"),                                            # 
         pay(9, "רוני שגב", ref="62609", paid="2000"),                   # the sums differ: a mark
         pay(10, "גל עמית", made="2026-09-10T08:00:00Z"),               # before the era: the plan's, never the desk's
         pay(11, "דור לב", ref="62611", made="2026-09-01T08:00:00Z"),    # before the era, its date: A1's, never the desk's
-        pay(12, "אפרת חן", ref="62612", day="2026-11-05")]             # cites one, its date filled: nothing
+        pay(12, "אפרת חן", ref="62612", day="2026-11-05"),             # cites one, its date filled: nothing
+        pay(13, "חברה בדויה")]                                         # named as a company's card: never its document
 DOCS = [doc(62601, name="נועה ברק", card="20001", day="2026-11-12"),
         doc(62602, name="יואב שטרן", card="20002", day="2026-11-12"),
         doc(62603, name="מאיה גולן", card="20003", day="2026-11-03"),

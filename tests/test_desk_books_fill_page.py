@@ -470,3 +470,19 @@ def test_in_a_browser_a_proposals_confirmation_floats_beside_what_was_pressed_an
                                    ["1", {NUMBER_COL: "62601", DATE_COL: {"date": "2026-11-12"}}],
                                    ["3", {DATE_COL: {"date": "2026-11-03"}}]], size
         assert "נכתב במאנדיי בשמך ב-4 שורות." in steps["report"]
+
+
+def test_a_proposals_batch_takes_no_pick_and_leaves_the_rows_picked_for_the_others():
+    """The boxes at a row's start pick rows for D2's two (here "שליחת קבלה: יצאה"); a batch of the books' proposals takes
+    none of them - every proposal, from above the list - and leaves them picked, its own rows among them."""
+    view, _m = fill_view()
+    for r in view["b2c"]["rows"]:
+        if r["id"] == "2":   # waiting for its receipt: a box at its start, and a proposal of the books
+            r.update(state="receipt_pending", receipt="טרם", receipt_idx="0", actions=["receipt_sent"] + r["actions"])
+    pending = {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}
+    got = run([{"show": pending}, {"click": [{"pick": "sc:2"}]}, {"show": TASKS}, {"click": [{"booksAll": "1"}]},
+               {"click": [{"batchGo": "1"}]}], view=view)
+    picked, plan, done = got["steps"][1], got["steps"][3], got["steps"][4]
+    assert picked["picked"] == ["sc:2"] and "נבחרה שורה אחת" in picked["html"]
+    assert "sc:2" in [i["key"] for i in plan["batch"]["items"]] and done["batch"]["phase"] == "done"
+    assert done["picked"] == ["sc:2"] and ("2", {NUMBER_COL: "62602"}) in [(w[1], w[2]) for w in writes_of(got)]
