@@ -155,8 +155,13 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   on a row; a proposal leaves the server only from an `ok` part computed on the reading shown (`merge`), never a held one.
   The chips `books_ref_fill` / `books_date_fill` are the legend's. The action `books_fill` (DESK_ACTIONS) writes them as the
   person: one step, the number (text) and the date (date), each only the value proposed and only into an empty cell
-  (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. Tests: `tests/test_desk_books_fill.py` (the
-  desk's proposals equal `ref_fill.plan`'s and A1's plan's on the same rows), `tests/test_desk_books_fill_page.py`.
+  (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. `merge` lays on the row its chip (a flag, never
+  `books_task`), `books_fill` {number?, date?} and the action; on the document `proposal`. The page (finance.js D4): the
+  chip, the sentence and "רישום מחשבשבת" in the details, "הצעה: לרשום בשורה של ..." and its button in the list, "לרשום את כל
+  ההצעות (N)" above it - all the batch of D2's 1.1 (one read, one confirmation, each row read again before its write; a row
+  whose cells are not what the desk read is skipped and said, never written over: `fillMoved`), floating beside what was
+  pressed. Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
+  `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

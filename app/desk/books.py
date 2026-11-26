@@ -103,8 +103,8 @@ from ..recon.cards import money_of as _money
 from ..recon.cards import number_of as _number
 from ..recon.reading import Board, check_board
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
-from .view import (BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID, TASK_STATES,
-                   status_word)
+from .view import (BOOKS_FILL_BUTTON, BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID,
+                   TASK_STATES, status_word)
 
 logger = logging.getLogger("analiza_finance.desk")
 
@@ -175,8 +175,9 @@ NONE_SAID = "לכן אין כאן סימונים מהספרים ואין רשי�
 # The lists' own sentences, above each (their headings are the legend's words, view.BOOKS_LIST_TITLE and the rest)
 STUDENTS_ABOUT = ("חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ועד סוף %d, בכרטיס של סטודנט/ית בחשבשבת, ששום שורה בלוחות "
                   "החיובים לא מפנה אליהן באסמכתת חשבונית. ליד מסמך: שורות ב-Student Charge ששמן זהה לשם בכרטיס, כל אחת "
-                  "מועמדת לפי שם בלבד: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית."
-                  % (ERA_FROM.strftime("%d.%m.%Y"), STUDENT_WINDOW_YEAR))
+                  "מועמדת לפי שם בלבד: התאמה נעשית רק לפי מספר המסמך באסמכתת חשבונית. כשחשבשבת מציעה שורה אחת למסמך, "
+                  "ההצעה כתובה מתחת, ו\"%s\" כותב במאנדיי את המספר בשורה אחרי אישור שלך."
+                  % (ERA_FROM.strftime("%d.%m.%Y"), STUDENT_WINDOW_YEAR, BOOKS_FILL_BUTTON))
 COMPANIES_ABOUT = ("חשבוניות מס וחשבוניות מס/קבלה תקפות מ-%s ואילך, בכרטיס שהוא מפתח חשבשבת של חברה בלוח החברות, ששום "
                    "שורה בלוחות החיובים לא מפנה אליהן באסמכתת חשבונית." % ERA_FROM.strftime("%d.%m.%Y"))
 VOUCHERS_SAID = "בכרטיס %s בחשבשבת (השוברים של משרד הביטחון): %s בלי חיוב במאנדיי, שנספרים בנפרד ולא מוצגים כאן."
@@ -588,7 +589,10 @@ def merge(view: dict, part: dict) -> dict:
     a number not yet in the copy, said in its details and nowhere else; a row's state is never touched -
     `books_task` on a marked row of the era, which "לטיפול" holds; each period's count of "לטיפול" (`tasks`); the students'
     list in the students' tab, the companies' list and the vouchers' count in the companies' tab, the unclear documents
-    under `books_unclear`, and the part's state under `books`."""
+    under `books_unclear`, and the part's state under `books`. D4: on a row the books propose a fill to, its chip (a flag,
+    beside the marks' in `books`), its values (`books_fill`: {number?, date?}) and the action that writes them, and on its
+    document in the students' list its `proposal` - only from a current part of this very reading (`laid`); a proposal
+    neither moves a row nor joins "לטיפול"."""
     out = dict(view)
     out["books"] = public(part)
     marks, notes = part.get("marks") or {}, part.get("notes") or {}
@@ -596,6 +600,7 @@ def merge(view: dict, part: dict) -> dict:
     # D4: what the books propose is laid only from a current part computed on this very reading - never from a held one,
     # and never from one of another reading laid over this one (an answer at once may carry the last part computed)
     laid = part.get("state") == "ok" and bool(part.get("reading_at")) and part.get("reading_at") == view.get("read_at")
+    fills = (part.get("fills") or {}) if laid else {}
     if view.get("b2c") is not None:
         b2c = dict(view["b2c"])
         rows = []
@@ -607,6 +612,12 @@ def merge(view: dict, part: dict) -> dict:
                          books_task=bool(r.get("date")) and r["date"] >= era)
             if notes.get(r["id"]):  # a number it cites is not yet in the copy: said in its details, no mark
                 r = dict(r, books_note=notes[r["id"]])
+            fill = fills.get(r["id"])
+            if fill:  # D4: its chip beside the row's others, its values for the action, and the action itself
+                m = fill["mark"]
+                r = dict(r, flags=list(r["flags"]) + [m["kind"]],
+                         books=list(r.get("books") or []) + [{k: m[k] for k in ("kind", "chip", "text", "documents")}],
+                         books_fill=dict(fill["values"]), actions=list(r.get("actions") or []) + [FILL_ACTION])
             rows.append(r)
         b2c["rows"] = rows
         b2c["periods"] = [dict(p, tasks=_tasks_of(rows, p.get("months") or [])) for p in b2c["periods"]]

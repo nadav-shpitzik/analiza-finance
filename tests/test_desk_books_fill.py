@@ -12,6 +12,8 @@ Fixtures are synthetic and shaped like the incidents (the rules' contract §0.2)
 records, names are invented, and no card carries an ID number."""
 from __future__ import annotations
 
+import json
+
 from app.desk import books as db
 from app.desk import reading as rd
 from app.desk import view as fd
@@ -247,3 +249,50 @@ def test_books_fill_writes_only_what_the_books_propose_and_each_cell_only_when_i
     rows = [pay(1, "נועה ברק"), pay(2, "מאיה גולן", ref="62603")]
     view = fd.build_view(reading_of(snap(rows, [])), TODAY)
     assert all(db.FILL_ACTION not in r["actions"] for r in view["b2c"]["rows"])
+
+
+# ---- the merge (D4): a proposal on its row, from a current part of the reading shown only -------------------------------
+def test_each_proposal_is_laid_on_its_row_as_its_chip_its_values_and_the_action_and_moves_no_row():
+    """`merge` lays, on a row the books propose a fill to, its chip among the row's flags (in FLAG_ORDER's words, beside
+    the marks' in `books`), its values (`books_fill`) and the action that writes them (`books_fill`, appended to what its
+    state offers) - never `books_task`: a proposal joins no list, changes no state, no sum and no count of "לטיפול"."""
+    part, view, _r = part_of()
+    merged = db.merge(view, dict(part, state="ok"))
+    rows = {r["id"]: r for r in merged["b2c"]["rows"]}
+    plain = {r["id"]: r for r in view["b2c"]["rows"]}
+    for item_id, values in WANT.items():
+        r, kind = rows[item_id], "books_ref_fill" if "number" in values else "books_date_fill"
+        assert r["books_fill"] == values and r["actions"] == plain[item_id]["actions"] + ["books_fill"]
+        assert r["flags"] == plain[item_id]["flags"] + [kind] and [m["kind"] for m in r["books"]] == [kind]
+        assert not r.get("books_task") and r["state"] == plain[item_id]["state"]
+    assert not any(r.get("books_fill") or "books_fill" in r["actions"] for i, r in rows.items() if i not in WANT)
+    assert merged["b2c"]["periods"] == [dict(p, tasks=p["tasks"]) for p in db.merge(view, dict(part, state="ok", fills={}))["b2c"]["periods"]]
+    # the files' "מה לבדוק" says the chip in its words, as the page's column does
+    assert "בחשבשבת: 62601" in fd.row_reasons("b2c", rows["1"]) and "תאריך מחשבשבת: 03.11.2026" in fd.row_reasons("b2c", rows["3"])
+    # a held part, one of another reading, lays nothing on a row either
+    for other in (dict(part, state="held"), dict(part, state="ok", reading_at="2026-11-24T09:00:00+00:00")):
+        rows = db.merge(view, other)["b2c"]["rows"]
+        assert not any(r.get("books_fill") or "books_fill" in r["actions"] or set(r["flags"]) & set(db.FILLS) for r in rows)
+
+
+# ---- who sees a proposal (spec §6.4.1): the students' tab's, through the route --------------------------------------------
+from tests.test_desk_books import booked  # noqa: E402,F401 - the fixture
+
+
+def test_a_proposal_reaches_a_member_of_student_charge_and_never_a_member_of_b2b_charge_only(booked):  # noqa: F811
+    """GET /api/desk on D3's route fixture, its row 103 now paid as its card's invoice-receipt 62503 (name, amount and day
+    of the era): a member of Student Charge receives the proposal on the row and on the document; a member of B2B Charge
+    only receives the companies' tab and nothing of it - no chip, no value, no proposal, not the document's number."""
+    booked.w.set(103, touch=False, paid="4000")
+    for user in (1, 2):
+        v = booked.get(user).json()["view"]
+        rows = {r["id"]: r for r in v["b2c"]["rows"]}
+        assert rows["103"]["books_fill"] == {"number": "62503", "date": "2026-11-03"}, user
+        assert "books_fill" in rows["103"]["actions"] and "books_ref_fill" in rows["103"]["flags"]
+        assert [e.get("proposal") for e in v["b2c"]["books"]["documents"]] == [
+            {"item_id": "103", "name": "תלמיד-גימל", "number": "62503"}]
+    text = booked.get(3).text
+    v = json.loads(text)["view"]
+    assert v["b2c"] is None and v["books_unclear"] is None and v["b2b"]["books"]["documents"]
+    for word in ("books_fill", "proposal", "books_ref_fill", "62503", "תלמיד-גימל", "בחשבשבת: 62503"):
+        assert word not in text, word
