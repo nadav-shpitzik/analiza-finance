@@ -273,6 +273,46 @@ def test_the_search_on_the_view_picks_the_cohorts_the_servers_filter_picks():
         assert len(re.findall(r"<li>", render([case(query=q, unpriced=True)], v)[0])) == len(ch.filter_unpriced(part, q))
 
 
+def found_rows(html: str) -> list:
+    """The students' rows a search marked, by their names."""
+    return re.findall(r'<tr class="fin-subrow[^"]*fin-subrow-found"><td class="k-more"></td><td class="k-cohort">'
+                      r'<a class="fin-name"[^>]*><mark class="fin-mark">([^<]+)</mark></a>', html)
+
+
+def test_a_search_that_finds_a_student_opens_the_cohort_and_marks_the_student():
+    """QA 26.11 (4): searching a student's name found the cohort and left it closed - the student neither shown nor marked
+    among its rows. A cohort with a student the search finds is open while the search shows it, and the student's row is
+    marked (its name too); a cohort found by its own code or name stays as it was; with no search, her own."""
+    pages = render([case(query="כהן"), case(query="סטודנט/ית E4"), case(query="סטודנט"), case(query="a701"), case()])
+    by_name, e4, many, by_code, none = pages
+    opened = lambda html: re.findall(r'data-cohort="([^"]+)" tabindex="0" aria-expanded="true"', html)
+    assert rows_of(by_name) == ["C1"] and opened(by_name) == ["C1"] and found_rows(by_name) == ["רונית כהן"]
+    assert len(re.findall(r'<tr class="fin-subrow', by_name)) >= 3                # her cohort's other students, unmarked
+    assert rows_of(e4) == ["C2"] and opened(e4) == ["C2"] and found_rows(e4) == ["סטודנט/ית E4"]
+    assert opened(many) == ["C1", "C2"] and found_rows(many) == ["סטודנט/ית E2", "סטודנט/ית E3", "סטודנט/ית E5",
+                                                                  "סטודנט/ית E4"]      # in the server's order
+    assert rows_of(by_code) == ["C1"] and opened(by_code) == [] and "fin-subrow" not in by_code
+    assert opened(none) == [] and "fin-mark" not in none
+
+
+def test_a_cohort_the_search_opened_closes_on_a_click_under_that_search_and_her_own_stay_hers():
+    """QA 26.11 (4): the search's opening is the search's: a click closes the cohort it opened and opens it again, for that
+    search only; once the search is cleared, the cohorts are as she left them (C2 opened by her, C1 never)."""
+    got = drive([{"click": {"scview": "cohorts"}}, {"click": {"cohort": "C2"}}, {"show": {"query": "כהן"}},
+                 {"click": {"cohort": "C1"}}, {"click": {"cohort": "C1"}}, {"show": {"query": "רונית"}},
+                 {"show": {"query": ""}}])
+    _view, mine, searched, shut, again, other, cleared = got["steps"]
+    expanded = lambda html, c: 'data-cohort="%s" tabindex="0" aria-expanded="true"' % c in html
+    assert expanded(mine, "C2") and not expanded(mine, "C1")
+    assert expanded(searched, "C1") and found_rows(searched) == ["רונית כהן"]
+    assert not expanded(shut, "C1") and expanded(again, "C1") and found_rows(again) == ["רונית כהן"]
+    assert expanded(other, "C1")                                        # another search opens it again
+    assert expanded(cleared, "C2") and not expanded(cleared, "C1") and "fin-mark" not in cleared
+    events = [(e["k"], e.get("d")) for b in got["usage"] for e in b["events"] if e["k"] == "row"]
+    assert events == [("row", {"state": "cohort", "open": True}), ("row", {"state": "cohort", "open": False}),
+                      ("row", {"state": "cohort", "open": True})]
+
+
 def test_every_label_the_view_draws_is_defined_in_the_students_legend_and_the_legend_has_the_views_part():
     s = snap([sc(1, paid="4000", enr=["E1"]), sc(2, paid="15000", enr=["E3"]), sc(3, paid="4000", enr=["E5", "E6"])],
              cohorts=[coh(roster=["E1", "E2", "E3", "E4", "E5", "E6"]), coh("C2", "A702", price="")],
@@ -356,6 +396,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
   await settle();
   const steps = [];
   for (const step of input.steps) {
+    if (step.show) { F._show(step.show); }
     if (step.click) { click(step.click, step.inside); }
     if (step.key) { (docs.keydown || []).forEach((f) => f({ key: step.key, target: { matches: (s) => s === "[data-cohort]",
       click: () => click({ cohort: step.on }) }, preventDefault() {} })); }
@@ -485,9 +526,16 @@ const [base, sdk, shot, width] = process.argv.slice(1);
   await page.keyboard.press("Enter");
   await page.waitForSelector('tr[data-cohort="C2"][aria-expanded="true"]');
   if (shot) { await page.screenshot({ path: shot, fullPage: true }); }
+  /* QA 26.11 (4): C1 closed again, then a search by its student's name opens it and marks her row */
+  await page.click('tr[data-cohort="C1"] td.k-paid');
+  await page.waitForSelector('tr[data-cohort="C1"][aria-expanded="false"]');
   await page.fill("#fin-q", "כהן");
   await page.waitForFunction(() => document.querySelectorAll("tr[data-cohort]").length === 1, null, { timeout: 15000 });
   out.steps.searched = await page.$$eval("tr[data-cohort]", (r) => r.map((x) => x.dataset.cohort));
+  out.steps.found = { open: await page.$eval('tr[data-cohort="C1"]', (r) => r.getAttribute("aria-expanded")),
+    marked: await page.$$eval("tr.fin-subrow-found a.fin-name", (a) => a.map((x) => x.innerText)),
+    tint: await page.$eval("tr.fin-subrow-found td.k-paid", (t) => getComputedStyle(t).backgroundColor),
+    plain: await page.$eval("tr.fin-subrow:not(.fin-subrow-found) td.k-paid", (t) => getComputedStyle(t).backgroundColor) };
   await page.click('[data-export="b2c_cohorts"]');
   await page.waitForFunction(() => window.__executed.length > 0, null, { timeout: 15000 });
   out.steps.exported = await page.evaluate(() => window.__executed);
@@ -538,6 +586,9 @@ def test_the_view_in_a_browser_opens_searches_exports_and_fits_monday_s_width(wi
     assert steps["view"]["scrolls"] is False and steps["opened"]["scrolls"] is False
     assert steps["opened"]["students"] == ["רונית כהן", "סטודנט/ית E2", "סטודנט/ית E3"]
     assert steps["searched"] == ["C1"]
+    # the search opened the cohort it found by a student's name, and marked her row (QA 26.11, 4)
+    found = steps["found"]
+    assert found["open"] == "true" and found["marked"] == ["רונית כהן"] and found["tint"] != found["plain"], found
     assert steps["exported"][0]["what"] == "openLinkInTab"
     assert steps["back"] == 0
     posted = [x for x in log if x["path"] == "/api/desk/export-link"]

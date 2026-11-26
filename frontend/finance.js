@@ -190,6 +190,9 @@
  * 3  A cohort's "שולם בפועל" (everything that came in) left out the money filed under it that no student holds: A667 said
  *      "תקבולים בלי הרשמה 20,000 ₪" under its name and nothing in that column. The server counts it in the line's paid now
  *      (app/desk/cohorts.py `_line_sums`); the page draws the server's numbers, the students' rows as they were.
+ * 4  A search by a student's name in "לפי מחזור" found the cohort and left it closed, the student neither shown nor marked.
+ *      A cohort with a student the search finds is open while that search shows it, the student's row tinted and her name
+ *      marked (cohortOpen); a click closes it under that search only (SEARCH_SHUT), and her own opened cohorts stay hers.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -995,6 +998,21 @@
       .join(" ").toLowerCase().indexOf(q) !== -1;
   }
   function cohortsShown() { var c = cohortsPart(); return c ? c.cohorts.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
+  /* QA 26.11 (4): a search by a student's name found the cohort and left it closed, the student neither shown nor marked
+     among its rows. A cohort with a student the search finds opens while the search shows it, and the student's row is
+     marked; her own opened cohorts are as they were once the search is cleared. A click closes one under that search
+     (SEARCH_SHUT, kept for that search only) and opens it again */
+  var SEARCH_SHUT = { q: "", ids: {} };
+  function searchQ() { return String(state.query || "").trim().toLowerCase(); }
+  function studentFound(s, q) { return !!q && String(s.name || "").toLowerCase().indexOf(q) !== -1; }
+  function cohortFound(x) {
+    var q = searchQ();
+    return !!q && (x.students_list || []).some(function (s) { return studentFound(s, q); });
+  }
+  function cohortOpen(x) {
+    if (cohortFound(x)) { return !(SEARCH_SHUT.q === searchQ() && SEARCH_SHUT.ids[x.id]); }
+    return !!state.sc.cohorts[x.id];
+  }
   function unpricedShown() { var c = cohortsPart(); return c ? c.unpriced.filter(function (x) { return cohortMatch(x, state.query); }) : []; }
   /* the table's columns: the server's, an optional part only when a cohort shown has money in it (cohorts.py columns_for);
      the price and the students counted are said under the cohort's name (`folded`), so the table fits monday's widths */
@@ -1038,7 +1056,9 @@
   function studentCell(col, s) {
     var k = col.key, counted = s.standing === "counted";
     if (k === "cohort") {
-      return itemLink("en", s.id, "fin-name", esc(s.name)) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
+      /* QA 26.11 (4): the name the search found, marked */
+      var name = studentFound(s, searchQ()) ? "<mark class=\"fin-mark\">" + esc(s.name) + "</mark>" : esc(s.name);
+      return itemLink("en", s.id, "fin-name", name) + "<span class=\"fin-sub-said\">" + esc(s.said || s.voucher) + "</span>" +
         (s.notes.length ? "<div class=\"fin-chips\">" + s.notes.map(function (t) { return "<span class=\"fin-chip\">" + esc(t) + "</span>"; }).join("") + "</div>" : "");
     }
     if (k === "expected") { return num(s.expected) ? cash(s.expected) : NOT_SET; }
@@ -1067,8 +1087,9 @@
     var head = "<tr><th class=\"k-more\"></th>" + cols.map(function (col) {
       return "<th class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + esc(col.header) + "</th>";
     }).join("") + "</tr>";
+    var q = searchQ();
     var body = shown.map(function (x) {
-      var open = !!state.sc.cohorts[x.id];
+      var open = cohortOpen(x);
       var row = "<tr class=\"fin-rowbtn" + (open ? " open" : "") + "\" data-cohort=\"" + esc(x.id) + "\" tabindex=\"0\" aria-expanded=\"" + open + "\">" +
         "<td class=\"k-more\">" + MORE + "</td>" + cols.map(function (col) {
           return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + cohortCell(col, x) + "</td>";
@@ -1076,7 +1097,8 @@
       if (!open) { return row; }
       var notes = cohortNotes(x);
       return row + (x.students_list.length ? x.students_list.map(function (s) {
-        return "<tr class=\"fin-subrow" + (s.standing === "counted" ? "" : " fin-subrow-off") + "\"><td class=\"k-more\"></td>" + cols.map(function (col) {
+        return "<tr class=\"fin-subrow" + (s.standing === "counted" ? "" : " fin-subrow-off") +
+          (studentFound(s, q) ? " fin-subrow-found" : "") + "\"><td class=\"k-more\"></td>" + cols.map(function (col) {
           return "<td class=\"k-" + esc(col.key) + (col.kind === "text" ? "" : " n") + hi(col) + "\">" + studentCell(col, s) + "</td>";
         }).join("") + "</tr>";
       }).join("") : "<tr class=\"fin-subrow\"><td colspan=\"" + span + "\" class=\"fin-subnote\">אין סטודנטים במחזור.</td></tr>") +
@@ -1147,7 +1169,15 @@
     }
     if (el.dataset.cohort) {
       if (ev.target.closest("a,button,input,label")) { return; }
-      var open = state.sc.cohorts[el.dataset.cohort] = !state.sc.cohorts[el.dataset.cohort];
+      var id = el.dataset.cohort, x = (cohortsPart().cohorts || []).filter(function (c) { return c.id === id; })[0], open;
+      if (x && cohortFound(x)) {
+        /* opened by the search (QA 26.11, 4): closed, and opened again, under this search only */
+        if (SEARCH_SHUT.q !== searchQ()) { SEARCH_SHUT = { q: searchQ(), ids: {} }; }
+        SEARCH_SHUT.ids[id] = !SEARCH_SHUT.ids[id];
+        open = !SEARCH_SHUT.ids[id];
+      } else {
+        open = state.sc.cohorts[id] = !state.sc.cohorts[id];
+      }
       use("row", { state: "cohort", open: !!open });
       redraw(); return;
     }

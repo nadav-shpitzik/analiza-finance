@@ -217,7 +217,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
   "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): the figures, the table and the file
   in one order (`COLUMNS`, QA 26.11): "צפי תשלום", "שולם בפועל", "יתרה לגבייה", then the parts, "אושר - ממתין לתשלום" the
-  first of them and the one tinted; a cohort row opening to its students, the price and the count under the cohort's name
+  first of them and the one tinted; a cohort row opening to its students (a search that finds a student opens its cohort
+  and marks her row, for that search only: `cohortOpen`, QA 26.11), the price and the count under the cohort's name
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
   1400), its legend part the server's; its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).

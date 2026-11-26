@@ -290,6 +290,11 @@ body[data-theme="dark"] #screen-finance {
 #screen-finance table.fin-cohorts-t tr.fin-subrow td.fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-soft)); }
 #screen-finance table.fin-cohorts-t tr.fin-subrow td.k-cohort { padding-inline-start: 28px; white-space: normal; }
 #screen-finance table.fin-cohorts-t tr.fin-subrow-off td { color: var(--fin-muted); }
+/* QA 26.11 (4): a student the search found, in the cohort it opened - the row lightly tinted, the name marked */
+#screen-finance table.fin-cohorts-t tr.fin-subrow.fin-subrow-found td { background: var(--fin-sel); }
+#screen-finance table.fin-cohorts-t tr.fin-subrow.fin-subrow-found td.fin-hi { background: color-mix(in srgb, var(--fin-wait) 10%, var(--fin-sel)); }
+#screen-finance mark.fin-mark { background: color-mix(in srgb, var(--fin-focus) 18%, transparent); color: inherit; border-radius: 3px;
+  padding: 0 2px; font-weight: 600; }
 #screen-finance .fin-sub-said { display: block; margin-top: 2px; font-size: 12.5px; color: var(--fin-muted); }
 #screen-finance table.fin-cohorts-t td.fin-subnote { color: var(--fin-muted); font-size: 12.5px; padding-inline-start: 28px; white-space: normal; }
 #screen-finance .fin-unpriced { padding: 10px 16px 12px; border-top: 1px solid var(--fin-line); font-size: 13px; color: var(--fin-muted); }
