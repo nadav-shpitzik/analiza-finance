@@ -187,7 +187,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the cohort's line, `unlinked`, and in no balance), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
   17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out: listed, in no balance, and what they paid is
   in "שולם בפועל", everything that came in (Chava's "כמה כבר התקבל בסך הכול"), and is their expected. A line is its students'
-  sums (`checks.ties`). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
+  sums (`checks.ties`), and ties to what the list files under its cohort, summed from the payments apart from the students
+  (`filed` = paid + `unlinked` + `shared`, in money and in payments; one filed under none because its enrollments name two
+  cohorts, under each). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
   filter (`any_of` [3] on Registration Flow, `TRACK`, `app/monday/client.py status_rule`) in a request of its own right
   after the columns check, and a refresh's right after its windows (`filtered_ids`: one request more, a quiet refresh four,
   and one per page of 500 after the first) - never an alias of them: monday refuses a request whole when one field is bad

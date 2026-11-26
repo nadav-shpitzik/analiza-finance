@@ -431,7 +431,7 @@ def random_part(rng: random.Random) -> tuple:
 
 def test_the_sums_tie_through_random_cohorts():
     rng = random.Random(20261126)
-    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared")}
+    seen = {k: 0 for k in ("counted", "waived", "out", "overpaid", "shared", "filed")}
     for _ in range(150):
         payments, cohorts, enrollments = random_part(rng)
         v = view_of(payments, cohorts, enrollments)
@@ -460,6 +460,16 @@ def test_the_sums_tie_through_random_cohorts():
                 seen[s["standing"]] += 1
                 seen["overpaid"] += bool(s["overpaid"])
             seen["shared"] += ln["shared"]["count"]
+        # the review of D4: each line ties to what the list files under its cohort, summed here from the list's rows and
+        # the enrollments' own links - a payment filed under none because its enrollments name several, under each
+        cohorts_of = {e["id"]: e[rd.EN["cohort"]] for e in enrollments}
+        for ln in part["cohorts"]:
+            mine = [r for r in v["b2c"]["rows"] if r["cohort_id"] == ln["id"] or r["cohort_from"] == "ambiguous" and ln["id"]
+                    in {c for e in next(p for p in payments if p["id"] == r["id"])[rd.SC["enrollment"]]
+                        for c in cohorts_of.get(e, [])}]
+            assert ln["filed"] == {"count": len(mine), "money": sum((r["net"] for r in mine), D(0))}
+            assert ln["filed"]["money"] == ln["paid"] + ln["unlinked"]["money"] + ln["shared"]["money"]
+            seen["filed"] += len(mine)
         total = ch.cohort_totals(part["cohorts"])
         assert part["totals"] == total
         # every total is its lines' sum, each field summed here and not by the module's own function
@@ -486,6 +496,54 @@ def test_a_broken_line_is_said_by_the_check():
     off = dict(ln["students_list"][0], expected=D("9000"), balance=D("5000"))
     wrong = dict(ln, students_list=[off], expected=D("9000"), balance=D("5000"), part_approved=D("5000"))
     assert ch._sums([off])["expected"] == wrong["expected"] and not ch._ties(wrong)
+
+
+def test_a_line_ties_to_what_the_list_files_under_its_cohort_summed_apart_from_its_students():
+    """The review of D4: the line is its students' sums, and that alone cannot see a payment the view lost between the list
+    and the students, or counted twice. So everything the list files under the cohort (`filed`, from the payments' own
+    cohort) is what its students paid - counted, waived and out - and what is said beside them, unlinked and shared."""
+    rows = [enr("E1", voucher="1", person="P1"), enr("E2", voucher="2", person="P2"), enr("E3", voucher="6", person="P3"),
+            enr("E4", voucher="17", person="P4")]
+    payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="3000", enr=["E2"]), sc(3, paid="2000", enr=["E3"]),
+                sc(4, paid="1000", enr=["E1", "E4"]), sc(5, paid="500", lead=["L1"]), sc(6, paid="250", enr=["E1", "E9"])]
+    rows.append(enr("E9", cohort="C2", voucher="1", person="P1"))
+    part = part_of(payments, [coh(roster=["E1", "E2", "E3", "E4"]), coh("C2", "A702", roster=["E9"])], rows,
+                   [lead("L1", "C1")])
+    ln = line(part)
+    # 1-3 the students', 4 two students' (shared), 5 by its lead and no one's (unlinked), 6 two cohorts' (shared on both)
+    assert ln["filed"] == {"count": 6, "money": D("10750")} and part["checks"]["ties"] is True
+    assert (ln["paid"], ln["unlinked"]["money"], ln["shared"]["money"]) == (D("9000"), D("500"), D("1250"))
+    assert line(part, "A702")["filed"] == {"count": 1, "money": D("250")} == line(part, "A702")["shared"]
+    # a line whose students and figures agree with each other, but that lost a payment on the way: said
+    one = student(ln, "E1")
+    lost = dict(one, payments=[], paid=D(0), balance=D("10000"))
+    students = [lost if s is one else s for s in ln["students_list"]]
+    broken = dict(ln, students_list=students, **ch._sums(students))
+    assert ch._sums(broken["students_list"])["paid"] == broken["paid"] and ch._ties(dict(ln))
+    assert broken["expected"] == broken["paid"] + broken["balance"] - broken["overpaid"] and not ch._ties(broken)
+    # counted twice - in a student's and in "unlinked" - or a payment more than the list files: said
+    assert not ch._ties(dict(ln, unlinked={"count": 2, "money": D("4500")}))
+    assert not ch._ties(dict(ln, filed={"count": 6, "money": D("10751")}))
+    assert not ch._ties(dict(ln, filed={"count": 7, "money": D("10750")}))
+
+
+def test_a_payment_the_view_loses_is_said_by_the_check_and_the_line_never_exported_as_complete(desk, monkeypatch):  # noqa: F811
+    real = ch._student
+
+    def loses_one(enrollments, cohorts_of, price, payments, *a):
+        return real(enrollments, cohorts_of, price, payments[:-1], *a)
+
+    monkeypatch.setattr(ch, "_student", loses_one)
+    s = cohort_snapshot()
+    part = fd.build_view(s, TODAY)["b2c"]["cohorts"]
+    assert part["state"] == "ok" and part["checks"]["ties"] is False
+    assert all(ch._sums(x["students_list"])["paid"] == x["paid"] for x in part["cohorts"])   # the students alone agree
+    served(monkeypatch, s)
+    desk.get(session_token(1))
+    url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
+    info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
+        io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
+    assert "לא שלמה" in info["שימו לב"]
 
 
 def test_the_cohorts_come_money_that_should_have_come_in_first_and_the_students_by_part():

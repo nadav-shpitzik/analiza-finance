@@ -54,7 +54,11 @@ and what was paid over the price - and expected = paid + balance - overpaid, to 
 "כמה כבר התקבל בסך הכול"): what the waived and the out paid too (the review of D4). Their expected is what they paid - the
 balance was waived, or they left - and their balance 0, so the line still ties; what they paid is said apart as well
 (`waived_paid`, `out_paid`). So a line's expected is its price for each student counted, and what the waived and the out
-paid.
+paid. And the line ties to the payments, summed apart from its students (the review of D4): everything the list files under
+the cohort (`filed`: the payments whose `cohort_id` is the cohort, and one it files under none because its enrollments name
+more than one, under each of them) is what its students paid - counted, waived and out - and what is said beside them,
+`unlinked` and `shared`, in money and in payments; so a payment lost between the list and the view, or counted twice, is
+said, never shown as a line.
 
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
@@ -181,7 +185,7 @@ NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במח�
                          "כי ההרשמה שלה/ו במחזור מקושרת לאותו ליד, או שהליד הוא של אותו אדם, ואין עוד סטודנט/ית כזה/ו "
                          "במחזור."}
 # said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
-NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
+NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו או עם התקבולים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
 # said in place of the table when the reading could not read the cohorts (app/desk/reading.py COHORTS_UNREAD): what was not
 # read, why in its own words, and that nothing else is touched (the review of D4)
 _TRACK_LIST = "רשימת המחזורים במסלול %s" % _q(TRACK_LABEL)
@@ -355,11 +359,17 @@ def _sums(students: list) -> dict:
 
 def _ties(line: dict) -> bool:
     """The cohort's line is its students' sums, its expected is what was paid and what is still to come, and it is the
-    price for each student counted and what the waived and the out paid."""
+    price for each student counted and what the waived and the out paid; and (the review of D4) everything the list files
+    under the cohort (`filed`, summed from the payments, not from the students) is what its students paid and what is said
+    beside them - `unlinked`, `shared` - in money and in payments."""
     again = _sums(line["students_list"])
     same = all(again[f] == line[f] for f in SUM_FIELDS + COUNT_FIELDS + tuple("part_" + k for k in PARTS))
+    filed, beside = line["filed"], (line["unlinked"], line["shared"])
     return same and line["expected"] == line["paid"] + line["balance"] - line["overpaid"] \
-        and line["expected"] == line["price"] * line["students"] + line["waived_paid"] + line["out_paid"]
+        and line["expected"] == line["price"] * line["students"] + line["waived_paid"] + line["out_paid"] \
+        and filed["money"] == line["waived_paid"] + line["out_paid"] + _dsum(
+            s["paid"] for s in line["students_list"] if s["standing"] == "counted") + _dsum(x["money"] for x in beside) \
+        and filed["count"] == sum(len(s["payments"]) for s in line["students_list"]) + sum(x["count"] for x in beside)
 
 
 def _frame() -> dict:
@@ -418,10 +428,18 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     paid_by: dict = defaultdict(list)
     shared: dict = defaultdict(list)
     filed_by_lead: dict = defaultdict(list)   # the payments the desk files under a cohort by their lead: no enrollment
+    # everything the list files under each cohort, by its own `cohort_id`, and a payment it files under none because its
+    # enrollments name more than one, under each of them: the side of `checks["ties"]` summed apart from the students
+    filed: dict = defaultdict(list)
     for r in raw:
         b = built.get(str(r["id"]))
         if b is None:
             continue
+        if b.get("cohort_id"):
+            filed[b["cohort_id"]].append(b)
+        elif b.get("cohort_from") == "ambiguous":
+            for c in _uniq(c for e in _uniq(r.get(SC["enrollment"]) or []) for c in cohorts_of.get(e, [])):
+                filed[c].append(b)
         if b.get("cohort_from") == "lead" and b.get("cohort_id"):
             filed_by_lead[b["cohort_id"]].append((r, b))
         pairs = list(dict.fromkeys((c, person_of[e]) for e in (str(x) for x in r.get(SC["enrollment"]) or [])
@@ -471,6 +489,7 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         line = dict(head, price=price, students_list=students, **_sums(students),
                     unlinked={"count": len(unlinked), "money": _dsum(b["net"] for b in unlinked)},
                     shared={"count": len(shared[cid]), "money": _dsum(b["net"] for b in shared[cid])},
+                    filed={"count": len(filed[cid]), "money": _dsum(b["net"] for b in filed[cid])},
                     # the cohort's link names an enrollment the reading did not get, or one whose own link is elsewhere
                     roster_missing=sum(1 for e in link if e not in held),
                     roster_elsewhere=sum(1 for e in link if e in held and cid not in cohorts_of[e]))
