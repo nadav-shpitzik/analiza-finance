@@ -76,18 +76,20 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   writes through the monday connector after Nadav's go, and then calls verify. A plan runs only on a whole reading (R0) and on a
   whole copy (`BooksStore.matching_snapshot`, one repeatable-read snapshot): the last finished run complete and ok, nothing in
   `books_retry`, and no hole in what is matched. A rule's bucket order is `BUCKETS`.
-- **FR-C2, the invoice number (D3a, 26.11):** `app/recon/ref_fill.py`, the kind `b2c_ref_fill` on the same two routes.
-  A row whose status says money came in (A1's MONEY_IN), with an empty "אסמכתת חשבונית", a readable amount and a day in
-  2026 (its "תאריך תקבול", else the day it was made, Israel's time) is proposed one number: the one uncited invoice-receipt of
-  2026 (type 2 only; a tax invoice is counted, `tax_invoice_waits`) on a students' card (D3's side logic) whose card's name
-  equals the row's as a set of words, whose total is within 1 ₪ and whose date is within 30 days of the row's day
-  (`FILL_WINDOW_DAYS`; farther is `date_far`: course prices repeat, so a same-name, same-price pair a season apart is the
-  likeliest false link), held by no other row, its number carried by no other valid document. Any active row with an empty
-  cell, the same name and amount and within the 30 days holds the document, whatever its status or year (a lagging
-  "לא שולם" may be the real row): only a money-in row of 2026 receives a number, but any holder blocks. The cards, names and
-  `place_of` are `app/recon/cards.py`, the desk's moved there, never copied (a test holds the desk's list and the plan in
-  agreement). It reads `matching_snapshot(wide=True)` (the cards, one transaction); A1's stays narrow. The plan never says
-  a name or an amount; `verify` asks the plan's question again, the window too, and says a number only when the books hold it.
+- **FR-C2, the invoice number (D3a, 26.11):** `app/recon/ref_fill.py`, the kind `b2c_ref_fill` on the same two routes. A row
+  whose status says money came in (A1's MONEY_IN), with an empty "אסמכתת חשבונית", a readable amount and a day in 2026 (its
+  "תאריך תקבול", else the day it was made, Israel's time) is proposed one number: the one uncited invoice-receipt of 2026
+  (type 2 only; a tax invoice is counted, `tax_invoice_waits`) on a students' card (D3's side logic) whose card's name
+  equals the row's as a set of words (the row's before its first "|", `person_name`: the helper's balance payment
+  "<student> | השלמת תשלום" is the student's; a card's name is whole), whose total is within 1 ₪ and whose date is within
+  30 days of the row's day (`FILL_WINDOW_DAYS`; farther is `date_far`: course prices repeat, so a same-name, same-price pair
+  a season apart is the likeliest false link), held by no other row, its number carried by no other valid document. Any
+  active row with an empty cell, the same name and amount and within the 30 days holds the document, whatever its status or
+  year (a lagging "לא שולם" may be the real row): only a money-in row of 2026 receives a number, but any holder blocks. The
+  cards, names and `place_of` are `app/recon/cards.py`, the desk's moved there, never copied (a test holds the desk's list
+  and the plan in agreement). It reads `matching_snapshot(wide=True)` (the cards, one transaction); A1's stays narrow. The
+  plan never says a name or an amount; `verify` asks the plan's question again, the window too, and says a number only when
+  the books hold it.
 - **The desk (D1, 24.11):** `app/desk/` and `frontend/`. The page `/desk/` is the Board View "כספים", a second feature of
   analiza-metrics' monday app (the desk move plan §2, option A), so `MONDAY_CLIENT_SECRET` (a Replit Secret, reported as set
   or not) is the value analiza-metrics holds. `/api/desk` verifies the sessionToken (`app/desk/auth.py`; Analiza's account
@@ -132,7 +134,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   empty status (never "מלגת אנליזה" or an unknown label), every number cited a valid invoice-receipt of the window, and its amount
   empty (A1's `amount_unreadable`, the usual unpaid row) or its group's sums within the tolerance. A mark moves no row and changes no sum; a marked row from 25.10.2026 is in "לטיפול"
   too (`books_task`: filter_b2c and the page's scFilter alike). Under "לטיפול", the documents of the era no charge row cites:
-  the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, never a match), the
+  the students' (a card with an invoice-receipt and no proforma, no Account's key; candidates by name, the row's before its
+  first "|" and shown whole, never a match), the
   companies' (an Account's `מפתח חשבשבת`, the whole board read by `AccountKeys`, never `text_mm3y3gm7`), card 10091 counted
   apart, the unclear ones to a member of both charge boards only (`visible_part`). A card key that is masked ("#": the copy's
   cleaning masks a key of six digits or more) or empty names no card (`card_of`): its side is judged by the card's name

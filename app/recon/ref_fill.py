@@ -24,8 +24,9 @@ A ROW IS PROPOSED ONE NUMBER (`fill`) ONLY WHEN ALL OF THESE HOLD:
 3. **An equal amount:** the row's "סכום ששולם" and the document's `total_incl` within TOLERANCE_PER_DOC (1 ₪ for one
    document, the contract §0.3). There is no rounding band here: anything past 1 ₪ is `amount_differs`.
 4. **An equal name as a set** (`name_words`: words of two letters or more, none with a digit, in any order, NFKC and case
-   folded): the row's name and the card's, neither empty. A similar name is never proposed: it needs a person's eye,
-   which the desk's list gives.
+   folded): the row's name as the person's (`person_name`: before its first "|", so a balance payment the helper names
+   "<student> | השלמת תשלום" meets its card) and the card's whole name, neither empty. A similar name is never proposed:
+   an added middle name or a letter more (מירון for מרון) needs a person's eye, which the desk's list gives.
 5. **Near in time:** the document's `value_date` within FILL_WINDOW_DAYS (30) of the row's day, before or after it. Course
    prices repeat, so a row and a document of the same name and the same price a season apart are the likeliest false link
    (two payments of one student, or two students of one name): such a document is counted (`date_far`), never proposed.
@@ -62,7 +63,7 @@ from zoneinfo import ZoneInfo
 from ..books.doctypes import role
 from . import receipt_dates as a1
 from .cards import (ERA_FROM, INVOICE, VOUCHER_CARD, account_keys_of, card_of, card_sides, cited_numbers, day_of,
-                    money_of, name_words, number_of, place_of, side_of)
+                    money_of, name_words, number_of, person_name, place_of, side_of)
 from .reading import B2, STUDENT_CHARGE, monday_side
 
 KIND = "b2c_ref_fill"
@@ -165,7 +166,7 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
         refs = a1.parse_refs(row.get(COLUMN))
         amount = a1.parse_amount(row.get(a1.AMOUNT_COLUMN))
         day = row_day(row)
-        named = by_words.get(name_words(row.get("name"))) or []
+        named = by_words.get(name_words(person_name(row.get("name")))) or []
         equal = [d for d in named if _equal_amount(amount, d)] if amount is not None else []
         near = [d for d in equal if _near(day, d)] if day is not None else []
         active = row.get("state", "active") == "active"
@@ -274,7 +275,7 @@ def _read_back(row: Optional[dict], matched: Optional[dict], by_number: dict, b2
         return "cited_by_b2b"
     if card_of(doc) == VOUCHER_CARD or side_of(doc, sides)[0] != "student":
         return "not_a_students_card"
-    words = name_words(row.get("name"))
+    words = name_words(person_name(row.get("name")))
     if not words or words != name_words(doc.get("account_name")):
         return "name_differs"
     # the row's own amount (A1 read it, or the row were `amount_unreadable`): A1 judged its group's sum, and a document

@@ -25,8 +25,9 @@ THREE THINGS, all computed here, once per reading and per books copy, and only d
 2. **"מסמכים בחשבשבת בלי חיוב במאנדיי"** (spec §6.1.2; FR-C4, FR-D1): status-1 tax invoices and invoice-receipts of the era
    that no charge row cites. On a student's card, dated within Student Charge's window (FR-7), each with the Student
    Charge rows whose name equals the card's name as a set of words - **a candidate, never a match, never a link, never a
-   fill** (the law of the rules' §5). On a company's card, with the Accounts that name it. Card VOUCHER_CARD is counted
-   apart (FR-D1).
+   fill** (the law of the rules' §5). A row's name is compared as the person's (`person_name`: before its first "|", so
+   the balance payment "X | השלמת תשלום" is X's candidate) and shown whole. On a company's card, with the Accounts that
+   name it. Card VOUCHER_CARD is counted apart (FR-D1).
 3. **The side of a card** (FR-6, the plan §1a.2.3, until B3's sort codes): an Account's "מפתח חשבשבת" (read from the whole
    Accounts board, `AccountKeys`) is a company's card; otherwise a card that holds an invoice-receipt and no proforma
    (type 78: students are sent none) is a student's; anything else is `unclear`, and its documents are shown only to a
@@ -77,7 +78,8 @@ from ..recon import receipt_dates as a1
 # here, never copied, so the desk's list and the plan's fills judge a document by one code
 from ..recon.cards import (ERA_FROM, INVOICE, INVOICE_RECEIPT, KEY_MASK, LISTED_ROLES, NAME_CARD, PLACES,  # noqa: F401
                            PROFORMA, STUDENT_WINDOW_YEAR, VOUCHER_CARD, account_keys_of, card_of, card_sides,
-                           cited_numbers, name_words, no_card_why, norm_key, norm_name, place_of, side_card, side_of)
+                           cited_numbers, name_words, no_card_why, norm_key, norm_name, person_name, place_of, side_card,
+                           side_of)
 from ..recon.cards import day_of as _day
 from ..recon.cards import money_of as _money
 from ..recon.cards import number_of as _number
@@ -396,7 +398,8 @@ def _entry(doc: dict) -> dict:
 
 
 def candidates_of(card_name: str, by_words: dict) -> list:
-    """The Student Charge rows whose name equals the card's name as a set of words: a candidate by name, never a match."""
+    """The Student Charge rows whose name equals the card's name as a set of words: a candidate by name, never a match.
+    `by_words` is keyed by each row's name as the person's (`person_name`); the card's name is taken whole."""
     words = name_words(card_name)
     return list(by_words.get(words, ())) if words else []
 
@@ -429,7 +432,7 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     sides = card_sides(documents, keys)
     by_words: dict = defaultdict(list)
     for r in view_rows:
-        words = name_words(r.get("name"))
+        words = name_words(person_name(r.get("name")))  # "X | השלמת תשלום" is X's row; its full name is shown
         if words:
             by_words[words].append(r)
     places: dict = {}

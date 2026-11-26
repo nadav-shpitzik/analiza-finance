@@ -295,6 +295,68 @@ def test_an_empty_name_on_either_side_is_never_equal():
     assert buckets([row(0, name="")], [doc(62500, name="")]) == {0: "no_candidate"}
 
 
+# ---- a row's name as the person's (`person_name`) ----------------------------------------------------------------------
+def completion(n: int, name: str = NAME, paid: str = "8000", made: str = "2026-11-20T09:00:00Z", **kw) -> dict:
+    """A balance payment as the helper makes it (analiza-monday-helper `/b2c/completion-charge`, when sales set the voucher
+    to "אושר - יתרה שולמה"): named "<student> | השלמת תשלום", its "סוג חיוב" the same words (a label the rule never reads),
+    its "תאריך תקבול" empty, so it is dated by the day it was made."""
+    r = row(n, name=name + " | השלמת תשלום", paid=paid, made=made, **kw)
+    r[rr.SC["ctype"]] = "השלמת תשלום"
+    return r
+
+
+def test_person_name_is_the_text_before_the_first_pipe():
+    assert cards.person_name("נועה ברק | השלמת תשלום") == "נועה ברק"
+    assert cards.person_name("נועה ברק") == "נועה ברק"                              # no pipe: the name as it is
+    assert cards.person_name("נועה ברק | השלמת תשלום | 2") == "נועה ברק"            # two pipes: cut at the first
+    assert cards.person_name(None) == "" and cards.person_name("| השלמת תשלום") == ""
+
+
+def test_a_completion_row_is_proposed_its_students_balance_invoice_receipt():
+    """The live case of 25.11: a balance payment "X | השלמת תשלום" (8,000, its receipt date empty) is X's row, so X's
+    invoice-receipt of 8,000 near the day it was made is proposed to it, and reads back verified. X's old 4,000 deposit row,
+    which cites its own number, is no rival (it has a number, and another amount)."""
+    rows = [completion(0), row(1, ref="62300", paid="4000", made="2026-10-15T09:00:00Z")]
+    docs = [doc(62520, total="8000", day="2026-11-21"), doc(62300, total="4000", day="2026-10-15")]
+    got = analysis(rows, docs)
+    assert {int(i) - SC_BASE: (e["bucket"], e["proposed"]) for i, e in got["rows"].items()} == {
+        0: ("fill", "62520"), 1: ("has_ref", None)}
+    after = [dict(rows[0], **{rf.COLUMN: "62520"}), rows[1]]
+    body = rf.verify("analiza", a_reading(after), docs, [str(SC_BASE)])
+    assert body["items"][str(SC_BASE)] == {"state": "verified", "document": "62520"}
+
+
+def test_the_desk_lists_the_balance_document_with_the_completion_row_shown_whole():
+    """D3's candidates meet a row as the person's too (the index of `compute`), and show the row's full name, so Chava sees
+    which row it is: the balance document lists the completion row and the old deposit row of the same student. A card
+    whose own name holds a pipe is taken whole, and names no candidate."""
+    rows = [sc(1, invoice="", paid="8000", created="2026-11-20T09:00:00Z"),
+            sc(2, invoice="62300", paid="4000", created="2026-10-15T09:00:00Z")]
+    rows[0]["name"], rows[1]["name"] = "נועה ברק | השלמת תשלום", "נועה ברק"
+    docs = [doc(62520, total="8000", day="2026-11-21"), doc(62300, total="4000", day="2026-10-26"),
+            doc(62521, total="5000", day="2026-11-21", card="20009", name="נועה ברק | חברה")]
+    part, _v, _r = desk_run(rows, docs, [], {})
+    listed = {e["number"]: e for e in part["students"]}
+    assert set(listed) == {"62520", "62521"}                                       # 62300 is cited by the deposit row
+    assert [(c["id"], c["name"]) for c in listed["62520"]["candidates"]] == [("1", "נועה ברק | השלמת תשלום"),
+                                                                             ("2", "נועה ברק")]
+    assert listed["62521"]["candidates"] == []
+    assert {i: e["proposed"] for i, e in rf.analyse(rows, docs)["rows"].items()} == {"1": "62520", "2": None}
+
+
+def test_a_cards_name_is_never_cut_and_a_similar_name_stays_unproposed():
+    """`person_name` is a row's only: a card's name is compared whole, in the plan and in the read-back. And a completion
+    row whose name differs from its card by spelling stays unproposed, as the two live ones of 25.11 must: an added middle
+    name, or a letter more ("מירון" for "מרון") - a similar name needs a person's eye (FR-C2)."""
+    piped = [doc(62500, name="נועה ברק | חברה")]
+    assert buckets([row(0)], piped) == {0: "no_candidate"}
+    body = rf.verify("analiza", a_reading([row(0, ref="62500")]), piped, [str(SC_BASE)])
+    assert body["items"][str(SC_BASE)]["state"] == "name_differs"
+    similar = [completion(0, name="דנה רות לוי"), completion(1, name="יעל מירון")]
+    docs = [doc(62520, total="8000", card="20002", name="דנה לוי"), doc(62521, total="8000", card="20003", name="יעל מרון")]
+    assert buckets(similar, docs) == {0: "no_candidate", 1: "no_candidate"}
+
+
 # ---- condition 5: near in time -------------------------------------------------------------------------------------
 def test_a_document_is_near_its_row_within_thirty_days_before_or_after():
     """Condition 5: course prices repeat, so a document of the row's name and amount is a candidate only when its date is
@@ -494,9 +556,10 @@ def test_the_desk_lists_every_document_the_plan_proposes_with_its_row_among_the_
             sc(5, invoice="", paid="4180", paid_date="2026-04-02"),
             sc(6, invoice="", paid=PAID, created="2026-11-13T08:00:00Z"),
             sc(7, invoice="", paid=PAID, st="0"),
-            sc(8, invoice="", paid="2275", created="2026-11-14T08:00:00Z")]
+            sc(8, invoice="", paid="2275", created="2026-11-14T08:00:00Z"),
+            sc(9, invoice="", paid="8000", created="2026-11-17T08:00:00Z")]
     names = {"1": "נועה ברק", "2": "יואב שטרן", "3": "שטרן יואב", "4": "מאיה גולן", "5": "דור לב", "6": "מאיה גולן",
-             "7": "עידו רז", "8": "שירה אלון"}
+             "7": "עידו רז", "8": "שירה אלון", "9": "שירה אלון | השלמת תשלום"}
     for r in rows:
         r["name"] = names[r["id"]]
     docs = [doc(62480, day="2026-11-12"),                                                     # proposed to 1
@@ -507,20 +570,21 @@ def test_the_desk_lists_every_document_the_plan_proposes_with_its_row_among_the_
             doc(62485, card="20006", name="מאיה גולן", total="1960", day="2026-11-01"),      # cited by 4
             doc(62486, card="20007", name="עידו רז", day="2026-11-15"),                       # 7: no money came in
             doc(62487, card="20008", name="שירה אלון", day="2026-11-16"),                     # 8: another amount
-            doc(62488, card="30001", name="חברה בדויה", day="2026-11-17")]                    # a company's
+            doc(62488, card="30001", name="חברה בדויה", day="2026-11-17"),                    # a company's
+            doc(62489, card="20008", name="שירה אלון", total="8000", day="2026-11-18")]       # 9's balance
     keys = {"30001": ["חברה בדויה"]}
     got = rf.analyse(rows, docs, [], keys)
     part, _view, _reading = desk_run(rows, docs, [], keys)
     listed = {e["number"]: e for e in part["students"]}
     proposal = {e["proposed"]: i for i, e in got["rows"].items() if e["bucket"] == "fill"}
-    assert proposal == {"62480": "1", "62481": "2", "62482": "3", "62483": "5", "62484": "6"}
+    assert proposal == {"62480": "1", "62481": "2", "62482": "3", "62483": "5", "62484": "6", "62489": "9"}
     for number, item_id in proposal.items():
         d = next(x for x in docs if x["doc_number"] == number)
         if d["value_date"] >= cards.ERA_FROM:
             assert number in listed and item_id in [c["id"] for c in listed[number]["candidates"]], number
         else:
             assert number not in listed and part["places"][d["stock_id"]] == "outside"
-    assert got["documents"]["era_listed"] == len(part["students"]) == 6
+    assert got["documents"]["era_listed"] == len(part["students"]) == 7
     assert got["documents"]["era_left"] == len([n for n in listed if n not in proposal]) == 2
     # and the rule's pool from the era is the desk's list, document for document
     pool = {d["doc_number"] for d in docs

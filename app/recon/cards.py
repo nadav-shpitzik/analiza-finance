@@ -13,6 +13,8 @@ proposes are judged by one code, never by two copies (a test holds the two in ag
    judged alone, by its own type - an invoice-receipt a student's, as FR-6's interim rule; anything else unclear.
 2. **A name as a set of words** (`name_words`, FR-C2's rule): what the desk's candidates and FR-C2's fill compare. A name
    is only ever a candidate (the law of the rules' §5): it proposes, a person approves, and a number written makes the match.
+   A Student Charge row's name is compared as the person's (`person_name`: the text before its first "|", so a balance
+   payment named "<student> | השלמת תשלום" meets its card); a card's name is compared whole, only as the books cleaned it.
 3. **Where a document lands** (`place_of`, spec §6.3.1), the first of PLACES that fits: outside (another status or type, a
    cancellation, before the era, or a student's outside Student Charge's window), cited by a charge row (`cited_numbers`),
    answered "not found" (missing), counted apart (the vouchers' card), or the students', the companies' or the unclear.
@@ -91,6 +93,14 @@ def name_words(text: Any) -> frozenset:
     words of two letters or more, none with a digit, in any order."""
     words = re.split(r"[\W_]+", unicodedata.normalize("NFKC", str(text or "")).casefold())
     return frozenset(w for w in words if len(w) >= 2 and not any(ch.isdigit() for ch in w))
+
+
+def person_name(name: Any) -> str:
+    """A Student Charge row's name as the person's: the text before its first "|", stripped - the whole name when it has
+    none. The helper (analiza-monday-helper `/b2c/completion-charge`) names the balance payment it makes "<student name> |
+    השלמת תשלום" (its "סוג חיוב" is "השלמת תשלום"), and those two words would keep the row from ever equalling its card. A
+    ROW's name only, never a card's: the books' card names carry no such suffix, and a card's name is only cleaned."""
+    return str(name or "").split("|", 1)[0].strip()
 
 
 def account_keys_of(rows: list) -> dict:
