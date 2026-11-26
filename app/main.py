@@ -34,11 +34,13 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import config
+from .books.ledger import definition_state as ledger_state
 # A1's rule for a whole copy is the books copy's own since D3 (app/books/store.py `not_ready`): the desk judges by it too
 from .books.store import NOT_READY as BOOKS_NOT_READY  # noqa: F401 - the name A1's code and tests know
 from .books.store import not_ready as books_not_ready
@@ -197,7 +199,7 @@ def health(request: Request) -> dict:
             "problems": list(cfg.problems),
         },
         "store": store,
-        "books": {"sync_key": sync_key_state(cfg), **(books or {})},
+        "books": {"sync_key": sync_key_state(cfg), "ledger_report": ledger_state(cfg.ledger_report), **(books or {})},
         "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
         "desk": desk_health(state, cfg, desk_stored, now),
         "last_check": None
@@ -500,6 +502,70 @@ def books_status(request: Request) -> JSONResponse:
                                  "sweep": s.sweep_summary(cfg.db)})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": type(exc).__name__, "detail": getattr(exc, "detail", None)})
+
+
+# ---- the ledger report (backlog 0301 B3; ADR-0187): a probe of its shape, behind the sync key ----------------------------
+
+
+def _probe_input(payload: Any, cfg: config.Config) -> tuple:
+    """(the month, None) to run, or (the month or None, the answer) not to. A body that is not `{"month": "YYYY-MM"}`, with
+    an optional company of config.COMPANIES, is `bad_request`; a company other than this deployment's is `other_company`.
+    Neither says back what was sent."""
+    from .books.ledger import month_bounds
+
+    if not isinstance(payload, dict):
+        return None, {"ok": False, "error": "bad_request",
+                      "detail": 'the body is {"month": "YYYY-MM"}, and "company" may be added'}
+    month = payload.get("month")
+    try:
+        month_bounds(month if isinstance(month, str) else "")
+    except ValueError:
+        return None, {"ok": False, "error": "bad_request", "detail": "month must be YYYY-MM"}
+    company = payload.get("company")
+    company = cfg.company if company in (None, "") else company
+    if not isinstance(company, str) or company not in config.COMPANIES:
+        return None, {"ok": False, "error": "bad_request", "detail": f"company must be one of {sorted(config.COMPANIES)}"}
+    if company != cfg.company:
+        return month.strip(), {"ok": False, "error": "other_company", "asked": company,
+                               "detail": "this deployment reaches only its own company (WIZ_COMPANY): its one session is "
+                                         "that company's. Another company is probed from the Repl's Shell (README)"}
+    return month.strip(), None
+
+
+@app.post("/api/books/ledger/probe")
+async def ledger_probe(request: Request) -> JSONResponse:
+    """B3's probe (backlog 0301; ADR-0187 §3): the ledger report run once for one month through exportData, and only its
+    shape - the column names and counts of app/books/ledger.py `describe`, never a value from a row. Behind the sync key,
+    checked before the body is read (D2's review: a body FastAPI parsed first was answered before the key). The body is
+    `{"month": "YYYY-MM", "company": "demo" | "analiza"}`, the company optional. Always 200 after the key: `ok`, `error`
+    (ledger.PROBE_ERRORS), `describe`, `company`, `month` and `request_s`. The deployment reaches only its own company
+    (WIZ_COMPANY, `other_company`), with the session the tick uses: no second session path. The call is boxed like a
+    tick (REQUEST_BOX_S from the request's arrival). Nothing of the answer is kept or logged."""
+    started = time.monotonic()
+    cfg = config.load()
+    refusal = _sync_key_refusal(request, cfg)
+    if refusal is not None:
+        return refusal
+    try:
+        payload = json.loads(await request.body() or b"null")
+    except (ValueError, RecursionError):  # not JSON, or not UTF-8
+        payload = None
+    month, answer = _probe_input(payload, cfg)
+    if answer is None:
+        state = request.app.state
+        deadline = started + REQUEST_BOX_S - FINISH_RESERVE_S
+
+        def work() -> dict:
+            from .books.ledger import run_probe
+
+            try:
+                return run_probe(lambda: get_client(state, cfg), cfg.ledger_report, month, deadline)
+            except Exception as exc:  # noqa: BLE001 - by class, never the text: a message could carry what the answer held
+                return {"ok": False, "error": "crashed", "detail": type(exc).__name__}
+
+        answer = await run_in_threadpool(work)
+    return JSONResponse({**answer, "company": cfg.company, "month": month,
+                         "request_s": round(time.monotonic() - started, 1)})
 
 
 # ---- the reconciliation's reading of monday (backlog 0301 R0): behind the sync key --------------------------------

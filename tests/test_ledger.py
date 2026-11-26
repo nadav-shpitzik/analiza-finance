@@ -1,15 +1,21 @@
-"""B3's probe of the ledger report (backlog 0301; ADR-0187): the definition, a month's parameters and the shape of an
-answer (app/books/ledger.py). No row is ever said: every answer here is scanned for every value of its fixture."""
+"""B3's probe of the ledger report (backlog 0301; ADR-0187): the definition, a month's parameters, the shape of an answer
+(app/books/ledger.py) and the route POST /api/books/ledger/probe. No row is ever said: every answer here is scanned for
+every value of its fixture."""
 
 import copy
 import json
+import logging
 import re
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from app.books import ledger
+from app.wizcloud import mask_overlaps
+from tests.conftest import KEY, SESSION, FakeStore
 
+SYNC_KEY = "ledger-probe-sync-key-0123456789abcdef"
 CAPTIONS = ["תאריך", "תאריך ערך", "מפתח חשבון", "קוד מיון", "שם קוד מיון", "שם חשבון", "קוד תמחיר", "פרטים",
             "אסמכתא 1", "אסמכתא 2", "חובה שקל", "זכות שקל", "חשבון נגדי", "מספר מנה", "סוג תנועה", "מספר תנועה"]
 DATAFILE = "5be2c0ffee" + "".join(f"{i:04x}{(i * 7919) % 65536:04x}" for i in range(400)) + "d00d"  # distinctive hex
@@ -457,3 +463,219 @@ def test_the_probes_errors_are_one_closed_list():
 
     assert len(set(ledger.PROBE_ERRORS)) == len(ledger.PROBE_ERRORS) == len(KINDS) + 6
     assert set(KINDS) < set(ledger.PROBE_ERRORS)
+
+
+# ---- the route --------------------------------------------------------------------------------------------------------
+
+
+class LedgerVendor:
+    """lb19 for the probe: a session, and exportData answering `answer` (or `text`) with `status`. Every request kept."""
+
+    def __init__(self, answer=None):
+        self.requests = []
+        self.bodies = []
+        self.answer = answer
+        self.text = None
+        self.status = 200
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path.lstrip("/")
+        if path.startswith("createSession/"):
+            return httpx.Response(200, text=SESSION)
+        if path == "ExportDataApi/exportData":
+            self.bodies.append(json.loads(request.read()))
+            text = self.text if self.text is not None else json.dumps(self.answer, default=float, ensure_ascii=False)
+            return httpx.Response(self.status, text=text)
+        return httpx.Response(404, text="not found")
+
+
+@pytest.fixture
+def probe(monkeypatch, clock):
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    vendor = LedgerVendor({"statusCode": 200, "repdata": by_id()})
+    monkeypatch.setenv("WIZ_PRIVATE_KEY", KEY)
+    monkeypatch.setenv("BOOKS_SYNC_KEY", SYNC_KEY)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:SECRETPW@127.0.0.1:1/nothing")
+    monkeypatch.setenv("WIZ_LEDGER_REPORT", SECRET)
+    monkeypatch.delenv("WIZ_COMPANY", raising=False)
+    monkeypatch.delenv("WIZ_SERVER", raising=False)
+    main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
+    main.app.state.transport = httpx.MockTransport(vendor.handler)
+    main.app.state.clock = clock
+    main.app.state.client = None
+    main.app.state.store_factory = lambda cfg: FakeStore()
+    yield TestClient(main.app), vendor
+    main.app.state.transport = None
+    main.app.state.clock = __import__("time").time
+    main.app.state.client = None
+    main.app.state.store_factory = None
+    main._cache.update(at=0.0, result=None)
+    main._store_cache.update(at=0.0, key=None, value=None)
+
+
+AUTH = {"Authorization": f"Bearer {SYNC_KEY}"}
+URL = "/api/books/ledger/probe"
+
+
+def ask(client, payload=None, content=None):
+    """POST the probe with the key: always 200, and its `error` one of PROBE_ERRORS (or None when ok)."""
+    if content is not None:
+        r = client.post(URL, content=content, headers={**AUTH, "Content-Type": "application/json"})
+    else:
+        r = client.post(URL, json=payload, headers=AUTH)
+    body = r.json()
+    assert r.status_code == 200 and body["error"] in ledger.PROBE_ERRORS + (None,) and body["ok"] is (body["error"] is None)
+    assert isinstance(body["request_s"], float)
+    return r, body
+
+
+def no_definition_in(text: str) -> bool:
+    """Neither the Secret nor any stretch of twelve characters of its datafile."""
+    return SECRET not in text and mask_overlaps(text, [DATAFILE]) == text
+
+
+def test_the_probe_needs_the_sync_key_before_it_reads_the_body(probe):
+    client, vendor = probe
+    assert client.post(URL, json={"month": "2026-10"}).status_code == 401
+    assert client.post(URL, json={"month": "2026-10"}, headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.post(URL, content=b"{not json", headers={"Content-Type": "application/json"}).status_code == 401
+    assert vendor.requests == []
+
+
+def test_the_probe_runs_one_month_and_says_only_the_shape(probe):
+    client, vendor = probe
+    r, body = ask(client, {"month": "2026-10"})
+    assert (body["ok"], body["error"], body["company"], body["month"]) == (True, None, "demo", "2026-10")
+    assert body["definition"] == {"parameters": 4, "columns": 16} and body["vendor"] is None
+    shape = body["describe"]
+    assert (shape["rows"], shape["hit_limit"], shape["sort_code"]["distinct"], shape["date"]["months"]) == (4, False, 2, 1)
+    assert shape["debit"]["numeric"] is True and shape["credit"]["numeric"] is True
+    # the vendor's documented body: the datafile, and the file's four entries whole with only defVal set
+    assert len(vendor.bodies) == 1 and set(vendor.bodies[0]) == {"datafile", "parameters"}
+    assert vendor.bodies[0]["datafile"] == DATAFILE
+    assert vendor.bodies[0]["parameters"] == [dict(p, defVal=v) for p, v in
+                                              zip(PARAMETERS, ["-999999999", "999999999", "'2026-10-01'", "'2026-10-31'"])]
+    assert scan(r.text, VALUES) == [] and no_definition_in(r.text)
+    # the same with the company named, and an explicit null
+    assert ask(client, {"month": "2026-02", "company": "demo"})[1]["ok"] is True
+    assert vendor.bodies[1]["parameters"][3]["defVal"] == "'2026-02-28'"
+    assert ask(client, {"month": "2026-11", "company": None})[1]["ok"] is True
+
+
+def test_without_the_secret_the_probe_says_not_set_and_calls_nobody(probe, monkeypatch):
+    client, vendor = probe
+    monkeypatch.delenv("WIZ_LEDGER_REPORT")
+    _, body = ask(client, {"month": "2026-10"})
+    assert (body["ok"], body["error"]) == (False, "not_set") and vendor.requests == []
+
+
+def test_a_bad_definition_says_its_reason_and_calls_nobody(probe, monkeypatch):
+    client, vendor = probe
+    monkeypatch.setenv("WIZ_LEDGER_REPORT", json.dumps({**DEFINITION, "parameters": _without("תאריך1", "to")}))
+    r, body = ask(client, {"month": "2026-10"})
+    assert (body["error"], body["reason"]) == ("bad_definition", "no_date_to")
+    assert vendor.requests == [] and no_definition_in(r.text)
+
+
+@pytest.mark.parametrize("content", [
+    b"", b"{not json", b"\xff\xfe", b"[]", b'"2026-10"', b'{"month": "2026-13"}', b'{"month": 202610}',
+    b'{"month": "2026-10", "company": "evilcorp"}', b'{"month": "2026-10", "company": 5}', b'{"company": "demo"}',
+])
+def test_a_body_that_is_not_one_is_bad_request_and_never_echoed(probe, content):
+    client, vendor = probe
+    r, body = ask(client, content=content)
+    assert (body["ok"], body["error"]) == (False, "bad_request")
+    assert "evilcorp" not in r.text and "202610" not in r.text and vendor.requests == []
+
+
+def test_the_deployment_reaches_only_its_own_company(probe, monkeypatch):
+    client, vendor = probe
+    _, body = ask(client, {"month": "2026-10", "company": "analiza"})
+    assert (body["ok"], body["error"], body["company"], body["asked"], body["month"]) == (
+        False, "other_company", "demo", "analiza", "2026-10")
+    monkeypatch.setenv("WIZ_COMPANY", "analiza")
+    _, body = ask(client, {"month": "2026-10", "company": "demo"})
+    assert (body["error"], body["company"]) == ("other_company", "analiza")
+    assert vendor.requests == []
+    _, body = ask(client, {"month": "2026-10"})
+    assert (body["ok"], body["company"]) == (True, "analiza")
+    assert vendor.requests[0].url.path == "/createSession/" + KEY + "/wizdb2245n5"
+
+
+def test_a_vendor_error_says_its_kind_and_word_and_never_the_datafile(probe):
+    client, vendor = probe
+    vendor.status = 500
+    echo = f"Error: params not found or not match {DATAFILE[:40]} near {DATAFILE[100:120]} / {DATAFILE[300:313]}"
+    vendor.text = json.dumps({"statusCode": 500, "status": {"errors": echo}})
+    r, body = ask(client, {"month": "2026-10"})
+    assert (body["error"], body["status"], body["vendor"]) == ("http_error", 500, "params_mismatch")
+    assert body["detail"].startswith("Error: params not found or not match ***") and no_definition_in(r.text)
+    vendor.status = 200
+    vendor.text = json.dumps({"statusCode": 500, "status": {"errors": "Data not found"}})
+    _, body = ask(client, {"month": "2026-10"})
+    assert (body["error"], body["vendor"], body["detail"]) == ("http_error", "data_not_found", "Data not found")
+    vendor.text = "<html>" + "ישראל ישראלי 48213.77 " * 30 + "</html>"
+    r, body = ask(client, {"month": "2026-10"})
+    assert body["error"] == "bad_response" and scan(r.text, VALUES) == []
+
+
+def test_an_answer_without_rows_is_bad_answer_with_its_shape(probe):
+    client, vendor = probe
+    vendor.answer = {"statusCode": 200, "status": "data not found"}
+    _, body = ask(client, {"month": "2026-10"})
+    assert (body["error"], body["vendor"], body["describe"]["rows"]) == ("bad_answer", "data_not_found", None)
+    assert body["describe"]["answer"]["keys"] == {"status": "text", "statusCode": "number"}
+    vendor.answer = {"statusCode": 200, "repdata": []}
+    _, body = ask(client, {"month": "2026-10"})
+    assert (body["ok"], body["error"], body["describe"]["rows"]) == (True, None, 0)
+
+
+def test_the_call_is_boxed_like_a_tick(probe, monkeypatch):
+    from app import main
+
+    client, vendor = probe
+    monkeypatch.setattr(main, "REQUEST_BOX_S", 2)
+    monkeypatch.setattr(main, "FINISH_RESERVE_S", 2)  # the deadline is the request's arrival: nothing may start
+    _, body = ask(client, {"month": "2026-10"})
+    assert body["error"] == "network" and "time box" in body["detail"]
+    assert vendor.requests == []
+
+
+def test_a_crash_is_said_by_its_class_only(probe, monkeypatch):
+    client, _ = probe
+
+    def boom(*args, **kwargs):
+        raise ValueError("ישראל ישראלי 48213.77")
+
+    monkeypatch.setattr(ledger, "describe", boom)
+    r, body = ask(client, {"month": "2026-10"})
+    assert (body["error"], body["detail"]) == ("crashed", "ValueError") and scan(r.text, VALUES) == []
+
+
+def test_nothing_of_the_answer_or_the_definition_is_logged(probe, caplog):
+    client, vendor = probe
+    caplog.set_level(logging.DEBUG)
+    assert ask(client, {"month": "2026-10"})[1]["ok"] is True
+    vendor.status = 500
+    vendor.text = json.dumps({"statusCode": 500, "status": {"errors": "params not found or not match " + DATAFILE[:60]}})
+    assert ask(client, {"month": "2026-10"})[1]["ok"] is False
+    assert scan(caplog.text, VALUES) == [] and no_definition_in(caplog.text) and KEY not in caplog.text
+
+
+def test_health_says_only_set_missing_or_bad(probe, monkeypatch):
+    client, _ = probe
+    monkeypatch.delenv("DATABASE_URL")
+    r = client.get("/health")
+    assert r.json()["books"]["ledger_report"] == "set"
+    for leak in (DATAFILE[:12], "__MUSTACH_P0__", "קוד מיון1", "חובה שקל", "1.2.0"):
+        assert leak not in r.text
+    monkeypatch.setenv("WIZ_LEDGER_REPORT", "{\"datafile\": \"" + DATAFILE + "\"}")
+    r = client.get("/health")
+    assert r.json()["books"]["ledger_report"] == "bad" and DATAFILE[:12] not in r.text
+    monkeypatch.delenv("WIZ_LEDGER_REPORT")
+    assert client.get("/health").json()["books"]["ledger_report"] == "missing"

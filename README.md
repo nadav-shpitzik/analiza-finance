@@ -39,6 +39,7 @@
 | `BOOKS_SYNC_KEY` | **כן**, ב-Secrets של ה-Repl (ובמייק, ב-keychain) | מפעיל ריצה של העותק וקורא את הסטטוס שלו |
 | `MONDAY_TOKEN` | **כן**, ב-Secrets של ה-Repl | טוקן monday לקריאה בלבד (R0, ושולחן הכספים) |
 | `MONDAY_CLIENT_SECRET` | **כן**, ב-Secrets של ה-Repl | ה-Client Secret של אפליקציית monday: מאמת את ה-sessionToken של התצוגה "כספים" (D1) |
+| `WIZ_LEDGER_REPORT` | **כן**, ב-Secrets של ה-Repl | קובץ ה-External של דוח הכרטסת, כל ה-JSON כמחרוזת אחת (B3). ‏`/health` אומר רק `set`, ‏`missing` או `bad` |
 | `GITHUB_DEPLOY_TOKEN` | **כן**, סוד חשבון של Replit, מקושר לאפליקציה | קריאת `main` מ-GitHub בבנייה |
 | `WIZ_COMPANY` | לא | `demo` (ברירת מחדל, `wizdb2245n4`) או `analiza` (`wizdb2245n5`, אנליזה מודיעין סייבר) |
 | `WIZ_SERVER` | לא | ברירת מחדל `lb19.wizcloud.co.il` |
@@ -161,6 +162,37 @@ Postgres, אחרי קריאה חוזרת של השורה, כך שמופע שמח
    השורות נושאות ואילו חסרים, כמה קודי מיון שונים, כמה חודשים בטור התאריך וכמה שורות מחוץ לחודש שנשאל (כך נראה חתך שלא נקלט), ואם
    החובה והזכות הם מספרים. **אף ערך משורה:** מפתח שאינו של ההגדרה ואינו שם שדה פשוט נספר ולא נאמר, וטסט סורק כל פלט לכל ערך של נתוני
    הדוגמה, ומוכיח שהסריקה תופסת דליפה.
+
+**הבדיקה** היא `POST /api/books/ledger/probe`, מאחורי `BOOKS_SYNC_KEY` (המפתח נבדק לפני שהגוף נקרא), עם הגוף
+`{"month": "2026-10", "company": "demo"}` (החברה לא חובה). אחרי המפתח התשובה תמיד 200: `ok`, ‏`error` מרשימה סגורה (`PROBE_ERRORS`:
+`bad_request`, ‏`other_company`, ‏`not_set`, ‏`bad_definition`, אחד מ-`KINDS`, ‏`bad_answer`, ‏`crashed`), ‏`describe`, ‏`vendor` (המילה של
+הספק כשהוא אומר אחת מהמתועדות: `params_mismatch`, ‏`data_not_found`, ‏`no_permission`) ו-`request_s`. הקריאה בקופסה של הסבב, 60 שניות
+מרגע הבקשה, ודבר מהתשובה לא נשמר ולא נרשם בלוג.
+
+**הפריסה מגיעה רק לחברה שלה** (`WIZ_COMPANY`, היום `analiza`): יש לה מחרוזת התחברות אחת, של החברה הזאת, ובקשה לחברה אחרת עונה
+`other_company`. לכן, לפי כלל 3, ‏Demo נבדק קודם מה-Shell של ה-Repl, בשרת מקומי עם `WIZ_COMPANY=demo`. המחרוזת של Demo נשמרת אז במסד
+הפיתוח, ואין שינוי סכימה:
+
+```bash
+bash scripts/sync-from-github.sh && pip install -q -r requirements.txt
+WIZ_COMPANY=demo python3 -m uvicorn app.main:app --port 8765 --log-level warning >/dev/null 2>&1 &
+for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+curl -s -X POST http://127.0.0.1:8765/api/books/ledger/probe -H "Authorization: Bearer $BOOKS_SYNC_KEY" -H "Content-Type: application/json" -d '{"month": "2026-10", "company": "demo"}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=1))'
+kill $!
+```
+
+ואחר כך אנליזה, מהפריסה:
+
+1. נחיתה ב-`main`, ו-Republish (שינוי קוד בלבד).
+2. ‏`/health`: ‏`build.sha` הוא של `main`, ו-`books.ledger_report` הוא `set` (אחרת ה-Secret לא הגיע לפריסה).
+3. מה-Shell:
+
+```bash
+curl -s -X POST https://analiza-finance.replit.app/api/books/ledger/probe -H "Authorization: Bearer $BOOKS_SYNC_KEY" -H "Content-Type: application/json" -d '{"month": "2026-10", "company": "analiza"}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=1))'
+```
+
+איך קוראים את התשובה: `vendor: "params_mismatch"` אומר שהספק לא קיבל את הפרמטרים (הצורה של התאריך היא החשודה הראשונה). ‏`date.months`
+מעל 1, או `date.outside_month` מעל 0, אומרים שחתך התאריך לא נקלט. ‏`hit_limit` אומר שהחודש נחתך במגבלה של הדוח.
 
 ## הקריאה של ההצלבה מ-monday (R0)
 

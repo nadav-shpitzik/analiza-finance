@@ -74,7 +74,12 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   settles**. `describe` says an answer's shape only: keys and types, the row count and `hit_limit`, the columns carried and
   missing, distinct sort codes and months, rows outside the month asked, whether debit and credit are numeric. A key that is
   neither the definition's nor a plain field name is counted, never said, and `tests/test_ledger.py` scans every output for
-  every fixture value (and proves the scan sees a leak). Nothing is kept yet; no schema change.
+  every fixture value (and proves the scan sees a leak). The probe is `POST /api/books/ledger/probe` behind the sync key
+  (checked before the body is read), `{"month": "YYYY-MM", "company": ...}`: always 200 after the key, with an `error` from
+  `PROBE_ERRORS`, boxed like a tick, nothing of the answer kept or logged. **The deployment reaches only `WIZ_COMPANY`**
+  (`other_company`; one session, the tick's), so Demo is probed from the Repl's Shell on a local server (the README has
+  both commands). `/health` `books.ledger_report`: `set`, `missing` or `bad`, never a field. Nothing is kept yet; no schema
+  change.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
   `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
   bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the

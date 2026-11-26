@@ -44,6 +44,9 @@ class Config:
     # feature of analiza-metrics' app (the desk move plan §2, option A), so the value is the one analiza-metrics holds.
     # Reported as set or not, never shown.
     monday_client_secret: str = field(default="", repr=False)
+    # The ledger report's External file (B3, ADR-0187 §6): the whole JSON of "כרטסת לאנליזה" as one Replit Secret, never in
+    # git. Its `datafile` is the report itself. /health says set, missing or bad (app/books/ledger.py), never a field of it.
+    ledger_report: str = field(default="", repr=False)
 
     @property
     def ok(self) -> bool:
@@ -76,5 +79,6 @@ def load(env: Optional[Mapping[str, str]] = None) -> Config:
         monday_token=(env.get("MONDAY_TOKEN") or "").strip(),
         # trimmed: a newline pasted with a secret is a 401 on every open with nothing on screen to say why
         monday_client_secret=(env.get("MONDAY_CLIENT_SECRET") or "").strip(),
+        ledger_report=(env.get("WIZ_LEDGER_REPORT") or "").strip(),
     )
 
