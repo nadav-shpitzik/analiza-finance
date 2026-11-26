@@ -594,7 +594,7 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
         return _unavailable(st)
     taken_at = reading.get("read_at")
     shown = _instant(taken)
-    part = st.books.current()  # the books' part as held: nothing is read
+    part = st.books.current(_cfg)  # the books' part as held: nothing of the books is read, the dismissals at most every 15 s
     if shown is None or _instant(taken_at) is None or shown != _instant(taken_at) \
             or (books and (part is None or books != part.get("key"))):
         audit(visitor.identity, "desk-totals", "other_reading")
@@ -776,7 +776,7 @@ def _export_parts(cfg: config.Config, st: Any, u: int, tab: str, state: str, per
     if whole is None:
         return _unavailable(st, error)
     # D3: the books' part the page shows, held; asked of the copy only on an instance that holds none for any reading
-    part = st.books.current()
+    part = st.books.current(cfg)   # held; the live dismissals read again past RUN_CHECK_S (a press on another instance)
     whole = _merged(st, reading, whole, part) if part is not None else _with_books(cfg, st, reading, whole)
     try:
         rows = _filtered(whole, tab, state, period, customer, q)

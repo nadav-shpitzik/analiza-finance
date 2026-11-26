@@ -456,6 +456,25 @@ def test_the_dismissals_are_read_with_the_copys_run_and_a_change_of_them_alone_c
     assert b.answer(CFG, reading, view) is shown and b.current() is shown        # nothing moved: the same part
 
 
+def test_the_files_and_the_totals_see_another_instances_press_within_the_same_bound_as_the_desk():
+    """The review of 26.11: `current()` - the part the totals and both Excel files take - never read the dismissals, so a
+    file asked of this instance after a press on another kept the alert until this instance's own desk was asked again.
+    With the config it reads them again past RUN_CHECK_S, and shows the same computation by them (nothing recomputed)."""
+    mem = MemoryDismissals()
+    b, store, tick = desk_books(mem)
+    reading, view = a_reading()
+    part = b.answer(CFG, reading, view)
+    mem.dismiss(COMPANY, "books_ref_invalid", "8", alerts(part)[("books_ref_invalid", "8")], 9)   # another instance's press
+    assert b.current(CFG) is part and mem.calls["live"] == 1          # read a moment ago: within the bound, as the desk
+    assert b.current() is part                                        # no config: the part as held, nothing read
+    tick.t += db.RUN_CHECK_S + 1
+    shown = b.current(CFG)
+    assert shown is not part and ("books_ref_invalid", "8") not in alerts(shown) and mem.calls["live"] == 2
+    assert [x["by"] for x in shown["hidden"]["b2c"]] == [9] and (store.runs, store.snapshots) == (1, 1)
+    assert b.current(CFG) is shown and mem.calls["live"] == 2         # read again only past the bound
+    assert b.answer(CFG, reading, view)["key"] == shown["key"]        # the desk shows that same part
+
+
 def test_a_held_part_is_shown_by_the_dismissals_too():
     mem = MemoryDismissals()
     b, store, tick = desk_books(mem)

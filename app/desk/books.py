@@ -947,6 +947,7 @@ class DeskBooks:
         self.make_dismissals = make_dismissals
         self._live: Optional[tuple] = None
         self._live_trace: dict = {"read_at": None, "error": None}
+        self._live_at: Optional[float] = None  # when the live dismissals were last read (this instance's clock)
         self.part: Optional[dict] = None  # the part last answered
         self._key: Optional[tuple] = None  # what self.part was answered for
         self._store_failed_at: Optional[float] = None
@@ -954,8 +955,25 @@ class DeskBooks:
         self._computations = 0  # how many parts this instance computed: each names its own (the part's key)
         self.trace: dict = {"computed_at": None, "seconds": None, "error": None}
 
-    def current(self) -> Optional[dict]:
-        return self.part
+    def current(self, cfg: Any = None) -> Optional[dict]:
+        """The part last answered; the totals and the files take it, and never read the copy or monday. With `cfg`, the live
+        dismissals are read again first when the last read is RUN_CHECK_S old or more, and the part is shown by them - no
+        computation (`_reshown`): a file asked of an instance after a press on another holds it hidden, as the desk of that
+        instance would within RUN_CHECK_S (the review of 26.11: this instance's files kept the alert until its own desk was
+        asked again). A request that cannot take the lock at once gets the part as it is."""
+        if cfg is None or self.make_dismissals is None or self.part is None or not getattr(cfg, "database_url", ""):
+            return self.part
+        if not self._lock.acquire(blocking=False):
+            return self.part
+        try:
+            t = self.clock()
+            if self._live_at is None or not 0 <= t - self._live_at < RUN_CHECK_S:
+                self._read_live(cfg)
+                self._live_at = t
+                self.part = self._current(self._reshown(self.part))
+            return self.part
+        finally:
+            self._lock.release()
 
     def answer(self, cfg: Any, reading: dict, view: dict, may_read: bool = True) -> dict:
         """The part for this reading. `may_read` false (an answer at once, D2's `refreshing`): monday is never read for it -
@@ -1044,6 +1062,7 @@ class DeskBooks:
             return self._store_failed(exc)
         self._checked_at = self.clock()
         self._read_live(cfg)
+        self._live_at = self._checked_at
         self._sync()
         key = (reading.get("read_at"), run[0] if run else None)
         if self._key == key and self.part is not None:

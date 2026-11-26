@@ -300,7 +300,7 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the server in `compute` and carried on each alert; never a word, a name or a card key. A number two documents of one
   list carry (FR-3) names neither: neither carries evidence, so neither is pressed, hidden or "חזר". `DeskBooks` reads the live
   dismissals with the copy's run (once per computation, at most every RUN_CHECK_S: another instance's press shows within
-  that) and shows its last whole computation by them (`hide`): out of the marks, the lists, the row and "לטיפול" and its
+  that; the totals and both Excel files too, through `current(cfg)`, the review of 26.11) and shows its last whole computation by them (`hide`): out of the marks, the lists, the row and "לטיפול" and its
   counts; under `hidden` of its tab's books part (or `books_unclear`) with who and when, a proposal only where proposals are
   laid; `hidden_counts` and `returned_counts` by kind. An alert whose live dismissal holds other evidence is shown with
   `returned` ("חזר"); one whose alert is gone hides nothing and stays live. When only the dismissals changed nothing is
