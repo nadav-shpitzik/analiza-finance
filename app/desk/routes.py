@@ -70,7 +70,7 @@ from .. import config
 from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
 from . import dismissals as dz
-from .books import BOOKS_KEY_MAX, DeskBooks, merge as books_merge
+from .books import BOOKS_KEY_MAX, DeskBooks, merge as books_merge, receipts_split
 from .cohorts import VIEW_WORD as COHORTS_WORD, cohort_totals, filter_cohorts, filter_unpriced
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
 from .reading import B2B_CHARGE, STUDENT_CHARGE, TAB_BOARDS, HeldReading
@@ -575,7 +575,9 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
     same gate and the same filters as the Excel file. Only from the reading the page shows (`taken`): this route never
     reads monday, and when this instance holds another reading it says so (`other_reading`) instead of a total that does
     not belong to the rows on the screen (analiza-metrics `finance_totals`, review 10.11). D3: and of the books' part the
-    page shows (`books`, its key), since "לטיפול" holds the rows the books mark: another part is `other_reading` too."""
+    page shows (`books`, its key), since "לטיפול" holds the rows the books mark: another part is `other_reading` too.
+    Nadav 26.11: for the list "שולם, שליחת קבלה: טרם", also how many of its rows the books hold a receipt of, how many none
+    was identified of, and how many they cannot say of now (`receipts`, app/desk/books.py `receipts_split`)."""
     got = _gated(request, "desk-totals")
     if isinstance(got, JSONResponse):
         return got
@@ -607,7 +609,10 @@ def desk_totals(request: Request, tab: str = "b2c", state: str = "", period: str
         return err(400, "bad_filter")
     audit(visitor.identity, "desk-totals", "ok", len(rows))
     sums = cohort_totals(rows) if tab == "b2c_cohorts" else list_totals(tab, rows)
-    return JSONResponse(json_safe({"count": len(rows), "sums": sums, "taken_at": taken_at}))
+    out = {"count": len(rows), "sums": sums, "taken_at": taken_at}
+    if tab == "b2c" and state == "receipt_pending":   # Nadav 26.11: the queue's line, counted here only
+        out["receipts"] = receipts_split(rows)
+    return JSONResponse(json_safe(out))
 
 
 class ExportBody(BaseModel):

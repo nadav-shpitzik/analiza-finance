@@ -497,4 +497,8 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
    list's head */
 #screen-finance .fin-idsnote { padding: 0 16px 10px; font-size: 13px; line-height: 1.5; }
 /* how long a pending receipt has waited, beside its date (Nadav 26.11) */
-.fin-waited { color: var(--fin-approval); white-space: nowrap; }
+#screen-finance .fin-waited { color: var(--fin-approval); white-space: nowrap; }
+/* what the books say of a pending receipt, beside "טרם" and in its details, and the queue's line (Nadav 26.11) */
+#screen-finance .fin-rcpt { color: var(--fin-muted); white-space: nowrap; }
+#screen-finance .fin-rcpt-issued { color: var(--fin-paid); }
+#screen-finance .fin-rcpt-line { margin: 4px 0 0; font-size: 13px; }

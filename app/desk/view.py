@@ -346,6 +346,17 @@ _BOOKS_UNCLEAR = (BOOKS_UNCLEAR_TITLE + " · " + BOOKS_UNCLEAR_WHY,
 # under the "מקרא" button. A term that holds several words separates them with " · ".
 # 1. The words the desk computes itself, and only those: anything monday holds is called by its monday name (round 3,
 #    the one-name norm), so it needs no entry here - except where it comes from (part 4).
+# Nadav 26.11 (receipts go out slowly): beside "שליחת קבלה: טרם", what the books say of the receipt (app/desk/books.py
+# `receipt_in_books`, laid by `merge` from a current part of this reading). Never "בחשבשבת: ..." alone: that is the
+# proposal's chip (`_BOOKS_REF_FILL`), and a row may carry both
+RECEIPT_ISSUED_SAID = "הופקה בחשבשבת: %s"
+RECEIPT_UNSEEN_SAID = "לא זוהתה בחשבשבת"
+RECEIPT_HOW_SAID = {
+    "cited": "המספר באסמכתת חשבונית הוא חשבונית מס/קבלה תקפה בחשבשבת",
+    "found": ("בחשבשבת יש חשבונית מס/קבלה תקפה אחת בשם ובסכום של התקבול, עד %d יום מהתאריך שלו, ששום שורה לא מפנה "
+              "אליה" % FILL_WINDOW_DAYS)}
+RECEIPT_UNSEEN_WHY = ("אין בחשבשבת מספר, שם וסכום שמתאימים לתקבול. זה לא אומר בוודאות שלא הופקה קבלה: אולי היא בשם אחר "
+                      "או בסכום אחר")
 LEGEND = {
     "b2c": [
         ("תקבול", "שורה אחת בלוח Student Charge: תשלום אחד של סטודנט/ית."),
@@ -417,6 +428,13 @@ LEGEND = {
          "ובמסמכים מ-%s ואילך: מה שלפני כן מטופל בנפרד." % (_q(BOOKS_PROPOSAL), _q(BOOKS_FILL_BUTTON),
                                                           _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
+        # Nadav 26.11 (receipts go out slowly): the queue "שולם, שליחת קבלה: טרם" split by what the books say
+        ("%s · %s" % (RECEIPT_ISSUED_SAID % "...", RECEIPT_UNSEEN_SAID),
+         "ליד %s של תקבול ב%s, ובפרטים שלו. %s: %s, או ש%s. כלומר הקבלה כבר הופקה, ונשאר לסמן במאנדיי ששליחת הקבלה "
+         "יצאה. %s: %s. מעל הרשימה כתוב כמה מכל אחד. בלי השוואה עדכנית לחשבשבת לא כתוב אף אחד מהשניים."
+         % ('"שליחת קבלה: %s"' % RECEIPT[R_PENDING], _q("%s, שליחת קבלה: %s" % (PAY[P_PAID], RECEIPT[R_PENDING])),
+            _q(RECEIPT_ISSUED_SAID % "..."), RECEIPT_HOW_SAID["cited"], RECEIPT_HOW_SAID["found"],
+            _q(RECEIPT_UNSEEN_SAID), RECEIPT_UNSEEN_WHY)),
         # R5 (app/desk/dismissals.py): what the books say, hidden by a person while its evidence is the same
         (" · ".join((NAG_WORD, NAG_FILL_WORD, NAG_LIST_WORD, NAG_BACK_WORD)),
          "%s ליד סימון של חשבשבת בפרטים של תקבול ולצד מסמך ברשימה של מסמכים בלי חיוב, ו%s ליד הצעה של חשבשבת: מסתיר אותם "

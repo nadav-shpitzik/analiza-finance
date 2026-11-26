@@ -466,7 +466,7 @@
     } },
     channel: { h: "ערוץ תשלום", xs: 1, c: function (r) { return lbl(r, "channel"); } },
     invoice: { h: "אסמכתת חשבונית", xs: 1, c: function (r) { return ltr(r.invoice) || NOT_SET; } },
-    receipt: { h: "שליחת קבלה", xs: 1, c: function (r) { return lbl(r, "receipt"); } },
+    receipt: { h: "שליחת קבלה", xs: 1, c: function (r) { return lbl(r, "receipt") + receiptMark(r); } },
     /* in "חריג, לבדיקה" only when one of its rows has an approved refund (QA 1.1: the 4,000 to credit showed nowhere) */
     to_refund: { h: "סכום לזיכוי", n: 1, t: "credit_approved", opt: function (r) { return num(r.credit_approved) > 0; },
       c: function (r) { return num(r.credit_approved) ? money2(r.credit_approved) : NOT_SET; } },
@@ -601,6 +601,36 @@
     var n = daysFrom(r.date);
     if (n === null || n > 0) { return ""; }
     return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
+  }
+  /* Nadav 26.11 (receipts go out slowly): beside "טרם" of a payment in "שולם, שליחת קבלה: טרם", what the books say of its
+     receipt - issued there, so only monday is behind ("הופקה בחשבשבת: 62601"), or none identified there ("לא זוהתה
+     בחשבשבת"); the words and their title the server's (app/desk/books.py receipt_laid, laid only from a current part of
+     this reading), so nothing at all when the books are not laid */
+  function receiptMark(r) {
+    var b = r.state === "receipt_pending" ? r.receipt_books : null;
+    if (!b || !b.text) { return ""; }
+    return " <span class=\"fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
+      esc(b.text) + "</span>";
+  }
+  /* the queue's line under its sentence: of its rows, how many the books already hold a receipt of and how many none was
+     identified of - every number the server's (GET /api/desk/totals `receipts`, counted once, app/desk/books.py
+     receipts_split); nothing until the totals land, and for a total of another reading */
+  var RECEIPTS_UNKNOWN = "מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע: אין השוואה עדכנית של הקריאה הזו לחשבשבת.";
+  function receiptsLine(t) {
+    if (!t || t.failed || t.other_reading || !t.receipts) { return ""; }
+    var x = t.receipts, n = x.issued + x.not + x.unknown, out = [];
+    if (!n) { return ""; }
+    if (x.unknown) { return "<p class=\"fin-rcpt-line\">" + esc(RECEIPTS_UNKNOWN) + "</p>"; }
+    if (x.issued) {
+      out.push((x.issued === n ? (n === 1 ? "הקבלה עליו כבר הופקה" : "הקבלות על כולם כבר הופקו")
+        : x.issued === 1 ? "לאחד מהם הקבלה כבר הופקה" : "ל-" + NF.format(x.issued) + " מהם הקבלה כבר הופקה") +
+        " בחשבשבת: נשאר לסמן במאנדיי.");
+    }
+    if (x.not) {
+      out.push((x.not === n ? (n === 1 ? "לא זוהתה עליו קבלה" : "לאף אחד מהם לא זוהתה קבלה")
+        : x.not === 1 ? "לאחד מהם לא זוהתה קבלה" : "ל-" + NF.format(x.not) + " מהם לא זוהתה קבלה") + " בחשבשבת.");
+    }
+    return "<p class=\"fin-rcpt-line\">" + esc(out.join(" ")) + "</p>";
   }
   function waitedMark(r) {
     var t = waitedText(r);
@@ -949,7 +979,7 @@
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>" +
-        (waitedText(r) ? " · " + waitedText(r) : "");
+        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptMark(r) ? " ·" + receiptMark(r) : "");
       /* the two dates side by side: the legal day and its lateness, then the transfer round set at approval. The amount is
          monday's "סכום לזיכוי", never a word of its own (QA 2.5: "להחזיר") */
       case "refund_to_execute": return "<b>סכום לזיכוי " + money2(r.credit_approved) + "</b> · " + LAST_DAY_LABEL + " " +
@@ -1032,9 +1062,14 @@
        one made here. "לטיפול" mixes money in and refunds to make, so it has none */
     var sum = q ? "" : one ? " · " + money(p.states[one].money) : !key ? " · " + money(p.money_in) : "";
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
+    /* a search's totals are of every payment it found, as its Excel file (exportList); D3: of the books' part on the screen */
+    var tp = { tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() };
+    if (VIEW.books && VIEW.books.key) { tp.books = VIEW.books.key; }
+    var tot = { body: totalsFor(tp), what: ["תקבול אחד", "תקבולים"] };
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
-      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" + scViews() +
+      "</div>" + (found ? found.about : aboutHtml("b2c", key)) +
+      (key === "receipt_pending" && !q && rows.length ? receiptsLine(tot.body) : "") + "</div><div class=\"fin-actions\">" + scViews() +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button>" + idsButton(rows) + "</div></div>" + idsNote();
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
@@ -1045,10 +1080,6 @@
       ["סטודנטים", NF.format(p.students)]], "הסכומים כולל מע\"מ", periodSelect());
     /* an asterisk is explained under the list that shows it, and only when it does */
     var guessed = cols.indexOf("refunded") !== -1 && rows.some(refundGuessed);
-    /* a search's totals are of every payment it found, as its Excel file (exportList); D3: of the books' part on the screen */
-    var tp = { tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() };
-    if (VIEW.books && VIEW.books.key) { tp.books = VIEW.books.key; }
-    var tot = { body: totalsFor(tp), what: ["תקבול אחד", "תקבולים"] };
     var list = rows.length ? table(rows, cols, detailHtml, null, exportable() ? tot : null) + listNotes([
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");
