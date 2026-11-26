@@ -31,8 +31,14 @@ WHERE EACH NUMBER COMES FROM (the backlog, from the runbook voucher-completion-p
    counts as "התקבלו" less "הוחזרו" (app/desk/view.py `_b2c_row`, its money reused, never forked: only a status that brought
    money in, a refund netted, never above what came in). The deposit, and the balance row the helper opens when sales mark
    "אושר - יתרה שולמה", "<student> | השלמת תשלום". A row linked to the enrollments of two students, or of two cohorts, is
-   counted for no one and said on each cohort it names (`shared`): it would be counted twice otherwise. A payment the desk
-   files under the cohort by its lead, with no enrollment, is said on the cohort (`unlinked`) and counted for no student.
+   counted for no one and said on each cohort it names (`shared`): it would be counted twice otherwise.
+   - A payment the desk files under the cohort by its lead, with no enrollment (born before the lead was converted, and not
+     yet linked: backlog 0105 counted 63 of 417 on 03.09): the student's whose enrollment in the cohort links to its lead
+     (Enrollments' "קישור לליד", `EN["lead"]`, the conversion's back-link), or who is its lead's person (Leads' "Student
+     Directory", `LD["person"]`) or its own enrollment's - when exactly one student of the cohort is (`_lead_payer`),
+     whatever their standing, and said on them (`by_lead`). None, or two: it is no student's, so no balance holds it, and
+     it is said on the cohort (`unlinked`), its line too, as money that came in for the cohort and left no balance smaller
+     (the review of D4: a guess would hide money still to collect).
 4. WHERE THE BALANCE IS: the price less what the student paid, never below 0 (more is `overpaid`, said, and never netted
    against another student's balance). It sits in one part by the voucher status (`color_mm5fr6d6`, by INDEX, never by its
    text; the runbook's live set): PARTS, in Chava's order (her answer of 26.11) - "אושר - ממתין לתשלום" (1) first,
@@ -66,7 +72,7 @@ from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from typing import Any, Optional
 
-from .reading import CO, COHORT_CANCELLED, EN, SC, _uniq, on_track
+from .reading import CO, COHORT_CANCELLED, EN, LD, SC, _uniq, on_track
 from .view import UNNAMED_LABEL, VOUCHER, ZERO, _cohort_meta, _dsum, _q, label_of
 
 # The enrollment's Status (color_mm0sxcvn) that is in the count, by index: the helper's "IN" set
@@ -141,7 +147,9 @@ LEGEND = [
                                            _IN_LABELS)),
     (OVERPAID_WORD, "סטודנט/ית ששילם/ה יותר מהמחיר: היתרה 0, והעודף מוצג ליד השם ובשורת המחזור, ולא מקטין יתרה של אחר/ת."),
     ("סכום מחוק", "ב%s: מה ששילם/ה סטודנט/ית עם ויתור או מחוץ לחשבון. מוצג, ולא נספר בשורת המחזור." % PAID_WORD),
-    (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה: לא נספרים לאף סטודנט/ית."),
+    (UNLINKED_WORD, "תקבולים שהמסך משייך למחזור לפי הליד מקור, כי אין להם הרשמה, ואין לדעת של מי מהסטודנטים הם: אף "
+                    "הרשמה במחזור לא מקושרת לליד שלהם או לאדם שלו, או יותר מאחת. הם לא יורדים מאף יתרה, ולכן היתרה של "
+                    "המחזור עשויה להיות גדולה ממה שבאמת חסר. מוצגים בשורת המחזור."),
     (SHARED_WORD, "תקבול שמקושר להרשמות של כמה סטודנטים, או של כמה מחזורים: לא נספר לאף אחד, כדי שלא ייספר פעמיים."),
     (UNPRICED_TITLE, "מחזורים במסלול %s בלי מחיר, שהמחיר בהם אינו מספר אחד או 0, או שבוטלו: מוצגים עם הסיבה, בלי צפי "
                      "ובלי יתרה." % _q(TRACK_LABEL)),
@@ -155,13 +163,17 @@ NOTES = {"voucher_conflict": "בהרשמות של הסטודנט/ית שני ס�
          "voucher_unknown": "תווית שובר שהמסך לא מכיר",
          "payment_uncounted": "תקבול שהמסך לא סופר בכסף",
          "overpaid": OVERPAID_WORD,
-         "enrollments": "כמה הרשמות במחזור"}
+         "enrollments": "כמה הרשמות במחזור",
+         "by_lead": "תקבול לפי הליד"}
 NOTES_SAID = {"voucher_conflict": "לאותו אדם כמה הרשמות במחזור, ובכל אחת סטטוס שובר אחר: היתרה ב%s, עד שיתוקן בהרשמה."
                                   % _q(NO_STATUS_LABEL),
               "voucher_unknown": "בסטטוס השובר תווית שנוספה במאנדיי אחרי שהמסך נבנה: היתרה ב%s." % _q(NO_STATUS_LABEL),
               "payment_uncounted": "לסטודנט/ית תקבול שסכום ששולם בו לא הוקלד, או שבסטטוס התשלום שלו תווית שהמסך לא מכיר: "
                                    "הוא לא נספר ב%s, ולכן היתרה גדולה ממה שבאמת חסר." % _q(PAID_WORD),
-              "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד."}
+              "enrollments": "לאותו אדם כמה הרשמות במחזור: הן סטודנט/ית אחד/ת, והתקבולים של כולן נספרים יחד.",
+              "by_lead": "תקבול שמקושר לליד ולא להרשמה (נוצר לפני ההמרה לסטודנט/ית, והקישור עוד לא נוסף): נספר לסטודנט/ית "
+                         "כי ההרשמה שלה/ו במחזור מקושרת לאותו ליד, או שהליד הוא של אותו אדם, ואין עוד סטודנט/ית כזה/ו "
+                         "במחזור."}
 # said above the table when a line does not tie to its students: a fault of the server's, and the file is not exported
 NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנטים שלו. זו תקלה בשרת, ונדב צריך לבדוק אותה."
 # said in place of the table when the reading could not read the cohorts (app/desk/reading.py COHORTS_UNREAD): what was not
@@ -240,8 +252,9 @@ def _label_said(idx: str, label: str) -> str:
     return label or (UNNAMED_LABEL if idx else "ריק")
 
 
-def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list) -> dict:
-    """One student of a cohort: their enrollments there (id order), what they paid, and where their balance is."""
+def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list, by_lead: frozenset = frozenset()) -> dict:
+    """One student of a cohort: their enrollments there (id order), what they paid, and where their balance is. `by_lead`:
+    the payments of theirs the desk files by their lead (`_lead_payer`), said on them."""
     ins = [e for e in enrollments if not _why_out(e, cohorts_of)]
     first = (ins or enrollments)[0]
     s_idx, s_label = label_of(first, EN["status"])
@@ -281,6 +294,8 @@ def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list
         notes.append("overpaid")
     if len(enrollments) > 1:
         notes.append("enrollments")
+    if any(str(p["id"]) in by_lead for p in payments):
+        notes.append("by_lead")
     return {"id": str(first["id"]), "name": first.get("name") or "", "enrollments": [str(e["id"]) for e in enrollments],
             "status": _label_said(s_idx, s_label), "status_idx": s_idx,
             "voucher": _label_said(v_idx, v_label), "voucher_idx": v_idx,
@@ -288,6 +303,18 @@ def _student(enrollments: list, cohorts_of: dict, price: Decimal, payments: list
             "price": price if counted else None, "paid": paid, "balance": balance, "overpaid": overpaid,
             "payments": [str(p["id"]) for p in payments],
             "notes": [NOTES[k] for k in notes], "flags": notes}
+
+
+def _lead_payer(r: dict, groups: dict, lead_of: dict, lead_person: dict, person_of: dict) -> Optional[str]:
+    """The one student of a cohort (their person key in `groups`) a payment the desk files there by its lead is, or None:
+    those one of whose enrollments in the cohort links to the payment's lead ("קישור לליד"), or who are the person of its
+    lead ("Student Directory") or of its own enrollment (one that names no cohort, so its lead decided) - when exactly one
+    student is. None, or more than one, is no one's (the review of D4: never a guess)."""
+    leads = set(_uniq(r.get(SC["lead"]) or []))
+    persons = {p for x in leads for p in lead_person.get(x, ())} | {
+        person_of[e] for e in _uniq(r.get(SC["enrollment"]) or []) if e in person_of}
+    who = [p for p, es in groups.items() if p in persons or any(lead_of[str(e["id"])] & leads for e in es)]
+    return who[0] if len(who) == 1 else None
 
 
 def _student_order(s: dict) -> tuple:
@@ -370,14 +397,20 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
     built = {str(r["id"]): r for r in rows}
     cohorts_of = {str(e["id"]): _uniq(e.get(EN["cohort"]) or []) for e in enrollments}
     person_of = {str(e["id"]): _person(e) for e in enrollments}
+    lead_of = {str(e["id"]): set(_uniq(e.get(EN["lead"]) or [])) for e in enrollments}     # its "קישור לליד"
+    lead_person = {str(x["id"]): {"P:" + p for p in _uniq(x.get(LD["person"]) or [])}       # a lead's Directory person
+                   for x in snapshot.get("leads") or [] if isinstance(x, dict)}
 
     # each payment to the one (cohort, person) its enrollments name; one that names more is no one's (`shared`)
     paid_by: dict = defaultdict(list)
     shared: dict = defaultdict(list)
+    filed_by_lead: dict = defaultdict(list)   # the payments the desk files under a cohort by their lead: no enrollment
     for r in raw:
         b = built.get(str(r["id"]))
         if b is None:
             continue
+        if b.get("cohort_from") == "lead" and b.get("cohort_id"):
+            filed_by_lead[b["cohort_id"]].append((r, b))
         pairs = list(dict.fromkeys((c, person_of[e]) for e in (str(x) for x in r.get(SC["enrollment"]) or [])
                                    if e in cohorts_of for c in cohorts_of[e]))
         if len(pairs) == 1:
@@ -385,10 +418,6 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         else:
             for c in dict.fromkeys(c for c, _p in pairs):
                 shared[c].append(b)
-    unlinked: dict = defaultdict(list)   # the payments the desk files under a cohort by their lead: no enrollment
-    for b in rows:
-        if b.get("cohort_from") == "lead" and b.get("cohort_id"):
-            unlinked[b["cohort_id"]].append(b)
     held = set(cohorts_of)
     members: dict = defaultdict(list)    # each cohort's enrollments, by their own link, in id order
     for e in enrollments:
@@ -413,11 +442,21 @@ def build_cohorts(snapshot: dict, rows: list) -> dict:
         groups: dict = OrderedDict()
         for e in members[cid]:
             groups.setdefault(person_of[str(e["id"])], []).append(e)
-        students = sorted((_student(es, cohorts_of, price, paid_by.get((cid, p), [])) for p, es in groups.items()),
+        # each student's payments: by their enrollments, and the ones filed here by their lead (`_lead_payer`)
+        theirs = {p: list(paid_by.get((cid, p), [])) for p in groups}
+        unlinked, by_lead = [], set()
+        for r, b in filed_by_lead[cid]:
+            who = _lead_payer(r, groups, lead_of, lead_person, person_of)
+            if who is None:
+                unlinked.append(b)
+            else:
+                theirs[who].append(b)
+                by_lead.add(str(b["id"]))
+        students = sorted((_student(es, cohorts_of, price, theirs[p], frozenset(by_lead)) for p, es in groups.items()),
                           key=_student_order)
         link = _uniq(c.get(CO["roster"]) or [])
         line = dict(head, price=price, students_list=students, **_sums(students),
-                    unlinked={"count": len(unlinked[cid]), "money": _dsum(b["net"] for b in unlinked[cid])},
+                    unlinked={"count": len(unlinked), "money": _dsum(b["net"] for b in unlinked)},
                     shared={"count": len(shared[cid]), "money": _dsum(b["net"] for b in shared[cid])},
                     # the cohort's link names an enrollment the reading did not get, or one whose own link is elsewhere
                     roster_missing=sum(1 for e in link if e not in held),

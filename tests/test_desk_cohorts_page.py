@@ -25,7 +25,7 @@ from app.desk import cohorts as ch
 from app.desk import view as fd
 from app.desk.usage import clean_batch
 from app.desk.view import json_safe
-from tests.desk_fixtures import TODAY, sc, snap
+from tests.desk_fixtures import TODAY, lead, sc, snap
 from tests.desk_page_view import answer as page_answer
 from tests.desk_page_view import view as hand_made_view
 from tests.test_desk_cohorts import coh, cohort_snapshot, enr
@@ -138,6 +138,22 @@ def test_what_an_out_student_paid_is_struck_through_and_a_students_chips_are_the
     assert re.search(r'<s class="fin-subtle" title="[^"]*: לא נספר"><bdi>4,000 ₪</bdi></s>', html)
     assert '<span class="fin-chip">%s</span>' % ch.NOTES["overpaid"] in html
     assert "%s: %s" % (ch.OVERPAID_WORD, "2,000.00 ₪") in html                   # a sentence carries agorot, as the details do
+
+
+def test_money_filed_by_its_lead_that_no_student_holds_is_said_on_the_cohorts_line_shut_or_open():
+    # the review of D4: it left no balance smaller, so the line says it - on the line itself, not only when opened; one a
+    # student holds is said on them
+    s = snap([sc(1, paid="4000", lead=["L1"]), sc(2, paid="3950.5", lead=["L2"])],
+             cohorts=[coh(roster=["E1", "E2"])], enrollments=[enr("E1", voucher="1", lead=["L2"]), enr("E2", voucher="17")],
+             leads=[lead("L1", "C1"), lead("L2", "C1")])
+    v = real_view(s)
+    shut, opened = render([case(), case(cohorts={"C1": True})], v)
+    line = cells_of(shut, "fin-rowbtn")[0]
+    assert line["cohort"].endswith(" · %s 4,000 ₪" % ch.UNLINKED_WORD)
+    assert "%s: תקבול אחד, 4,000.00 ₪" % ch.UNLINKED_WORD in opened
+    assert '<span class="fin-chip">%s</span>' % ch.NOTES["by_lead"] in opened
+    quiet = cells_of(render([case()])[0], "fin-rowbtn")[0]
+    assert ch.UNLINKED_WORD not in quiet["cohort"]
 
 
 def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():

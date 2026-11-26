@@ -982,10 +982,13 @@
     var k = col.key;
     if (k === "cohort") {
       var c = cohortsPart();
+      /* the review of D4: money filed here by its lead that no student holds is said on the line itself, shut or open - it
+         left no balance smaller, so the line's balance may be more than is really missing */
       return itemLink("co", x.id, "fin-name", "<bdi class=\"fin-nw\">" + ltr(x.code) + "</bdi>") + " " + esc(x.title) +
         "<span class=\"fin-sub-said\">" +
         esc(header(c, "price")) + " " + cash(x.price) + " · " + NF.format(x.students) + " " + esc(header(c, "students")) +
-        (x.status ? " · " + esc(x.status) : "") + "</span>";
+        (x.status ? " · " + esc(x.status) : "") +
+        (x.unlinked && x.unlinked.count ? " · " + esc(c.words.unlinked) + " " + cash(x.unlinked.money) : "") + "</span>";
     }
     return num(x[k]) ? cash(x[k]) : NOT_SET;
   }

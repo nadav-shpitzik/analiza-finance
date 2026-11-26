@@ -47,11 +47,12 @@ def _st(row: dict, col: str, idx: str, labels: dict) -> None:
     row[col + "#"] = idx
 
 
-def enr(id_, cohort="C1", voucher="", status_="1", person=None, name=None, cohorts=None) -> dict:
-    """An Enrollments row as the reading holds it: its cohort link, voucher status and Status by index, its person."""
+def enr(id_, cohort="C1", voucher="", status_="1", person=None, name=None, cohorts=None, lead=()) -> dict:
+    """An Enrollments row as the reading holds it: its cohort link, voucher status and Status by index, its person, and its
+    "קישור לליד" (`lead`: the leads it links back to)."""
     r = {"id": str(id_), "name": name or "סטודנט/ית %s" % id_, rd.EN["asked"]: "",
          rd.EN["cohort"]: [str(c) for c in cohorts] if cohorts is not None else ([str(cohort)] if cohort else []),
-         rd.EN["person"]: [str(person)] if person else []}
+         rd.EN["person"]: [str(person)] if person else [], rd.EN["lead"]: [str(x) for x in lead]}
     _st(r, rd.EN["voucher"], voucher, fd.VOUCHER)
     _st(r, rd.EN["status"], status_, STATUS)
     return r
@@ -273,6 +274,81 @@ def test_a_payment_the_desk_files_by_its_lead_is_said_on_its_cohort_and_counted_
     payments = [sc(1, paid="4000", lead=["L1"]), sc(2, paid="4000", enr=["E1"])]
     ln = line(part_of(payments, [coh(roster=["E1"])], [enr("E1", voucher="1")], [lead("L1", "C1")]))
     assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == D("4000") and ln["students"] == 1
+
+
+LEAD_ROUTES = {
+    # the enrollment's "קישור לליד" names the payment's lead (the conversion's back-link)
+    "enrollment_links_the_lead": dict(enrollment={"lead": ["L1"]}, lead={}, payment={}),
+    # the lead's "Student Directory" is the student's person
+    "the_leads_person": dict(enrollment={"person": "P1"}, lead={"person": "P1"}, payment={}),
+    # the payment's own enrollment (no cohort: its lead decided) is the student's person
+    "its_own_enrollment": dict(enrollment={"person": "P1"}, lead={}, payment={"enr": ["E9"]}),
+}
+
+
+@pytest.mark.parametrize("route", sorted(LEAD_ROUTES))
+def test_a_payment_filed_by_its_lead_is_the_one_students_whose_enrollment_or_person_it_shares(route):
+    """The review of D4 (MEDIUM): a deposit filed under the cohort by its lead, with no enrollment (backlog 0105: 63 of
+    417 on 03.09), was money to collect from its student still. It is the student's when the data links exactly one."""
+    how = LEAD_ROUTES[route]
+    payments = [sc(1, paid="4000", lead=["L1"], **how["payment"]), sc(2, paid="4000", enr=["E2"])]
+    rows = [enr("E1", voucher="1", **how["enrollment"]), enr("E2", voucher="17", person="P2"),
+            enr("E9", cohort=None, person="P1")]
+    ln = line(part_of(payments, [coh(price="12,000", roster=["E1", "E2"])], rows, [lead("L1", "C1", **how["lead"])]))
+    one = student(ln, "E1")
+    assert one["payments"] == ["1"] and one["paid"] == D("4000") and one["balance"] == D("8000")
+    assert one["notes"] == [ch.NOTES["by_lead"]] and student(ln, "E2")["notes"] == []
+    assert ln["unlinked"] == {"count": 0, "money": D(0)} and ln["part_approved"] == D("8000")
+    assert ln["paid"] == D("8000") and ln["balance"] == D("16000") and ln["expected"] == D("24000")
+
+
+@pytest.mark.parametrize("who", ["none", "two", "a_counted_and_a_waived"])
+def test_a_payment_filed_by_its_lead_that_no_one_or_two_students_share_is_the_cohorts_and_no_balance_holds_it(who):
+    """None of the cohort's students, or more than one, shares the payment's lead or person: never a guess. It is said on
+    the cohort (`unlinked`) and no student's balance is smaller for it. Two that share it include a waived one: a waived
+    student is a student of the cohort too, so the payment is not given to the counted one (it may be the waived one's)."""
+    links = {"none": ({}, {}), "two": ({"lead": ["L1"]}, {"lead": ["L1"]}),
+             "a_counted_and_a_waived": ({"lead": ["L1"]}, {"lead": ["L1"], "voucher": "2"})}[who]
+    e2 = dict({"voucher": "17", "person": "P2"}, **links[1])
+    rows = [enr("E1", voucher="1", person="P1", **links[0]), enr("E2", **e2)]
+    ln = line(part_of([sc(1, paid="4000", lead=["L1"])], [coh(price="12,000", roster=["E1", "E2"])], rows,
+                      [lead("L1", "C1")]))
+    assert ln["unlinked"] == {"count": 1, "money": D("4000")} and ln["paid"] == 0
+    assert all(s["payments"] == [] and ch.NOTES["by_lead"] not in s["notes"] for s in ln["students_list"])
+    assert student(ln, "E1")["balance"] == D("12000")
+
+
+def test_a_payment_filed_by_its_lead_that_only_a_waived_student_shares_is_theirs_and_moves_no_balance():
+    rows = [enr("E1", voucher="2", lead=["L1"]), enr("E2", voucher="1", person="P2")]
+    ln = line(part_of([sc(1, paid="4000", lead=["L1"])], [coh(price="12,000", roster=["E1", "E2"])], rows,
+                      [lead("L1", "C1")]))
+    waived = student(ln, "E1")
+    assert waived["standing"] == "waived" and waived["payments"] == ["1"] and waived["balance"] == 0
+    assert ln["unlinked"]["count"] == 0 and ln["balance"] == D("12000") and ln["waived_paid"] == D("4000")
+
+
+def test_the_reading_reads_the_enrollments_lead_link_and_the_leads_person_so_a_deposit_by_lead_is_its_students():
+    w = cohort_world()
+    # 205's lead 305 paid a deposit before 205 was linked to the payment; 205 is in 402, priced here
+    w.set(402, price="12,000", touch=False)
+    w.add(SC, 104, "תלמיד-דלת", status=status("שולם", 1), paid="4000", enrollment=rel(), lead=rel(305))
+    w.add(rd.LEADS_BOARD, 305, "ליד-חמש", cohort=rel(402), rep="", person=rel(1205))
+    w.set(205, lead=rel(305), touch=False)
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None and "305" in r["asked"]["leads"]
+    assert next(x for x in r["leads"] if x["id"] == "305")[rd.LD["person"]] == ["1205"]
+    assert next(x for x in r["enrollments"] if x["id"] == "205")[rd.EN["lead"]] == ["305"]
+    ln = line(cohorts_of(r), "A402")
+    assert student(ln, "205")["payments"] == ["104"] and ln["unlinked"]["count"] == 0
+    # and by the lead's person alone, when the enrollment does not link the lead
+    w.set(205, lead=rel(), touch=False)
+    w.set(205, person=rel(1205), touch=False)
+    ln = line(cohorts_of(rd.read_desk(reader_of(w))), "A402")
+    assert student(ln, "205")["payments"] == ["104"] and ln["unlinked"]["count"] == 0
+    # neither: the cohort's, said
+    w.set(305, person=rel(), touch=False)
+    ln = line(cohorts_of(rd.read_desk(reader_of(w))), "A402")
+    assert student(ln, "205")["payments"] == [] and ln["unlinked"] == {"count": 1, "money": D("4000")}
 
 
 def test_the_enrollments_own_link_decides_and_the_cohorts_link_is_checked_against_it():

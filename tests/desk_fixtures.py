@@ -42,8 +42,10 @@ def enrollment(id_, cohort_id=None, voucher="", asked=""):
     return r
 
 
-def lead(id_, *cohort_ids, rep=""):
-    return {"id": str(id_), "name": "ליד %s" % id_, fd.LD["cohort"]: [str(c) for c in cohort_ids], fd.LD["rep"]: rep}
+def lead(id_, *cohort_ids, rep="", person=None):
+    """A Leads item: its cohorts, its Owner, and its "Student Directory" person (D4's review)."""
+    return {"id": str(id_), "name": "ליד %s" % id_, fd.LD["cohort"]: [str(c) for c in cohort_ids], fd.LD["rep"]: rep,
+            fd.LD["person"]: [str(person)] if person else []}
 
 
 def cohort(id_, code, flow="שוברים משרד העבודה", st="פעיל", dates="2026-08-01 - 2026-12-01", name=None):

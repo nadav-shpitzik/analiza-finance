@@ -139,10 +139,15 @@ DL = {"stage": "deal_stage", "value": "deal_value", "payer": "board_relation_mm1
 # the billing details: `vat_id` is the business number, checked to exist and never read here (NEVER_READ)
 AC = {"terms": "dropdown_mm3yd36d", "vat_id": "text_mm3y3gm7", "hash_key": "text_mm3yprqa", "invoice_name": "text_mm3yfrew"}
 EN = {"cohort": "board_relation_mm1h915d", "voucher": "color_mm5fr6d6", "asked": "date_mm8csw5y",
-      # D4: the enrollment's own Status (נרשם, פעיל ...) and its person (the Directory), who a cohort's students are
-      "status": "color_mm0sxcvn", "person": "board_relation_mm0spa0g"}
-# the lead's ID number: checked to exist, never read here (NEVER_READ); `rep` is its Owner, the payment's "נציג מכירות"
-LD = {"cohort": "board_relation_mkzvra97", "id_number": "text_mkzvem4", "rep": "multiple_person_mm2wwjjn"}
+      # D4: the enrollment's own Status (נרשם, פעיל ...) and its person (the Directory), who a cohort's students are; and
+      # (the review of D4) "קישור לליד", its back-link to its source lead (two-way with the lead's link to Enrollments,
+      # 680 links each side, knowledge 18.11), whose payment filed by that lead is the student's (app/desk/cohorts.py)
+      "status": "color_mm0sxcvn", "person": "board_relation_mm0spa0g", "lead": "board_relation_mm1g8cvh"}
+# the lead's ID number: checked to exist, never read here (NEVER_READ); `rep` is its Owner, the payment's "נציג מכירות";
+# `person` (the review of D4) its "Student Directory", the person a payment filed by the lead is (complete: 3,846 links each
+# way, knowledge 07.10)
+LD = {"cohort": "board_relation_mkzvra97", "id_number": "text_mkzvem4", "rep": "multiple_person_mm2wwjjn",
+      "person": "board_relation_mm0sffws"}
 COLUMNS = {"student_charge": SC, "b2b_charge": B2, "cohorts": CO, "deals": DL, "accounts": AC,
            "enrollments": EN, "leads": LD}
 # what the columns check asks of each board (every column the desk uses), and what a reading holds (the same, less

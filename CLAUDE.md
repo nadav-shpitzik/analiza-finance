@@ -181,7 +181,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   3, `on_track`): one on another track is shown nowhere, priced or not. Per such cohort with one clean "מחיר" (`text_mm5fhydb`,
   `price_of`; else listed with why and no money, and a cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
   פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
-  money), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
+  money; a payment filed by its lead with no enrollment is the student's whose enrollment links that lead, `EN["lead"]`
+  "קישור לליד", or who is its lead's person, `LD["person"]`, when exactly one student is, `_lead_payer`; else it is said on
+  the cohort's line, `unlinked`, and in no balance), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
   17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out, listed and in no sum. A line is its students'
   sums (`checks.ties`). The reading reads every cohort on the track, paid for or not: one items_page with monday's status
   filter (`any_of` [3] on Registration Flow, `TRACK`, `app/monday/client.py status_rule`) in a request of its own right
