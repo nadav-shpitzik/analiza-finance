@@ -92,9 +92,10 @@ class MemoryStore:
 
 
 def desk_of(snapshot: dict) -> tuple:
-    """What the page is shown of a reading: both tabs' rows, the view's checks and its notes - not its time."""
+    """What the page is shown of a reading: both tabs' rows, the view's checks and its notes - not its time - and since D4
+    the students by cohort (app/desk/cohorts.py)."""
     v = fd.build_view(snapshot, TODAY)
-    return v["b2c"]["rows"], v["b2b"]["rows"], v["checks"], v["data_notes"]
+    return v["b2c"]["rows"], v["b2b"]["rows"], v["checks"], v["data_notes"], v["b2c"]["cohorts"]
 
 
 def view_row(snapshot: dict, item_id) -> dict:

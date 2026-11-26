@@ -6,13 +6,18 @@ Ported on 24.11 from analiza-metrics `FinanceReader.read` (app/finance.py at `da
 - by id, what their rows link to: the Enrollments and Leads behind each payment, the Cohorts those name, and the Deals
   and Accounts behind each company charge.
 
-In four steps, each one pool of at most CHUNK_WORKERS requests. analiza-metrics ran the two chains side by side with one
+In five steps, each one pool of at most CHUNK_WORKERS requests. analiza-metrics ran the two chains side by side with one
 shared pool for their chunks; here the chains are staged together, so the cap holds without a shared pool:
 1. the columns of all seven boards, in one request: a missing one ends the reading (`unknown_column`);
 2. the ids of the two charge boards, side by side, then their rows;
 3. the enrollments and the leads of the payments, and the deals of the company charges;
 4. the cohorts of the enrollments and of the deciding leads, and the accounts of the company charges and of the deals'
-   payers.
+   payers;
+5. (D4, backlog 0313: the students by cohort) the enrollments of those cohorts that have a price and are not cancelled,
+   through each cohort's link to its enrollments (`roster_ids`), those step 3 did not read - none when no cohort has one.
+   They join the enrollments: one list of the board's rows, asked and counted as one (`asked["enrollments"]` holds both),
+   so a refresh lays them over the held reading like any other; a refresh reads the cohorts with a price again every
+   time, and the enrollments newly linked to them by id.
 
 WHAT IS COUNTED (analiza-metrics' truth rules, and R0's):
 - a charge board is whole when its items_count, the rows read and the distinct ids agree, and every row is one of the
@@ -110,11 +115,16 @@ B2 = {
     "paid_so_far": "numeric_mm8zqhag",
 }
 CO = {"code": "text_mkzh1j69", "status": "color_mkzh250v", "flow": "color_mm31k62f",
-      "dates": "timerange_mkzdtx6t", "external": "text_mm383gtw"}
+      "dates": "timerange_mkzdtx6t", "external": "text_mm383gtw",
+      # D4 (backlog 0313): "מחיר", the price the student pays, a TEXT column ("10,000", "12000"), and the cohort's link to
+      # its enrollments, the reflection of each enrollment's own cohort link (exact: 1,700 of 1,700, knowledge 01.09)
+      "price": "text_mm5fhydb", "roster": "board_relation_mm1hetrb"}
 DL = {"stage": "deal_stage", "value": "deal_value", "payer": "board_relation_mm1fh059"}
 # the billing details: `vat_id` is the business number, checked to exist and never read here (NEVER_READ)
 AC = {"terms": "dropdown_mm3yd36d", "vat_id": "text_mm3y3gm7", "hash_key": "text_mm3yprqa", "invoice_name": "text_mm3yfrew"}
-EN = {"cohort": "board_relation_mm1h915d", "voucher": "color_mm5fr6d6", "asked": "date_mm8csw5y"}
+EN = {"cohort": "board_relation_mm1h915d", "voucher": "color_mm5fr6d6", "asked": "date_mm8csw5y",
+      # D4: the enrollment's own Status (נרשם, פעיל ...) and its person (the Directory), who a cohort's students are
+      "status": "color_mm0sxcvn", "person": "board_relation_mm0spa0g"}
 # the lead's ID number: checked to exist, never read here (NEVER_READ); `rep` is its Owner, the payment's "נציג מכירות"
 LD = {"cohort": "board_relation_mkzvra97", "id_number": "text_mkzvem4", "rep": "multiple_person_mm2wwjjn"}
 COLUMNS = {"student_charge": SC, "b2b_charge": B2, "cohorts": CO, "deals": DL, "accounts": AC,
@@ -164,8 +174,10 @@ BODY_KEYS = CHARGE_KEYS + LINKED_KEYS + ("lead_names", "lead_reps", "asked")
 # deploy) is never laid under a refresh that reads this one - it is read whole instead, once (analiza-metrics BODY_SCHEMA).
 # 2 since its text is masked (`masked`, D2's review): a reading kept before is never laid under a refresh, so no row it
 # holds unmasked outlives the first full reading after the deploy. 3 since a whole date is kept (QA 24.11): a name the
-# mask of 2 hid ("... 01/12/2026 | 12.26") is read again whole
-BODY_SCHEMA = "3:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
+# mask of 2 hid ("... 01/12/2026 | 12.26") is read again whole. 4 since D4 (backlog 0313): a cohort's price and its link to
+# its enrollments, an enrollment's Status and person, and the enrollments of the cohorts with a price (`roster_ids`) - a
+# reading kept before holds none of them, so it is read whole once rather than refreshed short of every student
+BODY_SCHEMA = "4:" + hashlib.sha256(json.dumps(ROW_COLUMNS, sort_keys=True).encode()).hexdigest()[:12]
 # a full reading at least this often: a change no refresh can see (a deleted enrollment, a renamed lead that decides
 # nothing) lives at most this long
 FULL_AFTER = timedelta(hours=36)
@@ -234,6 +246,25 @@ def cohort_ids(enrollments: list, leads: list) -> list:
 def keep_only(rows: list, ids: list) -> list:
     want = {str(x) for x in ids}
     return [r for r in rows if str(r["id"]) in want]
+
+
+# ---------------------------------------------------------------- D4: the students of a cohort with a price (backlog 0313)
+# The desk counts a cohort's money by its students, and its students come from Enrollments, not from the payments: a student
+# who paid nothing is in no payment, and owes the whole price. So the reading reads the enrollments of every cohort it reads
+# that has a price, through the cohort's own link to them (CO["roster"]); which of them study in the cohort is decided by
+# each enrollment's own cohort link, the side that owns it (app/desk/cohorts.py).
+COHORT_CANCELLED = "2"  # Cohorts' Status "בוטל" (color_mkzh250v, by index; verified live 2026-08-09)
+
+
+def roster_cohort(row: dict) -> bool:
+    """A cohort whose enrollments the reading reads: its "מחיר" holds text, and its Status is not "בוטל" (a cancelled
+    cohort's students owe it nothing, app/desk/cohorts.py)."""
+    return bool(str(row.get(CO["price"]) or "").strip()) and str(row.get(CO["status"] + "#") or "") != COHORT_CANCELLED
+
+
+def roster_ids(cohorts: list) -> list:
+    """The enrollments those cohorts link to, sorted, each once."""
+    return sorted(_uniq(e for c in cohorts if roster_cohort(c) for e in c.get(CO["roster"]) or []))
 
 
 # ---------------------------------------------------------------- no ID number in what a reading holds (D2's review, #6)
@@ -396,7 +427,8 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         enr_read, ld_read, deal_read = reader.read_items([(enr_ids, ROW_COLUMNS["enrollments"]),
                                                           (ld_ids, ROW_COLUMNS["leads"]),
                                                           (deal_ids, ROW_COLUMNS["deals"])])
-        enrollments, checks["enrollments"] = by_id("enrollments", enr_ids, masked("enrollments", enr_read))
+        enr_read = masked("enrollments", enr_read)
+        enrollments, checks["enrollments"] = by_id("enrollments", enr_ids, enr_read)
         leads, checks["leads"] = by_id("leads", ld_ids, masked("leads", ld_read))
         deals, checks["deals"] = by_id("deals", deal_ids, masked("deals", deal_read))
 
@@ -408,6 +440,15 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         coh_read, acct_read = reader.read_items([(coh_ids, ROW_COLUMNS["cohorts"]), (acct_ids, ROW_COLUMNS["accounts"])])
         cohorts, checks["cohorts"] = by_id("cohorts", coh_ids, masked("cohorts", coh_read))
         accounts, checks["accounts"] = by_id("accounts", acct_ids, masked("accounts", acct_read))
+
+        # 5. (D4) the enrollments of the cohorts with a price that step 3 did not read, by id: one list of Enrollments'
+        # rows, counted as one board by what it asked
+        roster = [e for e in roster_ids(cohorts) if e not in set(enr_ids)]
+        if roster:
+            (roster_read,) = reader.read_items([(roster, ROW_COLUMNS["enrollments"])])
+            enr_ids = sorted(_uniq(enr_ids + roster))
+            enrollments, checks["enrollments"] = by_id("enrollments", enr_ids,
+                                                       enr_read + masked("enrollments", roster_read))
     except MondayError as exc:
         out.update(error=exc.code, detail=exc.detail[:200])
     except Exception as exc:  # noqa: BLE001 - said by class: a reading that crashed is a reading that failed
@@ -628,7 +669,10 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
 
     # read by id what changed: a changed charge still on its board, a charge that came to its board unseen, and the changed
     # linked items the held reading asked for (the deciding leads were read above, whatever their time). A charge that left
-    # its board is dropped, never read
+    # its board is dropped, never read. D4: and the held cohorts with a price, every time, as the deciding leads are -
+    # their link to their enrollments says who studies in them, and whether a cohort's `updated_at` moves when an enrollment
+    # is linked to it is not verified
+    priced = [str(c["id"]) for c in base["cohorts"] if roster_cohort(c) and str(c["id"]) in asked_set["cohorts"]]
     ids_read: dict = {}
     for k in DELTA_KEYS:
         if k in CHARGE_KEYS:
@@ -637,7 +681,7 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
             came = [i for i in paged[k][1] if i not in known]
             ids_read[k] = changed + came
         else:
-            ids_read[k] = [i for i in after[k] if i in asked_set[k]]
+            ids_read[k] = _uniq([i for i in after[k] if i in asked_set[k]] + (priced if k == "cohorts" else []))
     read = reader.read_items([(ids_read[k], ROW_COLUMNS[k]) for k in DELTA_KEYS], pack=True)
     got_rows = {k: own_rows(k, masked(k, rows), ids_read[k], strangers) for k, rows in zip(DELTA_KEYS, read)}
     ids_read["leads"], got_rows["leads"] = list(held_deciding), leads_got
@@ -674,6 +718,12 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
                                     + [a for d in deals for a in d.get(DL["payer"]) or []]))
     _read_new(reader, lists, ids_read, names, reps, strangers,
               {k: [i for i in need[k] if i not in asked_set[k]] for k in ("cohorts", "accounts")})
+    # D4: the enrollments of the cohorts with a price, as a full reading reads them (step 5): through each cohort's link to
+    # them, by id those that neither the held reading held nor this refresh read
+    roster = [e for e in roster_ids(keep_only(lists["cohorts"], need["cohorts"])) if e not in set(need["enrollments"])]
+    seen = asked_set["enrollments"] | set(ids_read["enrollments"])
+    _read_new(reader, lists, ids_read, names, reps, strangers, {"enrollments": [e for e in roster if e not in seen]})
+    need["enrollments"] = sorted(_uniq(need["enrollments"] + roster))
     out = {"student_charge": {"items_count": paged["student_charge"][0], "rows": sc_rows},
            "b2b_charge": {"items_count": paged["b2b_charge"][0], "rows": b2_rows},
            **{k: keep_only(lists[k], need[k]) for k in LINKED_KEYS},

@@ -147,6 +147,15 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   the desk's year) a part notes `student_window_ended` (NOTES: said after the reasons, by a current part too); `off`
   on Demo or without a database; an answer at once never reads monday for the keys (`pending`) and never waits for another request's computation. `/health` `desk.books`: state,
   as_of, reasons, never a count. No schema change. Tests: `tests/test_desk_books.py`, `tests/test_desk_books_page.py`.
+- **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
+  `b2c.cohorts` (Student Charge's members only). Per cohort with one clean "מחיר" (`text_mm5fhydb`, `price_of`; else listed
+  with why and no money, and a cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
+  פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
+  money), and each balance in one part by the voucher status' INDEX (`PARTS`: "אושר - ממתין לתשלום" first, then 0, 8/9,
+  17, a 4 with a balance left, and "בלי סטטוס שובר"); 2/3 waived, 6/7/10 out, listed and in no sum. A line is its students'
+  sums (`checks.ties`). The reading reads the enrollments of the cohorts with a price through `board_relation_mm1hetrb`
+  (step 5, `roster_ids`), and a refresh reads those cohorts again every time (`BODY_SCHEMA` 4). Tests:
+  `tests/test_desk_cohorts.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
