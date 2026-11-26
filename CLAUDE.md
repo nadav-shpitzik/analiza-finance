@@ -86,22 +86,31 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   are keyed by ID numbers (ADR-0173 §1), so such a key is never stored, hashed or kept, only counted. **One merged line a
   month** (sort code `MERGED_CODE` -1, "שכר ונלווים וקודים קטנים") takes (1) the salary codes, listed explicitly in the
   Replit Secret `LEDGER_SALARY_CODES` (a comma list, never guessed by a name; until it is set a run reads and counts and
-  stores nothing, `salary_codes_not_set`), (2) every line of fewer than three accounts, and (3) every line a side of which one
-  or two accounts fill, whole. It is kept only on the same terms, else withheld whole (`merged: "withheld"`); the balance
-  then reveals only that aggregate (the module's docstring says when it is still one or two accounts'). The database's
+  stores nothing, `salary_codes_not_set`), (2) every line of fewer than three accounts, and (3) every line with a thin
+  side, whole: a side one or two accounts fill, or whose total (not zero) one account's sum, or two accounts' sum, holds to
+  within a tenth (`REST_SHARE`: the (2, 90%) dominance rule, searched over every one and every two accounts, since two
+  that cancel, +X and -X, fill a side and leave it one account's own; the review of 26.11). It stands on the same terms.
+  While it does not, the standing lines fold into it, the fewest accounts first and then the lowest code (`merged_by`
+  `balance`); none left and it still does not stand, the month keeps no line at all (`merged: "withheld"`, `kept_lines`
+  0). A month's lines net to zero, so a month keeps every line or none and the balance derives nothing. The database's
   CHECKs refuse a line of fewer than three accounts and a key with six digits or a "#". Batch 9998 never enters a line:
-  its rows and totals per month are in `ledger_months`. A run replaces each month whole in one transaction, and only a
-  month read whole: a part at the report's `limit` is split by sort code at the median of the codes it carried (at most
-  `MAX_PARTS` calls, else `cut`); every row readable and inside its cut (`unreadable`, `outside`, `columns`); the month
-  balanced (`unbalanced`, the guard that does not depend on the vendor's own cap, since `limit` is not sent; a hypothesis
-  the first run settles); an empty answer for a month held with rows is `emptied`, never trusted. Routes behind the sync
-  key: `POST /api/books/ledger/run` (`{"months": [...], "dry": false}`, 1 to 12, default the previous and the current month
-  in Israel time; boxed like a tick, always 200, counts and closed `reasons` only; `"dry": true` is the dry listing the
-  salary codes are chosen from: per code its name and its distinct accounts in those months, never an amount, nothing
-  stored) and `GET /api/books/ledger/totals?from=&to=` (the kept lines and the merged one, money as text). `/health`
-  `books.ledger`: `salary_codes` (`set`, `missing` or `bad`, never the list), the last run's times, ok and reasons, and the
-  months held, never a total. `tests/test_ledger_totals.py` scans every table for every form of the fixture's ID keys, and
-  every answer and log for every fixture value. Deploy it as a schema change (below); Make's nightly call is not wired yet.
+  its rows and totals per month are in `ledger_months`. A run replaces each month whole in one transaction, and only a month
+  read whole: a part of `SPLIT_AT` (900) rows or more, or at the report's `limit`, is split by sort code at the median of
+  the codes it carried (at most `MAX_PARTS` calls; one code that large in a month is `cut`, and a split by date would be the
+  next step), since `limit` is not sent and a cap of the vendor's own would cut an answer at exactly that cap, between whole
+  transactions, where the balance cannot see it (October 2026 came back whole at 902 rows, 26.11: no fixed cap is under
+  902); every row readable and inside its cut (`unreadable`, `outside`, `columns`; a month of October's size is read in
+  parts now, so the first run tries the narrower sort-code cut, and a vendor that ignores it refuses the month); the month
+  balanced (`unbalanced`: a row lost inside a transaction); an empty answer for a month held with rows is `emptied`, never
+  trusted. Routes behind the sync key: `POST /api/books/ledger/run` (`{"months": [...], "dry": false}`, 1 to 12, default the
+  previous and the current month in Israel time; boxed like a tick, always 200, counts and closed `reasons` only;
+  `"dry": true` is the dry listing the salary codes are chosen from: per code its name and its distinct accounts in those
+  months, never an amount, nothing stored) and `GET /api/books/ledger/totals?from=&to=` (the kept lines and the merged one,
+  money as text). `/health` `books.ledger`: `salary_codes` (`set`, `missing` or `bad`, never the list), the last run's
+  times, ok and reasons, and the months held, never a total. `tests/test_ledger_totals.py` scans every table for every form
+  of the fixture's ID keys, and every answer and log for every fixture value; it recomputes every kept line from the rows by
+  brute force (`exposed`: no side within a tenth of one or two accounts) and holds every month's kept nets to zero. Deploy
+  it as a schema change (below); Make's nightly call is not wired yet.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
   `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
   bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the
