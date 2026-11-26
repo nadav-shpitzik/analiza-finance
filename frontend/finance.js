@@ -402,10 +402,10 @@
   /* the row's marks as chips, in FLAG_ORDER: where a list shows "שיבוץ" (every general list, "לטיפול" among them) they sit
      under the state; a list with "מה לבדוק" says them there, among the row's other chips */
   function booksChips(r) {
-    var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); });
-    return keys.length ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
+    var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); }), receipt = receiptChip(r);
+    return keys.length || receipt ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
       return "<span class=\"" + chipClass(k) + "\"" + chipTitle(k, r) + ">" + esc(booksMark(r, k).chip) + "</span>";
-    }).join("") + "</div>" : "";
+    }).join("") + receipt + "</div>" : "";
   }
   /* QA 26.11 (D): a mark's chip is short - its whole words wrapped to four lines in "שיבוץ"; now two at most, in the
      narrow column at monday's widths - and its whole sentence, the details' own, is said when it is pointed at */
@@ -601,6 +601,46 @@
     var n = daysFrom(r.date);
     if (n === null || n > 0) { return ""; }
     return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
+  }
+  /* Nadav 26.11 (receipts go out slowly): under the state of a payment in "שולם, שליחת קבלה: טרם", beside the books' other
+     chips, what the books say of its receipt - issued there, so only monday is behind ("הופקה בחשבשבת", its number in its
+     title), or none identified there ("לא זוהתה בחשבשבת"); the words and their title the server's (app/desk/books.py
+     receipt_laid, laid only from a current part of this reading), so nothing at all when the books are not laid. Not in
+     "שליחת קבלה": that column is a word wide, and "בחשבשבת" broke in the middle there */
+  function receiptBooks(r) {
+    var b = r.state === "receipt_pending" ? r.receipt_books : null;
+    return b && b.text ? b : null;
+  }
+  function receiptChip(r) {
+    var b = receiptBooks(r);
+    return b ? "<span class=\"fin-chip fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") +
+      "\">" + esc(b.text) + "</span>" : "";
+  }
+  /* the details' line: the words with the number, its title the same */
+  function receiptSaid(r) {
+    var b = receiptBooks(r);
+    return b ? "<span class=\"fin-rcpt-said" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
+      esc(b.text) + (b.number ? ": " + ltr(b.number) : "") + "</span>" : "";
+  }
+  /* the queue's line under its sentence: of its rows, how many the books already hold a receipt of and how many none was
+     identified of - every number the server's (GET /api/desk/totals `receipts`, counted once, app/desk/books.py
+     receipts_split); nothing until the totals land, and for a total of another reading */
+  var RECEIPTS_UNKNOWN = "מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע: אין השוואה עדכנית של הקריאה הזו לחשבשבת.";
+  function receiptsLine(t) {
+    if (!t || t.failed || t.other_reading || !t.receipts) { return ""; }
+    var x = t.receipts, n = x.issued + x.not + x.unknown, out = [];
+    if (!n) { return ""; }
+    if (x.unknown) { return "<p class=\"fin-rcpt-line\">" + esc(RECEIPTS_UNKNOWN) + "</p>"; }
+    if (x.issued) {
+      out.push((x.issued === n ? (n === 1 ? "הקבלה עליו כבר הופקה" : "הקבלות על כולם כבר הופקו")
+        : x.issued === 1 ? "לאחד מהם הקבלה כבר הופקה" : "ל-" + NF.format(x.issued) + " מהם הקבלה כבר הופקה") +
+        " בחשבשבת: נשאר לסמן במאנדיי.");
+    }
+    if (x.not) {
+      out.push((x.not === n ? (n === 1 ? "לא זוהתה עליו קבלה" : "לאף אחד מהם לא זוהתה קבלה")
+        : x.not === 1 ? "לאחד מהם לא זוהתה קבלה" : "ל-" + NF.format(x.not) + " מהם לא זוהתה קבלה") + " בחשבשבת.");
+    }
+    return "<p class=\"fin-rcpt-line\">" + esc(out.join(" ")) + "</p>";
   }
   function waitedMark(r) {
     var t = waitedText(r);
@@ -951,7 +991,7 @@
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>" +
-        (waitedText(r) ? " · " + waitedText(r) : "");
+        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptSaid(r) ? " · " + receiptSaid(r) : "");
       /* the two dates side by side: the legal day and its lateness, then the transfer round set at approval. The amount is
          monday's "סכום לזיכוי", never a word of its own (QA 2.5: "להחזיר") */
       case "refund_to_execute": return "<b>סכום לזיכוי " + money2(r.credit_approved) + "</b> · " + LAST_DAY_LABEL + " " +
@@ -1034,9 +1074,14 @@
        one made here. "לטיפול" mixes money in and refunds to make, so it has none */
     var sum = q ? "" : one ? " · " + money(p.states[one].money) : !key ? " · " + money(p.money_in) : "";
     var found = q ? searchHead(rows, ["תקבול אחד", "תקבולים", "התקבולים"], what + " · " + p.label) : null;
+    /* a search's totals are of every payment it found, as its Excel file (exportList); D3: of the books' part on the screen */
+    var tp = { tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() };
+    if (VIEW.books && VIEW.books.key) { tp.books = VIEW.books.key; }
+    var tot = { body: totalsFor(tp), what: ["תקבול אחד", "תקבולים"] };
     var head = "<div class=\"fin-listhead\"><div><h2>" + (found ? esc(found.title) : esc(what) + " <span class=\"fin-subtle\">· " + esc(p.label) + "</span>") + "</h2>" +
       "<div class=\"fin-subtle\">" + (found ? found.line : plural(rows.length, "תקבול אחד", "תקבולים") + sum) +
-      "</div>" + (found ? found.about : aboutHtml("b2c", key)) + "</div><div class=\"fin-actions\">" + scViews() +
+      "</div>" + (found ? found.about : aboutHtml("b2c", key)) +
+      (key === "receipt_pending" && !q && rows.length ? receiptsLine(tot.body) : "") + "</div><div class=\"fin-actions\">" + scViews() +
       "<button class=\"fin-btn\" type=\"button\" data-export=\"b2c\"" + (rows.length && VIEW.checks.b2c_ok && exportable() ? "" : " disabled") +
       exportTitle(VIEW.checks.b2c_ok) + ">ייצוא לאקסל</button>" + idsButton(rows) + "</div></div>" + idsNote();
     /* the period's money; the period itself sits beside it, since it sets the tiles and the list as well */
@@ -1047,10 +1092,6 @@
       ["סטודנטים", NF.format(p.students)]], "הסכומים כולל מע\"מ", periodSelect());
     /* an asterisk is explained under the list that shows it, and only when it does */
     var guessed = cols.indexOf("refunded") !== -1 && rows.some(refundGuessed);
-    /* a search's totals are of every payment it found, as its Excel file (exportList); D3: of the books' part on the screen */
-    var tp = { tab: "b2c", state: q ? "" : key, period: q ? "" : state.sc.period, q: state.query.trim() };
-    if (VIEW.books && VIEW.books.key) { tp.books = VIEW.books.key; }
-    var tot = { body: totalsFor(tp), what: ["תקבול אחד", "תקבולים"] };
     var list = rows.length ? table(rows, cols, detailHtml, null, exportable() ? tot : null) + listNotes([
       guessed && "* סכום החזר ריק או 0, ולכן מוצג כל סכום ששולם (סטטוס תשלום \"תשלום הוחזר\")"])
       : empty(q ? "אין תקבולים שמתאימים לחיפוש." : key === "tasks" ? "אין תקבולים לטיפול." : "אין כאן תקבולים.");

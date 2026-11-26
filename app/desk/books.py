@@ -109,7 +109,7 @@ from . import dismissals as dz
 from .dismissals_store import DismissalRefused
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
 from .view import (BOOKS_FILL_BUTTON, BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID,
-                   TASK_STATES, status_word)
+                   RECEIPT_HOW_SAID, RECEIPT_ISSUED_SAID, RECEIPT_UNSEEN_SAID, RECEIPT_UNSEEN_WHY, TASK_STATES, status_word)
 
 logger = logging.getLogger("analiza_finance.desk")
 
@@ -513,6 +513,47 @@ def fill_mark(fill: dict, idx: dict) -> dict:
     return {"kind": kind, "chip": chip, "text": text, "documents": list(numbers)}
 
 
+# ---- a payment waiting for its receipt, by what the books say (Nadav 26.11: receipts go out slowly) ----------------------
+RECEIPT_HOW = ("cited", "found")
+
+
+def receipt_in_books(entry: Optional[dict], c2_entry: Optional[dict], idx: dict) -> dict:
+    """What the books say of a payment in "שולם, שליחת קבלה: טרם": {"number", "how": "cited"} when a number the row cites is
+    one A1 accepted (never refused: one valid document, an invoice or an invoice-receipt with a total) and the copy holds it
+    as an invoice-receipt; else {"number", "how": "found"} when FR-C2's analysis of the row (`c2_entry`, the very analysis
+    the proposals come from) finds the one uncited invoice-receipt of its name and amount within FILL_WINDOW_DAYS ("fill"),
+    whatever the era: a label, never a write (the proposal and its write stay the era's); else {}: none identified - a tax
+    invoice alone, a draft, a number held twice, an ambiguous match, or nothing in the books."""
+    entry = entry or {}
+    refused = {n for n, _bucket in entry.get("refused") or []}
+    for number in entry.get("documents") or []:
+        docs = idx["by_number"].get(number) or []
+        if number not in refused and len(docs) == 1 and role(docs[0].get("doc_type")) == INVOICE_RECEIPT:
+            return {"number": number, "how": "cited"}
+    if c2_entry and c2_entry.get("bucket") == "fill" and c2_entry.get("proposed"):
+        return {"number": str(c2_entry["proposed"]), "how": "found"}
+    return {}
+
+
+def receipt_laid(found: dict) -> dict:
+    """A row's `receipt_books` as the page draws it, its words the server's (view.py RECEIPT_*): issued, its number, how,
+    the chip's words under the row's state and their title (the number in it); or not identified."""
+    if found:
+        return {"issued": True, "number": found["number"], "how": found["how"], "text": RECEIPT_ISSUED_SAID,
+                "title": RECEIPT_HOW_SAID[found["how"]].format(number=found["number"])}
+    return {"issued": False, "text": RECEIPT_UNSEEN_SAID, "title": RECEIPT_UNSEEN_WHY}
+
+
+def receipts_split(rows: list) -> dict:
+    """The line over the queue "שולם, שליחת קבלה: טרם", counted in one place (GET /api/desk/totals): of the list's rows in
+    that state, how many the books hold a receipt of (`receipt_books.issued`), how many none was identified of (`not`), and
+    how many the books cannot say of now (`unknown`: no part laid on this reading)."""
+    pending = [x for x in rows if x.get("state") == "receipt_pending"]
+    issued = sum(1 for x in pending if (x.get("receipt_books") or {}).get("issued") is True)
+    unseen = sum(1 for x in pending if (x.get("receipt_books") or {}).get("issued") is False)
+    return {"issued": issued, "not": unseen, "unknown": len(pending) - issued - unseen}
+
+
 def candidate_why(item_id: str, number: str, c2: dict, fills: dict) -> Optional[dict]:
     """Why the books propose nothing for this document (`number`) on a candidate row (QA of 26.11, 9): FR-C2's bucket for
     the row (`c2`, ref_fill.analyse's rows, the analysis the proposals come from), or that the row is proposed another
@@ -590,6 +631,9 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     idx = index_copy(documents)
     marks, notes = marks_of(analysis, rows_by_id, idx)
     c2 = fr_c2.analyse(sc_raw, documents, b2_raw, keys)["rows"]       # FR-C2, once: the proposals and why none (QA 9)
+    # Nadav 26.11: each payment waiting for its receipt, by what the books say of it (`receipt_in_books`)
+    receipts = {item_id: receipt_in_books(analysis["rows"].get(item_id), c2.get(item_id), idx)
+                for item_id, r in rows_by_id.items() if r.get("state") == "receipt_pending"}
     # R5: each alert's evidence ("לא פער" keeps it, app/desk/dismissals.py) and its row's name (the hidden list says it)
     held = dz.held_by_number(documents)
     for item_id, ms in marks.items():
@@ -646,7 +690,7 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
         for e in entries:
             if held[e.get("subject")] > 1:
                 e.pop("evidence", None)
-    return {"marks": marks, "notes": notes, "fills": fills, "reading_at": reading.get("read_at"),
+    return {"marks": marks, "notes": notes, "fills": fills, "receipts": receipts, "reading_at": reading.get("read_at"),
             "students": _newest(lists["students"]), "companies": _newest(lists["companies"]),
             "unclear": _newest(lists["unclear"]), "vouchers": vouchers, "places": places,
             "counts": dict(Counter(places.values())), "buckets": {i: e["bucket"] for i, e in analysis["rows"].items()}}
@@ -721,16 +765,19 @@ def merge(view: dict, part: dict) -> dict:
     under `books_unclear`, and the part's state under `books`. D4: on a row the books propose a fill to, its chip (a flag,
     beside the marks' in `books`), its values (`books_fill`: {number?, date?}) and the action that writes them, and on its
     document in the students' list its `proposal` - only from a current part of this very reading (`laid`); a proposal
-    neither moves a row nor joins "לטיפול". R5: each list's part also carries what is hidden as "לא פער" of it (`hidden`,
-    with who and when; app/desk/dismissals.py `hide` took them out of the marks and the lists, so out of "לטיפול" and its
-    counts too) and, by kind, how many are hidden and how many came back (`hidden_counts`, `returned_counts`): the
-    students' tab its marks, proposals and documents, the companies' tab its documents, `books_unclear` its own."""
+    neither moves a row nor joins "לטיפול". Nadav 26.11: on a row in "שולם, שליחת קבלה: טרם", what the books say of its
+    receipt (`receipt_books`, `receipt_laid`), on the same terms as a proposal. R5: each list's part also carries what is
+    hidden as "לא פער" of it (`hidden`, with who and when; app/desk/dismissals.py `hide` took them out of the marks and the
+    lists, so out of "לטיפול" and its counts too) and, by kind, how many are hidden and how many came back (`hidden_counts`,
+    `returned_counts`): the students' tab its marks, proposals and documents, the companies' tab its documents,
+    `books_unclear` its own."""
     out = dict(view)
     out["books"] = public(part)
     marks, notes = part.get("marks") or {}, part.get("notes") or {}
     era = ERA_FROM.isoformat()
     laid = lays_fills(part, view.get("read_at"))
     fills = (part.get("fills") or {}) if laid else {}
+    receipts = (part.get("receipts") or {}) if laid else {}   # Nadav 26.11: as the proposals, only from this reading's part
     if view.get("b2c") is not None:
         b2c = dict(view["b2c"])
         rows = []
@@ -741,6 +788,8 @@ def merge(view: dict, part: dict) -> dict:
                          books=[_laid(m) for m in mine], books_task=bool(r.get("date")) and r["date"] >= era)
             if notes.get(r["id"]):  # a number it cites is not yet in the copy: said in its details, no mark
                 r = dict(r, books_note=notes[r["id"]])
+            if r["state"] == "receipt_pending" and r["id"] in receipts:  # what the books say of its receipt
+                r = dict(r, receipt_books=receipt_laid(receipts[r["id"]]))
             fill = fills.get(r["id"])
             if fill:  # D4: its chip beside the row's others, its values for the action, and the action itself
                 m = fill["mark"]

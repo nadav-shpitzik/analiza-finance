@@ -2135,3 +2135,65 @@ def test_a_pending_receipt_says_how_long_it_has_waited_beside_its_date_and_in_it
     assert details.count("ממתין 21 ימים") == 2      # beside its date, and in the details' line
     assert everything.count("ממתין 21 ימים") == 1 and everything.count("fin-waited") == 1
 
+
+# --- the queue split by what the books say (Nadav 26.11): the label beside "טרם", and the line over the queue ----------------
+def _receipt_view(books: dict | None) -> dict:
+    """view() with 3102, the queue's one row, carrying what the server laid of its receipt (or nothing)."""
+    v = view()
+    for r in v["b2c"]["rows"]:
+        if r["id"] == "3102" and books is not None:
+            r["receipt_books"] = books
+    return v
+
+
+ISSUED = {"issued": True, "number": "62601", "how": "found", "text": "הופקה בחשבשבת",
+          "title": "חשבונית מס/קבלה 62601 תקפה בחשבשבת, אחת בלבד בשם ובסכום של התקבול"}
+UNSEEN = {"issued": False, "text": "לא זוהתה בחשבשבת", "title": "אין בחשבשבת מספר, שם וסכום שמתאימים לתקבול"}
+QUEUE = {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}}
+QUEUE_OPEN = {"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {"3102": True}}}}
+
+
+def _queue(books, totals) -> tuple:
+    answers = {"GET /api/desk": [{"body": answer(_receipt_view(books))}]}
+    if totals is not None:
+        answers[totals_call(tab="b2c", state="receipt_pending", period="", q="")] = [{"body": totals}]
+    got = drive(steps=[QUEUE, QUEUE_OPEN], monday=world(), answers=answers)
+    return tuple(step["html"] for step in got["steps"])
+
+
+def test_a_pending_receipt_says_what_the_books_hold_of_it_under_its_state_and_in_its_details():
+    """A chip beside the books' others under the row's state ("שיבוץ"), its number in its title; in the details' line, the
+    words with the number. Never in "שליחת קבלה": that column is a word wide."""
+    queue, opened = _queue(ISSUED, None)
+    chip = '<span class="fin-chip fin-rcpt fin-rcpt-issued" title="%s">הופקה בחשבשבת</span>' % ISSUED["title"]
+    assert chip in queue and queue.count('class="fin-chip fin-rcpt') == 1
+    state_cell = re.search(r'<td class="k-state">(.*?)</td>', queue.split('data-row="3102"', 1)[1]).group(1)
+    assert '<div class="fin-chips fin-books-chips">' + chip + "</div>" in state_cell
+    receipt_cell = re.search(r'<td class="k-receipt[^"]*">(.*?)</td>', queue.split('data-row="3102"', 1)[1]).group(1)
+    assert receipt_cell == "טרם"
+    detail = detail_of(opened, "3102")
+    assert 'הופקה בחשבשבת: <bdi dir="ltr">62601</bdi>' in detail
+    queue, _opened = _queue(UNSEEN, None)
+    assert '<span class="fin-chip fin-rcpt" title="%s">לא זוהתה בחשבשבת</span>' % UNSEEN["title"] in queue
+    # nothing laid (the books not compared with this reading): nothing said, and no empty chips' box
+    queue, _opened = _queue(None, None)
+    assert "fin-rcpt" not in queue and "fin-books-chips" not in queue
+
+
+def test_the_queues_line_says_the_servers_split_in_words():
+    one = lambda totals, books=ISSUED: _queue(books, {"count": 1, "sums": {"money_in": "4000"}, "receipts": totals})[0]
+    line = lambda html: re.search(r'<p class="fin-rcpt-line">(.*?)</p>', html).group(1)
+    assert line(one({"issued": 1, "not": 0, "unknown": 0})) == "הקבלה עליו כבר הופקה בחשבשבת: נשאר לסמן במאנדיי."
+    assert line(one({"issued": 0, "not": 1, "unknown": 0}, UNSEEN)) == "לא זוהתה עליו קבלה בחשבשבת."
+    assert line(one({"issued": 5, "not": 3, "unknown": 0})) == (
+        "ל-5 מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ל-3 מהם לא זוהתה קבלה בחשבשבת.")
+    assert line(one({"issued": 1, "not": 7, "unknown": 0})) == (
+        "לאחד מהם הקבלה כבר הופקה בחשבשבת: נשאר לסמן במאנדיי. ל-7 מהם לא זוהתה קבלה בחשבשבת.")
+    assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "הקבלות על כולם כבר הופקו בחשבשבת: נשאר לסמן במאנדיי."
+    assert line(one({"issued": 0, "not": 4, "unknown": 0}, UNSEEN)) == "לאף אחד מהם לא זוהתה קבלה בחשבשבת."
+    assert line(one({"issued": 0, "not": 0, "unknown": 4}, None)).startswith("מה חשבשבת אומרת על הקבלות האלה לא ידוע כרגע")
+    # no line before the totals land, for a total of another reading, or without the split
+    assert "fin-rcpt-line" not in _queue(ISSUED, None)[0]
+    assert "fin-rcpt-line" not in _queue(ISSUED, {"other_reading": True, "taken_at": "x"})[0]
+    assert "fin-rcpt-line" not in _queue(ISSUED, {"count": 1, "sums": {"money_in": "4000"}})[0]
+
