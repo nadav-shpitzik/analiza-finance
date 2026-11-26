@@ -762,6 +762,28 @@ def test_the_page_asks_again_on_return_only_after_5_seconds_and_never_inside_the
     assert 'window.addEventListener("focus", onFocus)' in source and "setInterval" not in source
 
 
+@pytest.mark.parametrize("status_idx, status, why", [
+    ("0", "לא שולם", 'לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום "לא שולם")'),
+    ("2", "יש בעיה", 'לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום "יש בעיה")'),
+    ("", "", "לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום ריק)"),
+    ("31", "תווית חדשה", 'לא נספר: תווית שהמסך לא מכיר (סטטוס תשלום "תווית חדשה")'),
+])
+def test_an_amount_not_counted_is_struck_through_and_says_why_when_pointed_at(status_idx, status, why):
+    """QA 26.11 (F): an amount shown struck through in a list - not counted, its status brings no money in - says why when
+    it is pointed at: "לא נספר: הסטטוס לא מכניס כסף", and the row's status; a label the desk does not know, in its chip's
+    words. A counted amount has no such title."""
+    import html as h
+    v = view()
+    row = next(r for r in v["b2c"]["rows"] if r["id"] == "3101")
+    row.update(counted=False, status=status, status_idx=status_idx, paid_typed="2500.00", state="exception",
+               flags=(["status_unknown"] if status_idx == "31" else []))
+    html = h.unescape(node(LOAD + "console.log(JSON.stringify(F._render(input.body, input.st)));",
+                           {"body": answer(v), "st": {"tab": "b2c", "sc": {"state": "", "period": "", "open": {}}}}))
+    cell = re.search(r'<tr class="fin-rowbtn[^"]*" data-row="3101".*?</tr>', html, flags=re.S).group(0)
+    assert '<s class="fin-subtle" title="%s"><bdi>2,500.00 ₪</bdi></s>' % why in cell
+    assert "לא נספר" not in re.search(r'<tr class="fin-rowbtn[^"]*" data-row="3102".*?</tr>', html, flags=re.S).group(0)
+
+
 def test_the_page_has_no_retired_term_and_keeps_the_house_style():
     source = code_of(PAGE)
     retired = ["חשבונית זיכוי", "מספר חשבונית", "להפקה", "הפקת", "לפני מע\\\"מ", "להחזיר עד", "היום האחרון להחזר",

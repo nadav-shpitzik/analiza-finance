@@ -263,8 +263,10 @@ def test_a_refunds_two_dates_are_side_by_side_in_its_details_and_the_legal_one_h
     assert '<h3 class="fin-dx-h">הרשמה</h3><dl class="fin-dx-grid"><dt>סטטוס שובר משה&quot;ע</dt><dd><span class="fin-subtle">-</span></dd><dt>תאריך בקשת ביטול</dt><dd>20.10.26</dd>' in refund
     assert "03.11.26 <span class=\"fin-badtext\">באיחור של 6 ימים</span>" in refund
     assert "<td class=\"k-planned\">15.11.26</td>" in refund
-    # a "לא שולם" row's typed amount is shown struck through, never as money; an old refund has no dates to show
-    assert '<s class="fin-subtle" title="סטטוס תשלום &quot;לא שולם&quot;: לא נספר"><bdi>2,500.00 ₪</bdi></s>' in plain
+    # a "לא שולם" row's typed amount is shown struck through, never as money - and why, on hover (changed deliberately,
+    # QA 26.11, F: the title named the status only); an old refund has no dates to show
+    assert ('<s class="fin-subtle" title="לא נספר: הסטטוס לא מכניס כסף (סטטוס תשלום &quot;לא שולם&quot;)"><bdi>2,500.00 ₪'
+            '</bdi></s>') in plain
     details = plain[plain.index('<tr class="fin-detail">'):]
     # an old refund shows the same refund fields as every refund (QA 2.9), its unknown dates as "-"
     assert "<dt>%s</dt><dd><span class=\"fin-subtle\">-</span></dd>" % fd.LAST_DAY_LABEL in details

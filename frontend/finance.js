@@ -223,6 +223,8 @@
  *      payment: "מחזורי שוברים בלבד" above its figures, and their note says why. And the view once went from "רשימה" to "לפי
  *      מחזור" after an automatic refresh: the choice is kept nowhere but here, set by her click alone, but an answer without
  *      the cohorts drew the list while the choice stayed theirs. It follows what is shown now (b2cHtml).
+ * F  A "סכום ששולם" struck through - not counted - said on hover only its status. It says why: "לא נספר: הסטטוס לא מכניס
+ *      כסף" and the status (a label the desk does not know, in its chip's words; uncountedWhy).
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -425,6 +427,12 @@
   /* beside a company or a due date: the company's "תנאי תשלום", or that it has none - its due dates are then the demand days
      themselves, and so is its lateness (QA 1.3) */
   var NO_TERMS = "<span class=\"fin-chip\">" + esc(FLAG.terms_missing) + "</span>";
+  /* why a payment's "סכום ששולם" is not counted: its status brings no money in - or is a label the desk does not know */
+  var UNCOUNTED = "לא נספר: הסטטוס לא מכניס כסף";
+  function uncountedWhy(r) {
+    return r.flags.indexOf("status_unknown") !== -1 ? "לא נספר: " + FLAG.status_unknown + " (סטטוס תשלום " + statusWord(r) + ")"
+      : UNCOUNTED + " (סטטוס תשלום " + statusWord(r) + ")";
+  }
   function termsMark(terms) { return terms ? " <bdi class=\"fin-subtle\">" + esc(terms) + "</bdi>" : " " + NO_TERMS; }
   var COLS = {
     date: { h: "תאריך תקבול", c: function (r) { return paidDate(r); } },
@@ -435,11 +443,11 @@
     /* D3: beside its state, the row's marks of the books - red, in the server's words; the mark moves no row */
     state: { h: "שיבוץ", c: function (r) { return stateChip(r.state) + booksChips(r); } },
     credit_ref: { h: "אסמכתת זיכוי", xs: 1, c: function (r) { return ltr(r.credit_ref) || "<span class=\"fin-subtle\">-</span>"; } },
-    /* "סכום ששולם" as monday holds it: counted where the status brought money in, struck through where it did not */
+    /* "סכום ששולם" as monday holds it: counted where the status brought money in, struck through where it did not - and
+       why, when it is pointed at (QA 26.11, F: the title named the status and not the reason) */
     received: { h: "סכום ששולם", n: 1, t: "money_in", c: function (r) {
       if (r.paid_typed == null) { return NOT_SET; }
-      return r.counted ? money2(r.money_in) : "<s class=\"fin-subtle\" title=\"" + esc("סטטוס תשלום \"" + (r.status || "ריק") + "\": לא נספר") + "\">" +
-        money2(r.paid_typed) + "</s>";
+      return r.counted ? money2(r.money_in) : "<s class=\"fin-subtle\" title=\"" + esc(uncountedWhy(r)) + "\">" + money2(r.paid_typed) + "</s>";
     } },
     channel: { h: "ערוץ תשלום", xs: 1, c: function (r) { return lbl(r, "channel"); } },
     invoice: { h: "אסמכתת חשבונית", xs: 1, c: function (r) { return ltr(r.invoice) || NOT_SET; } },
