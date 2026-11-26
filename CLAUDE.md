@@ -204,7 +204,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   cohort, every student under the same money columns so they sum to their line, the cohorts without a price). The page:
   "רשימה | לפי מחזור" in the students' list head (frontend/finance.js, its block "D4"): "אושר - ממתין לתשלום" the first
   figure and the one tinted column, a cohort row opening to its students, the price and the count under the cohort's name
-  and agorot only where an amount has them (the table fits 1280 and 1400), its legend part the server's; its clicks on
+  and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
+  1400), its legend part the server's; its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`

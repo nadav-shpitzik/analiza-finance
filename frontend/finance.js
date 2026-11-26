@@ -1076,9 +1076,11 @@
         esc(c.said) + "</p></div><div class=\"fin-actions\">" + scViews() + "</div></div>");
     }
     var ok = VIEW.checks.b2c_ok && c.checks.ties;
-    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי") */
-    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, money(t.part_approved), true], [w.balance, money(t.balance)],
-      [w.paid, money(t.paid)], [w.expected, money(t.expected)]].map(function (x) {
+    /* "אושר - ממתין לתשלום" first among the figures, and the only one tinted (Chava 26.11: "זה הכי חשוב לי"); each amount
+       as the table writes it, agorot where it has them (`cash`: the review of D4 found the figures rounded to the shekel
+       while the table under them was not) */
+    var figures = "<div class=\"fin-figs\"><dl>" + [[c.parts[0].label, cash(t.part_approved), true], [w.balance, cash(t.balance)],
+      [w.paid, cash(t.paid)], [w.expected, cash(t.expected)]].map(function (x) {
       return "<div" + (x[2] ? " class=\"fin-hi\"" : "") + "><dt>" + esc(x[0]) + "</dt><dd>" + x[1] + "</dd></div>";
     }).join("") + "</dl><span class=\"fin-figs-note\">" + esc("הסכומים כולל מע\"מ, בכל המחזורים עם מחיר") + "</span></div>";
     var head = "<div class=\"fin-listhead\"><div><h2>" + esc(COHORTS_WORD) + "</h2><div class=\"fin-subtle\">" +

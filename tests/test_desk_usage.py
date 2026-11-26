@@ -561,6 +561,14 @@ def doc_sql(section: str = "") -> list:
     return re.findall(r"```sql\n(.*?)```", text, flags=re.S)
 
 
+def test_the_doc_names_every_list_a_file_is_asked_for_and_every_view():
+    """The review of D4: the page asks the file of "לפי מחזור" as the list b2c_cohorts and switches to the view "cohorts",
+    and the doc's table of events did not name either."""
+    rows = {line.split("|")[1].strip(): line for line in DOC.read_text(encoding="utf-8").splitlines() if line.startswith("| `")}
+    assert set(dr.TABS) <= set(re.findall(r"`([a-z0-9_]+)`", rows["`export`"]))
+    assert {"list", "customers", "cohorts"} <= set(re.findall(r"`([a-z0-9_]+)`", rows["`view`"]))
+
+
 def test_each_numbered_query_after_the_first_reads_one_user():
     """analiza-metrics' copy counted every user in its queries 5-9 (the docs repo's session note of 24.11)."""
     which, *numbered = doc_sql("## 3.")

@@ -170,6 +170,12 @@ def test_an_amount_is_never_rounded_its_agorot_shown_where_it_has_them():
     assert line["paid"] == "7,950.50 ₪" and line["part_approved"] == "12,049.50 ₪" and line["expected"] == "20,000 ₪"
     students = cells_of(html)
     assert [x["balance"] for x in students] == ["6,049.50 ₪", "6,000 ₪"]
+    # the figures above the table write each amount as the table does (the review of D4: they were rounded to the shekel,
+    # 7,951 above a column that said 7,950.50)
+    figs = dict(re.findall(r"<dt>([^<]+)</dt><dd>(.*?)</dd>", html))
+    shown = {k: re.sub(r"<[^>]+>", "", v) for k, v in figs.items()}
+    assert shown[ch.PARTS["approved"]["label"]] == line["part_approved"] and shown[ch.BALANCE_WORD] == line["balance"]
+    assert shown[ch.PAID_WORD] == line["paid"] and shown[ch.EXPECTED_WORD] == line["expected"] == "20,000 ₪"
 
 
 def test_the_cohorts_without_a_price_are_listed_on_demand_with_why():

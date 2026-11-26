@@ -697,7 +697,9 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     that came is read by id) - the same snapshot as `read_desk`, `kind` "delta", the held reading's `full_read_at`, its
     counts, and `id_pages`, the requests the ids took. Raises DeltaMismatch when a charge board cannot be reconciled with
     its ids, and MondayError for anything monday or the shape of its answer did not allow: HeldReading then reads whole, or
-    says why not."""
+    says why not. D4: the cohorts on the voucher track cost a request of their own (`read_track`, and one per page of 500
+    after the first), so a quiet refresh is four requests - the windows, the track, the two charge boards' ids - where D2's
+    was three; a track or a step 5 that fails is said in `cohorts_read`, never raised."""
     started = clock()
     calls0 = reader.calls
     now = datetime.now(timezone.utc)
