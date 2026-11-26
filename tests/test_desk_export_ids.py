@@ -194,9 +194,11 @@ def test_the_table_never_holds_an_id_number_not_even_one_monday_answers_unasked(
 
 # --- the refactor under it: every file the server writes, as it was ---------------------------------------------------
 
-def test_one_description_written_by_openpyxl_is_the_file_it_was():
-    """`_workbook` is `write(book(...))` since D4. The parts of each file - its sheets, styles and workbook - against the
-    same file written by `write` straight from `b2c_book`, and the description's shape: the list, "פרטים", the books'."""
+def test_the_file_is_its_description_written_and_the_description_has_its_shape():
+    """`_workbook` is `write(book(...))` since D4: the students' file is its description written, part for part (the
+    sheets, the styles, the workbook), and the description has its shape - the list with its total, "פרטים" with its two
+    widths. (That every file the server writes stayed the file it was is held by the files' own tests, and was checked once
+    against 33bd24a's module, part for part, for the students', the companies', the aging and the cohorts' files.)"""
     rows = fd.filter_b2c(fd.build_view(ids_snapshot(), TODAY)["b2c"], "", "", "")
     fixed = datetime(2026, 11, 26, 12, 0)
 
