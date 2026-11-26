@@ -66,6 +66,7 @@ from typing import Any, Iterable, Optional
 
 from ..recon import receipt_dates as a1
 from ..recon.cards import day_of, money_of, norm_name, number_of
+from .view import NAG_FILL_WORD, NAG_WORD
 
 MARK_KINDS = ("books_ref_invalid", "books_amount_differs", "books_receipt_unpaid")
 # a document's kind by the list it is in (app/desk/books.py `compute`: the students', the companies', the unclear)
@@ -78,9 +79,8 @@ BOARDS = {**{k: ("b2c",) for k in MARK_KINDS + FILL_KINDS},
 # which part of the answer a kind's hidden ones are listed in: the students' tab, the companies', or the unclear list
 TAB = {**{k: "b2c" for k in MARK_KINDS + FILL_KINDS}, "books_doc_students": "b2c", "books_doc_companies": "b2b",
        "books_doc_unclear": "unclear"}
-# the press's word (frontend/finance.js NAG_WORDS holds the same, by a test)
-NOT_A_GAP, DO_NOT_PROPOSE = "לא פער", "לא להציע"
-WORD = {k: DO_NOT_PROPOSE if k in FILL_KINDS else NOT_A_GAP for k in KINDS}
+# the press's word, the legend's (app/desk/view.py; frontend/finance.js NAG_WORD holds the same, by a test)
+WORD = {k: NAG_FILL_WORD if k in FILL_KINDS else NAG_WORD for k in KINDS}
 # Each kind's fields, in the order the functions below build them (a test holds the two together)
 EVIDENCE = {**{k: ("kind", "row", "cited", "amount", "status", "documents", "group") for k in MARK_KINDS},
             **{k: ("kind", "number", "type", "status", "total", "total_excl", "date", "card", "side")

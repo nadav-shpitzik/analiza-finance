@@ -314,6 +314,12 @@ BOOKS_AS_OF_WORD = "לפי הספרים"
 BOOKS_FILL_BUTTON = "רישום מחשבשבת"
 BOOKS_PROPOSAL = "הצעה"
 BOOKS_FILL_ALL = "לרשום את כל ההצעות"
+# R5 (app/desk/dismissals.py): "לא פער" pressed on an alert of the books, "לא להציע" on a proposal of them, the list of what
+# is hidden under each list of the books, and what an alert says when its evidence changed since it was hidden
+NAG_WORD, NAG_FILL_WORD, NAG_LIST_WORD, NAG_BACK_WORD = "לא פער", "לא להציע", "הוסתרו כלא פער", "חזר"
+_NAG_KEPT = ("נשמר בשולחן מי הסתיר ומתי, ולא נכתב כלום במאנדיי או בחשבשבת. כשמשהו מזה משתנה, הוא חוזר למסך, וכתוב לידו %s. "
+             "%s, מתחת לרשימה, מראה מה הוסתר, בידי מי ומתי, ומי שהסתיר יכול להחזיר. צופה במאנדיי לא יכול להסתיר."
+             % ('"%s"' % NAG_BACK_WORD, '"%s (N)"' % NAG_LIST_WORD))
 # the list's columns: the document as the books hold it, and its total (the legend defines each)
 BOOKS_DOC_HEADS = ("מספר מסמך", "סוג מסמך", "תאריך מסמך", "שם בכרטיס")
 BOOKS_SUM_WORD = "סכום בחשבשבת"
@@ -405,6 +411,12 @@ LEGEND = {
          "ובמסמכים מ-%s ואילך: מה שלפני כן מטופל בנפרד." % (_q(BOOKS_PROPOSAL), _q(BOOKS_FILL_BUTTON),
                                                           _q(BOOKS_FILL_ALL), BOOKS_ERA_SAID)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
+        # R5 (app/desk/dismissals.py): what the books say, hidden by a person while its evidence is the same
+        (" · ".join((NAG_WORD, NAG_FILL_WORD, NAG_LIST_WORD, NAG_BACK_WORD)),
+         "%s ליד סימון של חשבשבת בפרטים של תקבול ולצד מסמך ברשימה של מסמכים בלי חיוב, ו%s ליד הצעה של חשבשבת: מסתיר אותם "
+         "לכולם, אחרי אישור. מה שהוסתר נשאר מוסתר כל עוד הראיה שלו זהה: בסימון - המספרים באסמכתת חשבונית, סכום ששולם, "
+         "סטטוס תשלום, והמסמכים במספרים האלה בחשבשבת; במסמך - הסוג, הסכום, התאריך, השם בכרטיס והרשימה שהוא בה; בהצעה - "
+         "המספר והתאריך שהיא מציעה. %s" % ('"%s"' % NAG_WORD, '"%s"' % NAG_FILL_WORD, _NAG_KEPT)),
     ],
     "b2b": [
         ("חיוב", "שורה אחת בלוח B2B Charge. לחיצה על השם שלה פותחת אותה במאנדיי."),
@@ -467,6 +479,10 @@ LEGEND = {
                            "חברה: החברה במאנדיי שהכרטיס הוא מפתח החשבשבת שלה. מסמכים בכרטיס 10091 (השוברים של משרד "
                            "הביטחון) נספרים בנפרד, בשורה אחת. %s" % (BOOKS_ERA_SAID, _BOOKS_LATE)),
         _BOOKS_AS_OF, _BOOKS_DOC, _BOOKS_SUM, _BOOKS_UNCLEAR,
+        # R5 (app/desk/dismissals.py)
+        (" · ".join((NAG_WORD, NAG_LIST_WORD, NAG_BACK_WORD)),
+         "%s ליד מסמך ברשימה של מסמכים בלי חיוב: מסתיר אותו לכולם, אחרי אישור. המסמך נשאר מוסתר כל עוד הוא בחשבשבת כמו "
+         "שהוא: הסוג, הסכום, התאריך, השם בכרטיס והרשימה שהוא בה. %s" % ('"%s"' % NAG_WORD, _NAG_KEPT)),
     ],
 }
 

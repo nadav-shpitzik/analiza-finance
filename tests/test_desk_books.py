@@ -811,7 +811,8 @@ def test_a_whole_copy_on_a_whole_reading_is_computed_once_per_reading_and_per_ru
     assert store.snapshots == 3 and again["marks"] == {} and again["state"] == "ok"
     assert b.current() is again and b.health() == {
         "state": "ok", "as_of": "2026-11-25T08:00:00+00:00", "reasons": [], "computed_at": again["computed_at"],
-        "seconds": b.trace["seconds"], "error": None, "accounts": {"read_at": None, "error": None}}
+        "seconds": b.trace["seconds"], "error": None, "accounts": {"read_at": None, "error": None},
+        "dismissals": {"read_at": None, "error": None}}                     # R5: no store of dismissals given here
 
 
 def test_a_copy_that_is_not_whole_shows_the_last_whole_result_with_its_time_and_why():
@@ -1260,7 +1261,7 @@ def test_health_says_the_books_state_time_and_reasons_never_a_count_or_a_documen
     text = booked.client.get("/health").text
     books = json.loads(text)["desk"]["books"]
     assert (books["state"], books["as_of"], books["reasons"]) == ("ok", "2026-11-25T08:00:00+00:00", [])
-    assert set(books) == {"state", "as_of", "reasons", "computed_at", "seconds", "error", "accounts"}
+    assert set(books) == {"state", "as_of", "reasons", "computed_at", "seconds", "error", "accounts", "dismissals"}
     assert books["accounts"]["error"] is None and books["accounts"]["read_at"]
     for word in STUDENT_WORDS + COMPANY_WORDS + UNCLEAR_WORDS + ("10091", "77001", "חברה-משלמת"):
         assert word not in text, word

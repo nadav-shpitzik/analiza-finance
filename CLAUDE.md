@@ -226,6 +226,26 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   `app/desk/dismissals.py`), so a kind added later drops no constraint in a publish. A user id and digits only: never a
   name, an amount or a card key. Errors by kind (`STORE_KINDS`), never the text. Tests: `tests/test_desk_dismissals_store.py`
   (the store and the tests' double, `tests/dismissal_fixtures.py`, held to one contract; the table's own checks).
+  What may be dismissed (`KINDS`): the three marks (subject: the item id), a document of each list (`books_doc_students`,
+  `books_doc_companies`, `books_doc_unclear`; subject: its number as A1 reads one) and D4's two proposals (pressed "לא
+  להציע"). Each kind's boards (`BOARDS`: Student Charge, B2B Charge, both for the unclear). **The evidence** is a sha256 over
+  a fixed list per kind (`EVIDENCE`; why each field is in, and what is left out, in the module's docstring), computed by
+  the server in `compute` and carried on each alert; never a word, a name or a card key. `DeskBooks` reads the live
+  dismissals with the copy's run (once per computation, at most every RUN_CHECK_S: another instance's press shows within
+  that) and shows its last whole computation by them (`hide`): out of the marks, the lists, the row and "לטיפול" and its
+  counts; under `hidden` of its tab's books part (or `books_unclear`) with who and when, a proposal only where proposals are
+  laid; `hidden_counts` and `returned_counts` by kind. An alert whose live dismissal holds other evidence is shown with
+  `returned` ("חזר"); one whose alert is gone hides nothing and stays live. When only the dismissals changed nothing is
+  computed again (`_reshown`, a new key); a read that fails keeps the ones held, said in `/health` `desk.books.dismissals`.
+  **The routes** `POST /api/alerts/not-a-gap` and `POST /api/alerts/not-a-gap/undo` (app/desk/routes.py): the whole gate,
+  then a member of each of the kind's boards (403 `not_a_board_member`, by the kind alone, before anything is looked up)
+  and never a viewer (403 `view_only`); a press is against the part shown now, in DeskBooks' one lock (`dismiss`: 409
+  `other_reading` for another reading or part, `not_shown`, `already_hidden`, `evidence_changed` for a hash that is not
+  the server's - the page's is compared, never kept); an undo only of one the part holds hidden, by its dismisser (403
+  `not_yours`); 503 `dismissals_unavailable` without a database or the table, `busy` past WAIT_S. Both answer the desk as
+  it is after the press (`dismissed` / `undone`). They write the service's own database only: nothing to monday or the
+  books. Tests: `tests/test_desk_dismissals.py` (each kind hidden and back by each of its fields and by nothing else; the
+  routes, membership per kind, a forged hash, undo by another, on Postgres too).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

@@ -23,6 +23,11 @@
   cohorts_export.py), its totals and its file gated as the students' list is.
 - POST /api/usage: what the reader did on the page, as closed words and counts (app/desk/usage.py), kept in `desk_events`
   (app/desk/usage_store.py, migrations/005). Behind the sessionToken only, with a limit of its own.
+- POST /api/alerts/not-a-gap, POST /api/alerts/not-a-gap/undo (R5, the spec §2.4 and §6.1 item 4): "לא פער" on one alert
+  of the books, and its undo by its own dismisser, kept in `alert_dismissals` (app/desk/dismissals_store.py, migrations/
+  008) - the service's own database, never monday or the books. The whole gate, then a member of the alert's own boards
+  (app/desk/dismissals.py BOARDS), never a viewer; the evidence is the server's (app/desk/books.py DeskBooks.dismiss).
+  Answered with the desk as it is after the press, as /api/desk answers it.
 
 D2's routes are analiza-metrics app/finance_api.py at `da671b2` (`finance_view`, `finance_refresh`, `finance_totals`,
 `finance_export_link`, `finance_export_file`, `usage`) on this service's gate and reading, with what changed said at each.
@@ -59,6 +64,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import config
 from ..monday.client import MondayReader
 from .auth import AuthError, verify_session_token
+from . import dismissals as dz
 from .books import BOOKS_KEY_MAX, DeskBooks, merge as books_merge
 from .cohorts import VIEW_WORD as COHORTS_WORD, cohort_totals, filter_cohorts, filter_unpriced
 from .gate import DESK_PER_DAY, DESK_PER_USER_HOUR, Members, RateLimiter, Visitor, audit, bearer, err, gate
@@ -137,6 +143,16 @@ def _store(state: Any, cfg: config.Config) -> Any:
     return None
 
 
+def _dismissal_store(state: Any) -> Any:
+    """How the desk reaches "לא פער" (R5): `DismissalStore` on the URL given, or the tests' own on `state.dismissal_store`."""
+    given = getattr(state, "dismissal_store", None)
+    if given is not None:
+        return lambda _url: given
+    from .dismissals_store import DismissalStore
+
+    return DismissalStore
+
+
 def _books_store(state: Any) -> Any:
     """How the desk reaches the books copy (D3): `BooksStore` on the URL given, or the tests' own on `state.books_store`
     (and the tests' clock of the copy's age on `state.books_now`)."""
@@ -153,7 +169,7 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
     request)."""
     key = (hashlib.sha256(cfg.monday_token.encode("utf-8")).hexdigest(), id(getattr(state, "monday_transport", None)),
            hashlib.sha256(cfg.database_url.encode("utf-8")).hexdigest(), id(getattr(state, "desk_store", None)),
-           id(getattr(state, "books_store", None)))
+           id(getattr(state, "books_store", None)), id(getattr(state, "dismissal_store", None)))
     with _state_lock:
         current = getattr(state, "desk", None)
         if current is not None and current.key == key:
@@ -177,7 +193,8 @@ def desk_state(state: Any, cfg: config.Config) -> SimpleNamespace:
                                refresh=RateLimiter(1, 1, user_window=REFRESH_GAP_S, global_window=REFRESH_GAP_S),
                                view=None, view_lock=threading.Lock(),
                                books=DeskBooks(_books_store(state), lambda: _reader(state, cfg.monday_token),
-                                               now=getattr(state, "books_now", None)),
+                                               now=getattr(state, "books_now", None),
+                                               make_dismissals=_dismissal_store(state)),
                                merged=None)
         state.desk = made
         return made
@@ -452,7 +469,8 @@ def _unavailable(st: Any, reason: Optional[str] = None) -> JSONResponse:
     return err(503, "finance_unavailable", reason=reason or last.get("error") or "not_read")
 
 
-def _answer(cfg: config.Config, st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = False) -> JSONResponse:
+def _answer(cfg: config.Config, st: Any, got: Visitor, endpoint: str, force: bool, stale_ok: bool = False,
+            extra: Optional[dict] = None) -> JSONResponse:
     """The desk for this reader. D1's counts (`user`, `tabs`, `reading`, `last_attempt`) and since D2 the desk itself:
     `view`, the tabs the reader may see (`visible_part`), its money as strings; `view_error`, "crashed" when the reading
     could not be built into one; `taken_at`, the reading's time, which the totals and the files are asked by; its
@@ -492,6 +510,7 @@ def _answer(cfg: config.Config, st: Any, got: Visitor, endpoint: str, force: boo
         "age_seconds": age,
         "refreshing": bool(refreshing and reading is not None),
         "stale": bool(reading is not None and failing and age is not None and age > STALE_S),
+        **(extra or {}),
     }))
 
 
@@ -834,3 +853,131 @@ def _keep_usage(cfg: config.Config, us: Any, identity: Any, body: UsageBody) -> 
     # closed words and one count: the refused events are counted in /health, never named
     audit(identity, "usage", "some_refused" if refused else "ok", stored)
     return JSONResponse({"stored": stored, "refused": refused})
+
+
+# ---- "לא פער" (R5) ------------------------------------------------------------------------------------------------------
+# What a press is answered, past the gate: each word of DeskBooks' with its status, and the route's own (a body of another
+# shape, a reader who may not press)
+DISMISS_STATUS = {"dismissals_unavailable": 503, "busy": 503, "other_reading": 409, "not_shown": 409,
+                  "already_hidden": 409, "evidence_changed": 409, "not_live": 409, "not_yours": 403}
+EVIDENCE_CHARS = 64
+
+
+class DismissBody(BaseModel):
+    """A press of "לא פער" (or "לא להציע"): the alert - its kind (app/desk/dismissals.py KINDS) and its subject (an item
+    id or a document's number) - the evidence the page was sent with it, and the reading and the books' part the page
+    shows (its `taken_at` and its `books.key`). Anything else in the body is 400 `invalid_filter`, read after the gate."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Any = None
+    subject: Any = None
+    evidence: Any = None
+    taken: Any = None
+    books: Any = None
+
+
+class UndoBody(BaseModel):
+    """A press of "החזרה" in the hidden list: the dismissal's kind, subject and id, as the list showed them."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Any = None
+    subject: Any = None
+    id: Any = None
+
+
+def _alert_ok(kind: Any, subject: Any) -> bool:
+    return (isinstance(kind, str) and kind in dz.KINDS and isinstance(subject, str) and subject.isascii()
+            and subject.isdigit() and 0 < len(subject) <= dz.SUBJECT_MAX)
+
+
+def _may_press(visitor: Visitor, kind: str, endpoint: str) -> Optional[JSONResponse]:
+    """A member of each of the alert's boards (dz.BOARDS: the students' marks, proposals and documents Student Charge's,
+    the companies' documents B2B Charge's, the unclear ones both), and never a viewer: a dismissal hides the alert from
+    everyone, and a viewer of a board writes nothing on it (app/desk/gate.py). Checked by the kind alone, before anything
+    about the alert is looked up, so a reader of one board learns nothing of the other's documents."""
+    tabs = {"b2c": visitor.b2c, "b2b": visitor.b2b}
+    if not all(tabs[b] is True for b in dz.BOARDS[kind]):
+        audit(visitor.identity, endpoint, "not_a_member")
+        return err(403, "not_a_board_member")
+    if visitor.identity.view_only is True:
+        audit(visitor.identity, endpoint, "view_only")
+        return err(403, "view_only")
+    return None
+
+
+def _refused(visitor: Visitor, endpoint: str, word: str) -> JSONResponse:
+    audit(visitor.identity, endpoint, word)
+    return err(DISMISS_STATUS[word], word)
+
+
+@router.post("/api/alerts/not-a-gap")
+async def alert_not_a_gap(request: Request) -> JSONResponse:
+    """"לא פער" on one alert of the books (R5; the spec §2.4: the sessionToken, a member of the alert's board). The gate
+    first, in the threadpool (it may read a board's members), and only then the body. The server keeps the evidence it
+    computed itself for the alert the part shows now (app/desk/books.py DeskBooks.dismiss) and refuses a press whose
+    evidence is not that (`evidence_changed`): a hash from the page is compared, never kept. It writes only its own
+    database. Answered with the desk as it is after the press, and `dismissed`: {kind, subject, id}."""
+    got = await run_in_threadpool(_gated, request, "not-a-gap")
+    if isinstance(got, JSONResponse):
+        return got
+    cfg, st, visitor = got
+    body = await _body_of(request, DismissBody)
+    if body is None:
+        audit(visitor.identity, "not-a-gap", "invalid_filter")
+        return err(400, "invalid_filter")
+    return await run_in_threadpool(_dismiss, cfg, st, visitor, body)
+
+
+def _dismiss(cfg: config.Config, st: Any, visitor: Visitor, body: DismissBody) -> JSONResponse:
+    ep = "not-a-gap"
+    if not _alert_ok(body.kind, body.subject) or not isinstance(body.evidence, str) \
+            or len(body.evidence) != EVIDENCE_CHARS or not all(c in "0123456789abcdef" for c in body.evidence) \
+            or not isinstance(body.taken, str) or len(body.taken) > 40 \
+            or not isinstance(body.books, str) or len(body.books) > BOOKS_KEY_MAX:
+        audit(visitor.identity, ep, "bad_alert")
+        return err(400, "bad_alert")
+    refused = _may_press(visitor, body.kind, ep)
+    if refused is not None:
+        return refused
+    reading = st.reading.reading   # as held: a press reads nothing of monday
+    if reading is None or _instant(body.taken) is None or _instant(body.taken) != _instant(reading.get("read_at")):
+        return _refused(visitor, ep, "other_reading")
+    done = st.books.dismiss(cfg, body.kind, body.subject, body.evidence, body.books, reading.get("read_at"),
+                            visitor.identity.user_id)
+    if "error" in done:
+        return _refused(visitor, ep, done["error"])
+    audit(visitor.identity, ep, "replaced" if done["replaced"] else "ok")
+    return _answer(cfg, st, visitor, ep, force=False, stale_ok=True,
+                   extra={"dismissed": {"kind": body.kind, "subject": body.subject, "id": done["id"]}})
+
+
+@router.post("/api/alerts/not-a-gap/undo")
+async def alert_not_a_gap_undo(request: Request) -> JSONResponse:
+    """"החזרה": the undo of one's own "לא פער" (R5): the same gate and boards, only a dismissal the part shown now holds
+    hidden, and only by whoever dismissed it (ADR-0190 §6's norm; the repo has no admin), never deleted - its row keeps who
+    undid it and when. Answered with the desk as it is after it, and `undone`: {kind, subject, id}."""
+    got = await run_in_threadpool(_gated, request, "not-a-gap-undo")
+    if isinstance(got, JSONResponse):
+        return got
+    cfg, st, visitor = got
+    body = await _body_of(request, UndoBody)
+    if body is None:
+        audit(visitor.identity, "not-a-gap-undo", "invalid_filter")
+        return err(400, "invalid_filter")
+    return await run_in_threadpool(_undo, cfg, st, visitor, body)
+
+
+def _undo(cfg: config.Config, st: Any, visitor: Visitor, body: UndoBody) -> JSONResponse:
+    ep = "not-a-gap-undo"
+    if not _alert_ok(body.kind, body.subject) or type(body.id) is not int or not 0 < body.id < 2 ** 63:
+        audit(visitor.identity, ep, "bad_alert")
+        return err(400, "bad_alert")
+    refused = _may_press(visitor, body.kind, ep)
+    if refused is not None:
+        return refused
+    reading = st.reading.reading
+    done = st.books.undo(cfg, body.kind, body.subject, body.id, None if reading is None else reading.get("read_at"),
+                         visitor.identity.user_id)
+    if "error" in done:
+        return _refused(visitor, ep, done["error"])
+    audit(visitor.identity, ep, "ok")
+    return _answer(cfg, st, visitor, ep, force=False, stale_ok=True,
+                   extra={"undone": {"kind": body.kind, "subject": body.subject, "id": body.id}})
