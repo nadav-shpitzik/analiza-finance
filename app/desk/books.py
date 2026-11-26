@@ -61,20 +61,26 @@ of ID numbers before it was stored (spec §3.4), and no card key, no ID number a
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
-import unicodedata
 from collections import Counter, defaultdict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
-from ..books.doctypes import DRAFT_STATUS, INFERRED, VALID_STATUS, role
+from ..books.doctypes import DRAFT_STATUS, INFERRED, role
 from ..books.store import BooksStoreError, not_ready, summarize_series
 from ..monday.client import MondayError, MondayReader
 from ..recon import receipt_dates as a1
+# The cards, the names and where a document lands are shared with FR-C2 (app/recon/ref_fill.py) since 26.11: moved from
+# here, never copied, so the desk's list and the plan's fills judge a document by one code
+from ..recon.cards import (ERA_FROM, INVOICE, INVOICE_RECEIPT, KEY_MASK, LISTED_ROLES, NAME_CARD, PLACES,  # noqa: F401
+                           PROFORMA, STUDENT_WINDOW_YEAR, VOUCHER_CARD, account_keys_of, card_of, card_sides,
+                           cited_numbers, name_words, no_card_why, norm_key, norm_name, place_of, side_card, side_of)
+from ..recon.cards import day_of as _day
+from ..recon.cards import money_of as _money
+from ..recon.cards import number_of as _number
 from ..recon.reading import Board, check_board
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
 from .view import (BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID, TASK_STATES,
@@ -82,15 +88,8 @@ from .view import (BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS,
 
 logger = logging.getLogger("analiza_finance.desk")
 
-# Chava's start (ADR-0168 §5): she records from it and does not backfill. A gap of a row or a document before it is the
-# cleanup list Nadav runs once (backlog 0301 C1), never her "לטיפול" (spec §6.4.2).
-ERA_FROM = date(2026, 10, 25)
-# FR-7: Student Charge cites documents of this year only (A1's window, the same constant)
-STUDENT_WINDOW_YEAR = a1.WINDOW_YEAR
-# FR-D1: Defence's vouchers, counted apart until the vouchers board is a matching target
-VOUCHER_CARD = "10091"
-INVOICE, INVOICE_RECEIPT, PROFORMA = "invoice", "invoice_receipt", "proforma"
-LISTED_ROLES = (INVOICE, INVOICE_RECEIPT)  # types 1 and 2: what a charge row cites (FR-C1, FR-D1)
+# ERA_FROM (Chava's start), STUDENT_WINDOW_YEAR (FR-7), VOUCHER_CARD (FR-D1), the roles, PLACES, KEY_MASK and NAME_CARD
+# live in app/recon/cards.py, imported above
 
 # The marks, each from A1's buckets (the first that fits a row in a1.BUCKETS; one bucket a row)
 MARKS = ("books_ref_invalid", "books_amount_differs", "books_receipt_unpaid")
@@ -101,9 +100,8 @@ MARK_OF_BUCKET = {"ref_not_in_books": "books_ref_invalid", "ref_ambiguous": "boo
 # nothing is due) and never a label the desk does not know (the review of dfa967b: noise)
 UNPAID_STATUSES = (P_UNPAID, P_PROBLEM)
 
-# Where a document of the books lands, the first that fits (spec §6.3.1: each in exactly one)
-PLACES = ("outside", "cited", "missing", "vouchers", "students", "companies", "unclear")
-# Why a card's side is not clear: the documents of such a card go to members of both charge boards only
+# Why a card's side is not clear (cards.UNCLEAR_CODES): the documents of such a card go to members of both charge boards
+# only
 UNCLEAR_WHY = {
     "no_invoice_receipt": "בכרטיס אין חשבונית מס/קבלה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
     "invoice_receipt_and_proforma": "בכרטיס יש חשבונית מס/קבלה וגם חשבון עסקה, והוא אינו מפתח חשבשבת של חברה במאנדיי",
@@ -119,12 +117,6 @@ UNCLEAR_WHY = {
     "key_empty": "למסמך אין בעותק של הספרים מפתח כרטיס ולא שם, ולכן החשבונית נשפטת לבדה, וחשבונית מס לבדה לא אומרת של מי "
                  "היא",
 }
-# the books' cleaning masks a number of six digits or more that has no known shape (app/books/clean.py): a key holding it
-# names no card
-KEY_MASK = "#"
-# a card a document's side is judged by when its key names none: its name, after this prefix - which holds KEY_MASK, so it
-# is never a card's key (`card_of`) and never an Account's (`account_keys_of`)
-NAME_CARD = "#name:"
 
 # The states of the part, and the closed reasons a part is not `ok` - each with the sentence the page and the files say
 STATES = ("ok", "held", "none", "off")
@@ -202,24 +194,10 @@ WAIT_S = 30
 
 
 # ---- small readers ---------------------------------------------------------------------------------------------------
-def _money(v: Any) -> Optional[Decimal]:
-    if v is None or isinstance(v, bool):
-        return None
-    try:
-        return Decimal(str(v))
-    except Exception:  # noqa: BLE001 - not an amount
-        return None
-
-
+# `_money`, `_number` and `_day`, and the names, keys and sides of cards, are app/recon/cards.py's (imported above)
 def money_text(v: Decimal) -> str:
     """An amount as the desk's rows and files write one: agorot, thousands with a comma, the shekel after it."""
     return "{:,.2f} ₪".format(v)
-
-
-def _number(doc: dict) -> Optional[str]:
-    """A document's number as A1 looks it up (`index_documents`): ASCII digits, no leading zero; None for one that has none."""
-    text = str(doc.get("doc_number") or "")
-    return str(int(text)) if text.isascii() and text.isdigit() else None
 
 
 def type_name(doc_type: Any) -> str:
@@ -227,104 +205,6 @@ def type_name(doc_type: Any) -> str:
         return INFERRED[int(doc_type)][1]
     except (KeyError, TypeError, ValueError):
         return "סוג %s" % doc_type
-
-
-def _day(v: Any) -> Optional[date]:
-    if isinstance(v, datetime):
-        return v.date()
-    if isinstance(v, date):
-        return v
-    return a1.parse_day(v)
-
-
-def norm_key(text: Any) -> str:
-    """A card's key as both sides are compared: NFKC, trimmed, case folded."""
-    return unicodedata.normalize("NFKC", str(text or "")).strip().casefold()
-
-
-def name_words(text: Any) -> frozenset:
-    """A name as a set of words (FR-C2's rule): split at anything that is not a letter or a digit, NFKC and case folded;
-    words of two letters or more, none with a digit, in any order."""
-    words = re.split(r"[\W_]+", unicodedata.normalize("NFKC", str(text or "")).casefold())
-    return frozenset(w for w in words if len(w) >= 2 and not any(ch.isdigit() for ch in w))
-
-
-def account_keys_of(rows: list) -> dict:
-    """{card key: [the names of the Accounts whose "מפתח חשבשבת" names it]}. A cell may name more than one card,
-    separated by commas, slashes or spaces (MON-43: it should not, and the desk does not lose one that does). A key the
-    desk's reading masked (an ID-like number, `mask_ids`) names no card, as in the books."""
-    out: dict = defaultdict(list)
-    for r in rows:
-        for key in re.split(r"[,;/\s]+", norm_key(r.get(AC["hash_key"]))):
-            if key and KEY_MASK not in key:
-                out[key].append(str(r.get("name") or ""))
-    return dict(out)
-
-
-def card_of(doc: dict) -> Optional[str]:
-    """The card a document is on, by its key - or None when the key names no card: empty, or masked by the copy's cleaning
-    ("#": every key of six digits or more that has no known shape reads so, and pooled they would be one card of many
-    people's documents)."""
-    key = norm_key(doc.get("account_key"))
-    return None if not key or KEY_MASK in key else key
-
-
-def no_card_why(doc: dict) -> str:
-    """Why a document's key names no card: `key_empty`, or `key_masked`."""
-    return "key_empty" if not norm_key(doc.get("account_key")) else "key_masked"
-
-
-def norm_name(text: Any) -> str:
-    """A card's name as cards are told apart by it: NFKC, case folded, every run of spaces one space, trimmed."""
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(text or "")).casefold()).strip()
-
-
-def side_card(doc: dict) -> Optional[str]:
-    """The card a document's side is judged by: its key (`card_of`); for a key that names none (masked or empty), its
-    card's name (NAME_CARD and `norm_name`), so the documents of one card keyed by an ID number or a ח.פ are judged together
-    (FR-C4: a proforma beside them) - evidence of the side only, never matched to an Account or a row; None with neither
-    (the document is judged alone)."""
-    card = card_of(doc)
-    if card is not None:
-        return card
-    name = norm_name(doc.get("account_name"))
-    return NAME_CARD + name if name else None
-
-
-def cited_numbers(rows: list, column: str) -> set:
-    """Every document number a charge board's rows cite in `column`: each number of a readable cell (A1's `parse_refs`),
-    and every number an unreadable one may name (A1's `loose_numbers`) - a document a row may cite is never listed as
-    one no row cites."""
-    out: set = set()
-    for r in rows:
-        refs = a1.parse_refs(r.get(column))
-        out.update(refs if refs is not None else a1.loose_numbers(r.get(column)))
-    return out
-
-
-def card_sides(documents: list, keys: dict) -> dict:
-    """{card: (side, why)} for every card that holds a valid document, by `side_card` (a key, or a name for a key that
-    names none): ("company", "account_key"), ("student", "invoice_receipt"), or ("unclear", one of UNCLEAR_WHY). A card
-    judged by its name is never a company's (no Account names it). A draft is no evidence; a document that answered "not
-    found" stays in every figure until a person confirms it gone (spec §4.2.5), so it is. A document with neither a key
-    nor a name is on no card here: it is judged alone (`place_of`)."""
-    roles: dict = defaultdict(set)
-    for d in documents:
-        card = side_card(d)
-        if card is not None and d.get("status") == VALID_STATUS:
-            roles[card].add(role(d.get("doc_type")))
-    out = {}
-    for card, held in roles.items():
-        named = card.startswith(NAME_CARD)
-        if not named and card in keys:
-            out[card] = ("company", "account_key")
-        elif INVOICE_RECEIPT in held and PROFORMA not in held:
-            out[card] = ("student", "invoice_receipt")
-        elif INVOICE_RECEIPT in held:
-            out[card] = ("unclear", "name_invoice_receipt_and_proforma" if named else "invoice_receipt_and_proforma")
-        else:
-            out[card] = ("unclear", "name_no_invoice_receipt" if named else "no_invoice_receipt")
-    return out
 
 
 # ---- the marks -------------------------------------------------------------------------------------------------------
@@ -506,43 +386,8 @@ def marks_of(analysis: dict, rows_by_id: dict, idx: dict) -> tuple:
 
 
 # ---- the documents with no charge ----------------------------------------------------------------------------------------
-def _in_era(day: Optional[date]) -> bool:
-    return day is not None and day >= ERA_FROM
-
-
-def place_of(doc: dict, cited: set, sides: dict) -> tuple:
-    """(place, why) of one held document, the first of PLACES that fits."""
-    if doc.get("status") != VALID_STATUS:
-        return "outside", "status"
-    r = role(doc.get("doc_type"))
-    if r not in LISTED_ROLES:
-        return "outside", "type"
-    total = _money(doc.get("total_incl"))
-    if total is None or total < 0:
-        return "outside", "cancellation" if total is not None else "no_total"
-    day = _day(doc.get("value_date"))
-    if not _in_era(day):
-        return "outside", "era"
-    number = _number(doc)
-    if number is not None and number in cited:
-        return "cited", ""
-    if doc.get("missing"):
-        return "missing", ""
-    if card_of(doc) == VOUCHER_CARD:
-        return "vouchers", ""
-    card = side_card(doc)
-    if card is None:
-        # neither a key nor a name: the document alone, by its own type (FR-6's interim rule), never pooled with another's
-        side, why = ("student", "invoice_receipt") if r == INVOICE_RECEIPT else ("unclear", no_card_why(doc))
-    else:
-        side, why = sides.get(card, ("unclear", "no_invoice_receipt"))
-    if side == "student":
-        return ("students", "") if day.year == STUDENT_WINDOW_YEAR else ("outside", "student_window")
-    if side == "company":
-        return "companies", ""
-    return "unclear", why
-
-
+# `place_of` (where a held document lands, the first of PLACES that fits) is app/recon/cards.py's: the desk asks it from
+# ERA_FROM, FR-C2 from the first day of Student Charge's window
 def _entry(doc: dict) -> dict:
     day = _day(doc.get("value_date"))
     return {"number": str(doc.get("doc_number") or ""), "type": doc.get("doc_type"), "type_name": type_name(doc.get("doc_type")),
