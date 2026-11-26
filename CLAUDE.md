@@ -179,7 +179,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
 - **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
   `b2c.cohorts` (Student Charge's members only). Only cohorts on the voucher track (Registration Flow `color_mm31k62f` index
   3, `on_track`): one on another track is shown nowhere, priced or not. Per such cohort with one clean "מחיר" (`text_mm5fhydb`,
-  `price_of`; else listed with why and no money, and a cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
+  `price_of`, an invisible mark at its edge a space as A1's `_clean` reads it; else listed with why and no money, and a
+  cohort "בוטל" too): its students from Enrollments, never from the payments (Status נרשם,
   פעיל, At Risk or סיים by index, the helper's IN set; one per person), what each paid (their payments' `net`, the desk's own
   money; a payment filed by its lead with no enrollment is the student's whose enrollment links that lead, `EN["lead"]`
   "קישור לליד", or who is its lead's person, `LD["person"]`, when exactly one student is, `_lead_payer`; else it is said on

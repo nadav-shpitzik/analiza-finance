@@ -75,6 +75,7 @@ from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from typing import Any, Optional
 
+from ..recon.receipt_dates import _clean
 from .reading import CO, COHORT_CANCELLED, EN, LD, SC, _uniq, on_track
 from .view import UNNAMED_LABEL, VOUCHER, ZERO, _cohort_meta, _dsum, _q, label_of
 
@@ -219,8 +220,11 @@ _SHEKEL = ("₪", "ש\"ח", "ש״ח")
 def price_of(text: Any) -> tuple:
     """(the price, "") from a cohort's "מחיר" as typed: one number, its thousands with commas or without, at most agorot,
     a "₪" or "ש"ח" beside it - or (None, why): "empty"; "unreadable", anything else (two numbers, a range, words, a "10 000",
-    a number the reading masked as an ID); "zero". Never a guess: a price that is not one clean number is said, not read."""
-    t = unicodedata.normalize("NFKC", str(text or "")).strip()
+    a number the reading masked as an ID); "zero". Never a guess: a price that is not one clean number is said, not read.
+    An invisible mark a right-to-left editor leaves (RLM, LRM, an embedding, a no-break space) is a space, by A1's own text
+    cleaning (app/recon/receipt_dates.py `_clean`, reused): at the edge of the number it is trimmed, so "\u200f12,000" is
+    12,000 as the page shows it; inside it the price is unreadable, never another number (the review of D4)."""
+    t = _clean(unicodedata.normalize("NFKC", str(text or "")))
     for s in _SHEKEL:
         t = t.replace(s, "")
     t = t.strip()

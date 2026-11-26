@@ -384,7 +384,11 @@ def test_a_cohort_without_a_clean_price_or_cancelled_is_listed_with_why_and_no_m
 
 @pytest.mark.parametrize("text, value", [("10,000", "10000"), ("12000", "12000"), (" 15,000 ", "15000"), ("10,000 ₪", "10000"),
                                          ("₪12,000", "12000"), ("9,999.5", "9999.5"), ("1,234,567", "1234567"),
-                                         ('12,000 ש"ח', "12000"), ("１２０００", "12000")])
+                                         ('12,000 ש"ח', "12000"), ("１２０００", "12000"),
+                                         # the review of D4: the marks a right-to-left editor leaves, as A1 cleans them
+                                         ("\u200f12,000", "12000"), ("12,000\u200e", "12000"), ("\u202b12,000\u202c", "12000"),
+                                         ("\u200e12,000 ₪", "12000"), ("₪\u200f12000", "12000"), ("\ufeff9,000", "9000"),
+                                         ("\u206612,000\u2069", "12000"), ("12,000\u00a0₪", "12000")])
 def test_a_price_is_one_clean_number_as_typed(text, value):
     assert ch.price_of(text) == (D(value), "")
 
@@ -392,7 +396,10 @@ def test_a_price_is_one_clean_number_as_typed(text, value):
 @pytest.mark.parametrize("text, why", [(None, "empty"), ("", "empty"), ("₪", "empty"), ("0", "zero"), ("0.00", "zero"),
                                        ("10,00", "unreadable"), ("10.000", "unreadable"), ("1,0000", "unreadable"),
                                        ("-5000", "unreadable"), ("12000 + 3000", "unreadable"), ("כ-12000", "unreadable"),
-                                       ("10,000.505", "unreadable"), ("٤٠٠٠", "unreadable")])
+                                       ("10,000.505", "unreadable"), ("٤٠٠٠", "unreadable"),
+                                       # a mark inside the number is never another number; a mark alone is no price
+                                       ("12,\u200f000", "unreadable"), ("12\u200b000", "unreadable"), ("\u200f", "empty"),
+                                       ("\u200e₪\u200f", "empty")])
 def test_a_price_that_is_not_one_clean_number_is_never_guessed(text, why):
     assert ch.price_of(text) == (None, why)
 
