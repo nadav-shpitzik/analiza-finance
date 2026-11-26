@@ -402,10 +402,10 @@
   /* the row's marks as chips, in FLAG_ORDER: where a list shows "שיבוץ" (every general list, "לטיפול" among them) they sit
      under the state; a list with "מה לבדוק" says them there, among the row's other chips */
   function booksChips(r) {
-    var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); });
-    return keys.length ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
+    var keys = FLAG_ORDER.filter(function (k) { return !!booksMark(r, k); }), receipt = receiptChip(r);
+    return keys.length || receipt ? "<div class=\"fin-chips fin-books-chips\">" + keys.map(function (k) {
       return "<span class=\"" + chipClass(k) + "\"" + chipTitle(k, r) + ">" + esc(booksMark(r, k).chip) + "</span>";
-    }).join("") + "</div>" : "";
+    }).join("") + receipt + "</div>" : "";
   }
   /* QA 26.11 (D): a mark's chip is short - its whole words wrapped to four lines in "שיבוץ"; now two at most, in the
      narrow column at monday's widths - and its whole sentence, the details' own, is said when it is pointed at */
@@ -466,7 +466,7 @@
     } },
     channel: { h: "ערוץ תשלום", xs: 1, c: function (r) { return lbl(r, "channel"); } },
     invoice: { h: "אסמכתת חשבונית", xs: 1, c: function (r) { return ltr(r.invoice) || NOT_SET; } },
-    receipt: { h: "שליחת קבלה", xs: 1, c: function (r) { return lbl(r, "receipt") + receiptMark(r); } },
+    receipt: { h: "שליחת קבלה", xs: 1, c: function (r) { return lbl(r, "receipt"); } },
     /* in "חריג, לבדיקה" only when one of its rows has an approved refund (QA 1.1: the 4,000 to credit showed nowhere) */
     to_refund: { h: "סכום לזיכוי", n: 1, t: "credit_approved", opt: function (r) { return num(r.credit_approved) > 0; },
       c: function (r) { return num(r.credit_approved) ? money2(r.credit_approved) : NOT_SET; } },
@@ -602,16 +602,25 @@
     if (n === null || n > 0) { return ""; }
     return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
   }
-  /* Nadav 26.11 (receipts go out slowly): beside "טרם" of a payment in "שולם, שליחת קבלה: טרם", what the books say of its
-     receipt - issued there, so only monday is behind ("הופקה בחשבשבת: 62601"), or none identified there ("לא זוהתה
-     בחשבשבת"); the words and their title the server's (app/desk/books.py receipt_laid, laid only from a current part of
-     this reading), so nothing at all when the books are not laid */
-  function receiptMark(r) {
+  /* Nadav 26.11 (receipts go out slowly): under the state of a payment in "שולם, שליחת קבלה: טרם", beside the books' other
+     chips, what the books say of its receipt - issued there, so only monday is behind ("הופקה בחשבשבת", its number in its
+     title), or none identified there ("לא זוהתה בחשבשבת"); the words and their title the server's (app/desk/books.py
+     receipt_laid, laid only from a current part of this reading), so nothing at all when the books are not laid. Not in
+     "שליחת קבלה": that column is a word wide, and "בחשבשבת" broke in the middle there */
+  function receiptBooks(r) {
     var b = r.state === "receipt_pending" ? r.receipt_books : null;
-    if (!b || !b.text) { return ""; }
-    /* its own small line under "טרם", free to wrap (finance.css): on one line with it, it widened the column at 1280 */
-    return "<span class=\"fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
-      esc(b.text) + "</span>";
+    return b && b.text ? b : null;
+  }
+  function receiptChip(r) {
+    var b = receiptBooks(r);
+    return b ? "<span class=\"fin-chip fin-rcpt" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") +
+      "\">" + esc(b.text) + "</span>" : "";
+  }
+  /* the details' line: the words with the number, its title the same */
+  function receiptSaid(r) {
+    var b = receiptBooks(r);
+    return b ? "<span class=\"fin-rcpt-said" + (b.issued ? " fin-rcpt-issued" : "") + "\" title=\"" + esc(b.title || "") + "\">" +
+      esc(b.text) + (b.number ? ": " + ltr(b.number) : "") + "</span>" : "";
   }
   /* the queue's line under its sentence: of its rows, how many the books already hold a receipt of and how many none was
      identified of - every number the server's (GET /api/desk/totals `receipts`, counted once, app/desk/books.py
@@ -982,7 +991,7 @@
       (r.channel ? " · " + esc(r.channel) : "");
     switch (r.state) {
       case "receipt_pending": return paid + " · <b>שליחת קבלה: " + esc(r.receipt || "ריק") + "</b>" +
-        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptMark(r) ? " · " + receiptMark(r) : "");
+        (waitedText(r) ? " · " + waitedText(r) : "") + (receiptSaid(r) ? " · " + receiptSaid(r) : "");
       /* the two dates side by side: the legal day and its lateness, then the transfer round set at approval. The amount is
          monday's "סכום לזיכוי", never a word of its own (QA 2.5: "להחזיר") */
       case "refund_to_execute": return "<b>סכום לזיכוי " + money2(r.credit_approved) + "</b> · " + LAST_DAY_LABEL + " " +

@@ -551,7 +551,10 @@ def test_a_mark_moves_no_row_changes_no_sum_and_joins_tasks_only_from_the_era():
     assert {i: r["state"] for i, r in after.items()} == {i: r["state"] for i, r in before.items()}
     assert [p["states"] for p in merged["b2c"]["periods"]] == [p["states"] for p in view["b2c"]["periods"]]
     assert (after["1"]["books_task"], after["3"]["books_task"], after["4"]["books_task"]) == (True, False, True)
-    assert "books_task" not in after["5"] and "books" not in after["5"] and after["5"] is before["5"]
+    # an unmarked row keeps all it had; since Nadav 26.11 a pending receipt also carries what the books say of its receipt
+    assert "books_task" not in after["5"] and "books" not in after["5"]
+    assert {k: v for k, v in after["5"].items() if k != "receipt_books"} == before["5"]
+    assert after["5"]["receipt_books"] == db.receipt_laid({})            # it cites nothing, and no document has its name
     assert after["1"]["flags"] == before["1"]["flags"] + ["books_receipt_unpaid"]
     tasks = [r["id"] for r in fd.filter_b2c(merged["b2c"], "tasks", "", "")]
     assert sorted(tasks) == ["1", "4", "5"]                       # 5 is "שולם, שליחת קבלה: טרם"; 3 is older

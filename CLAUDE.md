@@ -151,7 +151,15 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   gone with it (`flashWait`, QA 26.11). An amount struck through says why on hover ("לא נספר: הסטטוס לא מכניס כסף"). A pending
   receipt ("שולם, שליחת קבלה: טרם") is a queue: its list is the oldest first, on the page and in the file alike (view.py
   `B2C_SORT`, finance.js `SC_SORT`, held together by tests/test_desk_parity_js.py), and beside its date, in every list, and in its
-  details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים"; Nadav 26.11, receipts go out slowly). At
+  details it says how long it has waited from that date (`waitedText`: "ממתין 14 ימים"; Nadav 26.11, receipts go out slowly),
+  a line of its own under the date (9d4d5b8: on the date's line it widened the column). And what the books hold of each receipt
+  (the same day; `receipt_books`, app/desk/books.py `receipt_in_books`, laid by `merge` only from a current part of this reading,
+  as a proposal is): "הופקה בחשבשבת" when a number the row cites is an invoice-receipt A1 accepts, or FR-C2's analysis finds the
+  one uncited invoice-receipt of its name and amount (`fill`, whatever the era: a label, never a write), its number in the
+  chip's title and in the details; else "לא זוהתה בחשבשבת", which is not "none issued" (the legend says so). A chip beside the
+  books' others under the state, never in "שליחת קבלה" (a word wide: "בחשבשבת" broke in the middle there), two lines at most at
+  1280 and 1400 (tests/test_desk_books_page.py); the line over the queue, its split, is GET /api/desk/totals `receipts`
+  (`receipts_split`: issued, not, unknown), counted once. Tests: `tests/test_desk_receipts.py`, the page's in test_desk_page.py. At
   the desk's foot, "חסר כאן משהו? פנייה לנדב" is back as analiza-metrics' desk had it (`ASK_URL`, usage `ask`; QA 26.11).
   Until 24.12.2026 a closable "מה השתנה" of four lines under the top bar (`WHATS_NEW`), closed for good in the browser
   (localStorage, best effort; QA 26.11); the browser tests open the desk as one who closed it (`qa_visit(whats_new=False)`). A row's action in its details floats beside its control, as a batch

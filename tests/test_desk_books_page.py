@@ -88,7 +88,10 @@ def test_tasks_holds_the_marked_rows_of_the_era_with_their_red_chip_and_the_tile
     assert mark["long"] == 'בחשבשבת חשבונית מס/קבלה 62502, והסטטוס "לא שולם"'
     assert state.endswith('<div class="fin-chips fin-books-chips"><span class="fin-chip bad" title="%s">חשבשבת: שולם</span>'
                           '</div>' % h.escape(mark["text"]))
-    assert "k-notes" not in tasks and "fin-books-chips" not in cell(tasks, "3", "state")
+    # 3 is in "לטיפול" by its state and has no mark: no red chip under it - only, since Nadav 26.11, the books' word on its
+    # pending receipt, which is no mark
+    assert "k-notes" not in tasks and "fin-chip bad" not in cell(tasks, "3", "state")
+    assert 'class="fin-chip fin-rcpt" ' in cell(tasks, "3", "state")
     # the tile says the server's count of "לטיפול", which its list shows
     tile = re.search(r'data-bstate="tasks"[^>]*><span class="n">(\d+)</span>', tasks).group(1)
     assert int(tile) == merged["b2c"]["periods"][0]["tasks"] == len(ids) == 2
@@ -338,6 +341,9 @@ def marked_long_view() -> dict:
     for r, (kind, chip) in zip(v["b2c"]["rows"][:3], marks):
         r.update(flags=r["flags"] + [kind], books_task=True, books=[
             {"kind": kind, "chip": chip, "long": long, "text": text, "documents": ["62502"]}])
+    # Nadav 26.11: what the books say of each pending receipt, as merge lays it - issued and none identified, by turns
+    for i, r in enumerate(x for x in v["b2c"]["rows"] if x["state"] == "receipt_pending"):
+        r["receipt_books"] = db.receipt_laid({"number": "62601", "how": "found"} if i % 2 == 0 else {})
     for p in v["b2c"]["periods"]:
         p["tasks"] = len([r for r in v["b2c"]["rows"] if r["state"] in ("exception", "refund_to_execute", "receipt_pending")
                           or r.get("books_task")])
@@ -379,6 +385,13 @@ def test_in_a_browser_the_books_draw_with_no_error_and_tasks_still_fits_its_fram
           return [1 + tops.filter((t, i) => i && t - tops[i - 1] > 8).length, c.getAttribute("title") || ""];
         }),
         lists: [...document.querySelectorAll(".fin-books")].map((p) => p.getAttribute("data-books")),
+        /* Nadav 26.11: what the books say of a pending receipt, a chip under the state: its lines */
+        rcpt: [...document.querySelectorAll(".fin-books-chips .fin-chip.fin-rcpt")].map((c) => {
+          const range = document.createRange();
+          range.selectNodeContents(c);
+          const tops = [...range.getClientRects()].map((x) => x.top).sort((a, b) => a - b);
+          return 1 + tops.filter((t, i) => i && t - tops[i - 1] > 8).length;
+        }),
         candidate: (document.querySelector('.fin-books .fin-cand a.fin-name') || {}).textContent || "" };
     });
   }
@@ -392,4 +405,6 @@ def test_in_a_browser_the_books_draw_with_no_error_and_tasks_still_fits_its_fram
         assert all(lines <= 2 and title.startswith("בחשבשבת חשבונית מס/קבלה 62502 מ-") for lines, title in b2c["chips"]), \
             (size, b2c["chips"])
         assert b2c["candidate"] == "תלמיד/ה לדוגמה בשם ארוך-ארוך 3"
+        # the books' word on each pending receipt, under its state: two lines at most, as the marks' chips
+        assert len(b2c["rcpt"]) == 3 and all(lines <= 2 for lines in b2c["rcpt"]), (size, b2c["rcpt"])
         assert b2b["fits"] and b2b["lists"] == ["b2b", "unclear"], (size, b2b)

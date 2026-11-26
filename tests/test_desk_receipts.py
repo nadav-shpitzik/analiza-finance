@@ -4,7 +4,8 @@ current part of this very reading only, and GET /api/desk/totals counts the spli
 
 Each rule with its test: a cited invoice-receipt ("cited"), one found by its name and amount ("found", also before the
 era - a label, never a proposal), and every case none is identified - a tax invoice alone, a draft, a number two documents
-carry, two candidates of the name and amount, nothing. Synthetic fixtures; names and numbers of no one."""
+carry, two candidates of the name and amount, an invoice-receipt A1 refuses (a negative total), nothing. Synthetic
+fixtures; names and numbers of no one."""
 from __future__ import annotations
 
 from urllib.parse import quote
@@ -33,7 +34,8 @@ ROWS = [pending(1, "נועה ברק", ref="62701"),                     # cites 
         pending(6, "תומר נחום", ref="62706"),                     # cites a number two valid documents carry
         pending(7, "ליאת כרמי"),                                  # two invoice-receipts of its name and amount
         pending(8, "אורי פז"),                                    # nothing in the books
-        pending(9, "רוני שגב", ref="62709", receipt="1")]         # its receipt went out: not in the queue
+        pending(9, "רוני שגב", ref="62709", receipt="1"),         # its receipt went out: not in the queue
+        pending(10, "גל עמית", ref="62710")]                      # an invoice-receipt A1 refuses (a negative total)
 DOCS = [doc(62701, total=AMOUNT, name="נועה ברק", card="20001", day="2026-11-10"),
         doc(62702, total=AMOUNT, name="יואב שטרן", card="20002", day="2026-11-11"),
         doc(62703, total=AMOUNT, name="מאיה גולן", card="20003", day="2026-09-12"),
@@ -43,9 +45,10 @@ DOCS = [doc(62701, total=AMOUNT, name="נועה ברק", card="20001", day="2026
         doc(62706, total=AMOUNT, name="תומר נחום", card="20006", day="2026-11-10", stock=2),
         doc(62707, total=AMOUNT, name="ליאת כרמי", card="20007", day="2026-11-09"),
         doc(62717, total=AMOUNT, name="ליאת כרמי", card="20007", day="2026-11-11"),
-        doc(62709, total=AMOUNT, name="רוני שגב", card="20009", day="2026-11-10")]
+        doc(62709, total=AMOUNT, name="רוני שגב", card="20009", day="2026-11-10"),
+        doc(62710, total="-" + AMOUNT, name="גל עמית", card="20010", day="2026-11-10")]
 WANT = {"1": {"number": "62701", "how": "cited"}, "2": {"number": "62702", "how": "found"},
-        "3": {"number": "62703", "how": "found"}, "4": {}, "5": {}, "6": {}, "7": {}, "8": {}}
+        "3": {"number": "62703", "how": "found"}, "4": {}, "5": {}, "6": {}, "7": {}, "8": {}, "10": {}}
 
 
 def computed(rows=ROWS, docs=DOCS) -> tuple:
@@ -68,18 +71,32 @@ def test_each_payment_of_the_queue_is_judged_by_what_the_books_hold():
     assert part["fills"]["2"]["values"]["number"] == "62702"
 
 
+def test_only_fr_c2s_fill_is_found_whatever_else_its_entry_carries():
+    """`receipt_in_books`'s own contract, whatever FR-C2 puts in an entry today: only its bucket "fill" with a number is a
+    receipt found by name and amount."""
+    idx = db.index_copy([])
+    assert db.receipt_in_books(None, {"bucket": "fill", "proposed": "62799"}, idx) == {"number": "62799", "how": "found"}
+    for bucket in ("date_far", "two_candidates", "document_wanted_twice", "tax_invoice_waits", "amount_differs"):
+        assert db.receipt_in_books(None, {"bucket": bucket, "proposed": "62799"}, idx) == {}, bucket
+    assert db.receipt_in_books(None, {"bucket": "fill", "proposed": None}, idx) == {}
+    assert db.receipt_in_books(None, None, idx) == {}
+
+
 def test_merge_lays_it_on_the_queue_from_a_current_part_of_this_reading():
     part, view = computed()
     rows = {r["id"]: r for r in db.merge(view, current(part, view))["b2c"]["rows"]}
-    assert rows["1"]["receipt_books"] == {"issued": True, "number": "62701", "how": "cited",
-                                          "text": "הופקה בחשבשבת: 62701", "title": fd.RECEIPT_HOW_SAID["cited"]}
+    assert rows["1"]["receipt_books"] == {
+        "issued": True, "number": "62701", "how": "cited", "text": "הופקה בחשבשבת",
+        "title": "חשבונית מס/קבלה 62701 תקפה בחשבשבת, המספר שבאסמכתת חשבונית"}
     assert rows["2"]["receipt_books"]["how"] == rows["3"]["receipt_books"]["how"] == "found"
-    assert rows["3"]["receipt_books"]["title"] == fd.RECEIPT_HOW_SAID["found"] and "30 יום" in fd.RECEIPT_HOW_SAID["found"]
-    for i in "45678":
+    assert rows["3"]["receipt_books"]["title"].startswith("חשבונית מס/קבלה 62703 תקפה בחשבשבת, אחת בלבד בשם ובסכום")
+    assert "30 יום" in rows["3"]["receipt_books"]["title"]
+    for i in ("4", "5", "6", "7", "8", "10"):
         assert rows[i]["receipt_books"] == {"issued": False, "text": "לא זוהתה בחשבשבת", "title": fd.RECEIPT_UNSEEN_WHY}
     assert "receipt_books" not in rows["9"]
-    # never the proposal's own words: a row proposed a number carries both, apart
-    assert fd.RECEIPT_ISSUED_SAID % "62702" != fd._BOOKS_REF_FILL.format(number="62702")
+    # the chip's words are short and never the proposal's ("בחשבשבת: N"): a row proposed a number carries both, apart
+    assert not any(c.isdigit() for c in fd.RECEIPT_ISSUED_SAID + fd.RECEIPT_UNSEEN_SAID)
+    assert rows["2"]["receipt_books"]["text"] != fd._BOOKS_REF_FILL.format(number="62702")
 
 
 def test_a_held_part_or_one_of_another_reading_lays_nothing():
@@ -93,22 +110,22 @@ def test_the_split_is_counted_once_on_the_rows_of_the_list():
     part, view = computed()
     merged = db.merge(view, current(part, view))
     queue = fd.filter_b2c(merged["b2c"], "receipt_pending", "", "")
-    assert db.receipts_split(queue) == {"issued": 3, "not": 5, "unknown": 0}
+    assert db.receipts_split(queue) == {"issued": 3, "not": 6, "unknown": 0}
     # a search narrows it with the list; with no part laid every row of the queue is unknown
     assert db.receipts_split(fd.filter_b2c(merged["b2c"], "receipt_pending", "", "יואב")) == {"issued": 1, "not": 0,
                                                                                               "unknown": 0}
     bare = db.merge(view, dict(current(part, view), state="held"))
     assert db.receipts_split(fd.filter_b2c(bare["b2c"], "receipt_pending", "", "")) == {"issued": 0, "not": 0,
-                                                                                         "unknown": 8}
+                                                                                         "unknown": 9}
     # rows of other states are never counted
-    assert db.receipts_split(fd.filter_b2c(merged["b2c"], "", "", "")) == {"issued": 3, "not": 5, "unknown": 0}
+    assert db.receipts_split(fd.filter_b2c(merged["b2c"], "", "", "")) == {"issued": 3, "not": 6, "unknown": 0}
 
 
 def test_the_legend_says_what_each_means_and_that_none_identified_is_not_none_issued():
     words = dict(fd.LEGEND["b2c"])
     said = next(t for k, t in words.items() if fd.RECEIPT_UNSEEN_SAID in k)
-    assert fd.RECEIPT_ISSUED_SAID % "..." in said and "נשאר לסמן במאנדיי" in said
-    assert "לא אומר בוודאות" in said and fd.RECEIPT_HOW_SAID["found"] in said
+    assert fd.RECEIPT_ISSUED_SAID in said and "נשאר לסמן במאנדיי" in said and "מתחת לשיבוץ" in said
+    assert "לא אומר בוודאות" in said and "30 יום" in said
 
 
 # ---- the route: GET /api/desk/totals counts the split of the list the page shows ---------------------------------------------

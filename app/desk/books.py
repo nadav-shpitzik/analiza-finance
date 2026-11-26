@@ -537,10 +537,10 @@ def receipt_in_books(entry: Optional[dict], c2_entry: Optional[dict], idx: dict)
 
 def receipt_laid(found: dict) -> dict:
     """A row's `receipt_books` as the page draws it, its words the server's (view.py RECEIPT_*): issued, its number, how,
-    the words beside "טרם" and their title; or not identified."""
+    the chip's words under the row's state and their title (the number in it); or not identified."""
     if found:
-        return {"issued": True, "number": found["number"], "how": found["how"],
-                "text": RECEIPT_ISSUED_SAID % found["number"], "title": RECEIPT_HOW_SAID[found["how"]]}
+        return {"issued": True, "number": found["number"], "how": found["how"], "text": RECEIPT_ISSUED_SAID,
+                "title": RECEIPT_HOW_SAID[found["how"]].format(number=found["number"])}
     return {"issued": False, "text": RECEIPT_UNSEEN_SAID, "title": RECEIPT_UNSEEN_WHY}
 
 
