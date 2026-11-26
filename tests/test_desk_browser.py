@@ -909,6 +909,76 @@ def test_a_details_plan_floats_beside_its_button_and_no_row_moves_when_it_opens_
         assert "סכום החזר: עכשיו ריק, ייכתב 100.00 ₪" in typed and 'ייכתב "הוחזר חלקי"' in typed, typed
 
 
+def test_a_box_near_the_top_stays_below_the_tables_sticky_header_and_whole_in_the_view(serve):
+    """QA 26.11 (A): with the row near the top of the view, the confirmation's first line ("ייכתב במאנדיי בשורה...") was cut
+    under the table's header, which sticks at the top as the page scrolls - seen in "הוחזר חלקי" and in "חויב": a row's
+    action floats inside its details, which paint under that header, and a box placed above the row reached up to the view's
+    edge. The whole box stays below a header stuck at the top, and in the view: a details' action, and a row's own button.
+    The control is put just low enough for the box to fit above it up to the view's edge - so above it, under the header,
+    was where it went."""
+    from app.desk import view as fd
+
+    v = long_view(copies=4)
+    v["b2c"]["actions"]["list"].append(dict(fd.DESK_ACTIONS["refund_partial"], key="refund_partial"))
+    for r in v["b2c"]["rows"]:
+        if r["state"] == "refund_to_execute":
+            r["actions"] = ["refund_done", "refund_partial"]
+    base, _log = serve(v)
+    store = {"5093448677": {rid: {"__name": "תלמיד/ה לדוגמה", "color_mm1kxpvt": {"text": "שולם", "index": 1, "label": "שולם"}}
+                            for rid in ("5001", "5008", "5015", "5022")}}
+    labels = {"5093448677": {"color_mm1kxpvt": {"1": "שולם", "4": "תשלום הוחזר", "5": "הוחזר חלקי"}}}
+    got = qa_visit(r"""
+  await page.click('[data-bstate=""]');
+  await page.waitForSelector('tr[data-row="5022"]');
+  const look = (pop) => page.evaluate((pop) => {
+    const box = document.querySelector(pop), p = box.getBoundingClientRect(), first = box.querySelector("p").getBoundingClientRect();
+    const heads = [...document.querySelectorAll("table.fin-t thead")].map((t) => t.getBoundingClientRect())
+      .filter((r) => r.top <= 8 && r.bottom > 0);
+    const hit = document.elementFromPoint(first.left + first.width / 2, first.top + first.height / 2);
+    return { top: p.top, bottom: p.bottom, head: heads.length ? heads[0].bottom : null, inView: p.top >= 0 && p.bottom <= window.innerHeight,
+      firstSeen: !!hit && box.contains(hit), text: box.innerText.split("\n")[0] };
+  }, pop);
+  /* put `sel` where a box of height h fits above it only up to the view's top, then press it */
+  const pressAt = async (sel, h, ready) => {
+    await page.$eval(sel, (el) => el.scrollIntoView({ block: "center" }));
+    const top = await page.$eval(sel, (el) => el.closest(".fin-act, td").getBoundingClientRect().top);
+    await page.evaluate((dy) => window.scrollBy(0, dy), top - (h + 20));
+    await page.waitForTimeout(150);
+    await page.click(sel);
+    await page.waitForSelector(ready);
+    await page.waitForTimeout(150);
+  };
+  out.steps[at] = {};
+  /* a details' action ("סימון "הוחזר חלקי"" takes its amount from a box beside its button) */
+  await page.click('tr[data-row="5022"] td.k-received');
+  const act = '[data-act="sc:5022:refund_done"]';
+  await page.waitForSelector(act);
+  await pressAt(act, 0, ".fin-act-plan [data-act-go]");
+  const h1 = await page.$eval(".fin-act-plan", (b) => b.getBoundingClientRect().height);
+  await page.click('[data-act-close="1"]');
+  await page.waitForSelector(".fin-act-plan", { state: "detached" });
+  await pressAt(act, h1, ".fin-act-plan [data-act-go]");
+  out.steps[at].details = await look(".fin-act-plan");
+  await page.click('[data-act-close="1"]');
+  await page.waitForSelector(".fin-act-plan", { state: "detached" });
+  /* a row's own button ("סימון "תשלום הוחזר"" on the row) */
+  const own = '[data-row-act="sc:5015:refund_done"]';
+  await pressAt(own, 0, ".fin-batch-plan [data-batch-go]");
+  const h2 = await page.$eval(".fin-batch-plan", (b) => b.getBoundingClientRect().height);
+  await page.click('.fin-batch-plan [data-batch-close="1"]');
+  await page.waitForSelector(".fin-batch-plan", { state: "detached" });
+  await pressAt(own, h2, ".fin-batch-plan [data-batch-go]");
+  out.steps[at].row = await look(".fin-batch-plan");
+""", base, fake_sdk(store, labels), sizes=((1280, 748), (1400, 748)))
+    assert got["errors"] == [], got["errors"]
+    for size, steps in got["steps"].items():
+        for name in ("details", "row"):
+            box = steps[name]
+            assert box["head"] is not None, (size, name, box)              # the table's header is stuck at the view's top
+            assert box["top"] >= box["head"] and box["inView"] and box["firstSeen"], (size, name, box)
+            assert box["text"].startswith("ייכתב במאנדיי בשורה"), (size, name, box)
+
+
 def test_a_rows_confirmation_floats_beside_it_and_no_row_moves_when_it_opens_or_closes(serve):
     """QA2 3 (24.11): "the confirmation screen pushes the table down, and the mouse stays over the button of another row". It
     took the bar's place above the table, taller than it - every row 69 pixels lower - and with the list scrolled down the

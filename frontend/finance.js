@@ -209,6 +209,10 @@
  * 10 The first opening of a row's details greyed the whole desk for about a second. Nothing of the page covers the desk
  *      then (measured in Chromium), and only the visit's first opening greyed, though each row's first opening reads: it is
  *      monday's, around the view, on the app's first monday.api(). A read on its way shows its own spinner in its cell.
+ * From the QA's second pass of 26.11 (the old desk and the new side by side), by its letters:
+ * A  With the row near the top, a box's first line ("ייכתב במאנדיי בשורה...") was cut under the table's header, which sticks
+ *      at the top of the view ("הוחזר חלקי", "חויב": a row's action floats inside its details, which paint under it).
+ *      placePop's room starts below a header stuck at the view's top (stuckHeads), for every floating box.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -3435,10 +3439,22 @@
   function inView(p) {
     return { top: p.top - window.scrollY, bottom: p.bottom - window.scrollY, left: p.left - window.scrollX, width: p.width };
   }
+  /* QA 26.11 (A): a table's header sticks at the top of the view as the page scrolls, and a box placed above a row near
+     the top went under it - its first line ("ייכתב במאנדיי בשורה...") cut, seen in "הוחזר חלקי" and in "חויב": a row's
+     action floats inside its details, which paint under the header. The room for a box starts below the header stuck at
+     the top of the view, if any */
+  function stuckHeads() {
+    var edge = POP_EDGE;
+    [].forEach.call(root.querySelectorAll ? root.querySelectorAll("table.fin-t thead") : [], function (t) {
+      var r = t.getBoundingClientRect();
+      if (r.top <= POP_EDGE && r.bottom > 0) { edge = Math.max(edge, r.bottom + POP_GAP); }
+    });
+    return edge;
+  }
   function placePop() {
     var pop = root && root.querySelector ? root.querySelector(".fin-pop") : null;
     if (!pop || !pop.getBoundingClientRect) { return; }
-    var at = popAnchor(pop), vh = window.innerHeight, vw = document.documentElement.clientWidth;
+    var at = popAnchor(pop), vh = window.innerHeight, vw = document.documentElement.clientWidth, edge = stuckHeads();
     var owner = pop.classList && pop.classList.contains("fin-act-box") ? ACT : BATCH;
     pop.style.maxHeight = "";
     var h = pop.offsetHeight, w = pop.offsetWidth, a, x;
@@ -3447,12 +3463,13 @@
       POP_AT = { owner: owner, v: onPage(a), h: onPage(x) };
     } else if (POP_AT && POP_AT.owner === owner) {
       a = inView(POP_AT.v); x = inView(POP_AT.h);
-    } else { pop.style.top = POP_EDGE + "px"; pop.style.left = Math.round((vw - w) / 2) + "px"; return; }
-    var above = a.top - POP_GAP - POP_EDGE, below = vh - POP_EDGE - a.bottom - POP_GAP;
+    } else { pop.style.top = edge + "px"; pop.style.left = Math.round((vw - w) / 2) + "px"; return; }
+    var above = a.top - POP_GAP - edge, below = vh - POP_EDGE - a.bottom - POP_GAP;
     var up = h <= above || (h > below && above >= below);
     if (h > (up ? above : below)) { h = Math.max(up ? above : below, 60); pop.style.maxHeight = h + "px"; }
-    /* never cut off at the view's edge: what it floats beside may have been scrolled out of the view */
-    var top = Math.min(Math.max(up ? a.top - POP_GAP - h : a.bottom + POP_GAP, POP_EDGE), Math.max(POP_EDGE, vh - POP_EDGE - h));
+    /* never cut off at the view's edge, nor under a header stuck at its top: what it floats beside may have been scrolled
+       out of the view, or under that header */
+    var top = Math.min(Math.max(up ? a.top - POP_GAP - h : a.bottom + POP_GAP, edge), Math.max(edge, vh - POP_EDGE - h));
     pop.style.top = Math.round(top) + "px";
     pop.style.left = Math.round(Math.min(Math.max(POP_EDGE, x.left + x.width / 2 - w / 2), vw - w - POP_EDGE)) + "px";
   }

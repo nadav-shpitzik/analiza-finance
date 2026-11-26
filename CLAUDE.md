@@ -125,7 +125,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   desk (`READING`; QA 26.11: the grey on the visit's first details is monday's, around the view, on its first monday.api). A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review); a "not yet" (429) is a flash counted down to the wait's end, and
   gone with it (`flashWait`, QA 26.11). A row's action in its details floats beside its control, as a batch
-  does (`actPop`), so no row moves. One flash shows at a time: a new one takes the place of the one on the screen. The root
+  does (`actPop`), so no row moves, and the whole box stays in the view below a table header stuck at its top
+  (`stuckHeads`, QA 26.11: a box above a row near the top went under the header). One flash shows at a time: a new one takes the place of the one on the screen. The root
   keeps its scrollbar's room (desk.css `scrollbar-gutter: stable`), so the desk never moves sideways when the page gets
   shorter (QA 26.11; measured with real scrollbars, `qa_visit(scrollbars=True)`). Tests:
   `tests/test_desk_page.py` (node) and `tests/test_desk_browser.py` (Playwright).
