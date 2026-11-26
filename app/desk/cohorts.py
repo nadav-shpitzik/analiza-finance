@@ -49,7 +49,7 @@ they paid, in no sum of the cohort's line but their own (`waived_paid`, `out_pai
 
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
-failed). The part then holds no cohort and no money, `state` "unread", and says why in its own words (UNREAD_SAID); the
+failed), or the enrollments of those with a price (step 5). The part then holds no cohort and no money, `state` "unread", and says why in its own words (UNREAD_SAID); the
 rest of the desk is read and shown as always. A part that is not "ok" is never exported as complete (`checks["ties"]`).
 
 WHAT IT IS NOT: a writer, or a second money rule. It reads the reading and the desk's own payment rows; nothing here asks
@@ -170,6 +170,7 @@ UNREAD_SAID = OrderedDict([
     ("track_shape", "התשובה של מאנדיי ל%s לא הגיעה בצורה שהמסך ביקש." % _TRACK_LIST),
     ("track_not_visible", "מאנדיי לא הראה את לוח המחזורים בבקשה ל%s." % _TRACK_LIST),
     ("track_failed", "הבקשה למאנדיי ל%s לא הצליחה." % _TRACK_LIST),
+    ("students_failed", "הבקשה למאנדיי להרשמות של המחזורים עם מחיר לא הצליחה."),
 ])
 UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
 UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."

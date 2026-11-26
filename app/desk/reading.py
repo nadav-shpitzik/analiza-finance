@@ -31,8 +31,9 @@ WHAT THE STUDENTS BY COHORT MAY NOT TAKE DOWN (the review of D4): when the track
 answers it without its alias or its items, shows no board, or the request fails - the reading goes on as it is: the
 payments, the companies, the books and their proposals are read and shown as always, step 5 is skipped, and the reading
 says why in `cohorts_read` (a closed reason, COHORTS_UNREAD, and monday's closed code), which the students by cohort show
-in place of their money (app/desk/cohorts.py). A refresh says the same and never falls back to a full reading for it: the
-full reading would meet the same refusal.
+in place of their money (app/desk/cohorts.py). So does a step 5 that fails ("students_failed"): nothing D2 or D3 shows
+needs it, so the reading keeps what it read before it. A refresh says the same and never falls back to a full reading for
+either: the full reading would meet the same refusal.
 
 WHAT IS COUNTED (analiza-metrics' truth rules, and R0's):
 - a charge board is whole when its items_count, the rows read and the distinct ids agree, and every row is one of the
@@ -298,8 +299,9 @@ def roster_ids(cohorts: list) -> list:
 # Why the students by cohort were not read, a reading's `cohorts_read` (the review of D4): never a failed reading, said by
 # the view in place of their money (app/desk/cohorts.py UNREAD_SAID). The cohorts on the voucher track: monday refused the
 # request (its own code: `graphql`, or `auth`), answered it without the filter's alias or its items (`filter_shape`),
-# showed no board (`not_visible`), or the request failed otherwise (a transport, a rate limit, the reading's time).
-COHORTS_UNREAD = ("track_refused", "track_shape", "track_not_visible", "track_failed")
+# showed no board (`not_visible`), or the request failed otherwise (a transport, a rate limit, the reading's time); and
+# step 5, the enrollments of the cohorts with a price, that failed whatever its code
+COHORTS_UNREAD = ("track_refused", "track_shape", "track_not_visible", "track_failed", "students_failed")
 _TRACK_REASON = {"graphql": "track_refused", "auth": "track_refused", "filter_shape": "track_shape",
                  "not_visible": "track_not_visible"}
 
@@ -308,7 +310,7 @@ def cohorts_unread(step: str, exc: BaseException) -> dict:
     """A reading's `cohorts_read` when a step of the students by cohort failed: the reason (COHORTS_UNREAD) and monday's
     closed code ("internal" for an exception of another kind), logged by both and never by a message or a row."""
     code = exc.code if isinstance(exc, MondayError) else "internal"
-    reason = _TRACK_REASON.get(code, "track_failed")
+    reason = "students_failed" if step == "students" else _TRACK_REASON.get(code, "track_failed")
     logger.warning("desk reading without the students by cohort (%s, %s %s)", reason, step, code)
     return {"ok": False, "reason": reason, "code": code}
 
@@ -503,10 +505,14 @@ def read_desk(reader: MondayReader, clock: Callable[[], float] = time.monotonic)
         # rows, counted as one board by what it asked. None without the track: the students by cohort say why instead
         roster = [] if unread else [e for e in roster_ids(cohorts) if e not in set(enr_ids)]
         if roster:
-            (roster_read,) = reader.read_items([(roster, ROW_COLUMNS["enrollments"])])
-            enr_ids = sorted(_uniq(enr_ids + roster))
-            enrollments, checks["enrollments"] = by_id("enrollments", enr_ids,
-                                                       enr_read + masked("enrollments", roster_read))
+            try:
+                (roster_read,) = reader.read_items([(roster, ROW_COLUMNS["enrollments"])])
+            except Exception as exc:  # noqa: BLE001 - the review of D4: said in `cohorts_read`, the reading kept whole
+                unread = cohorts_unread("students", exc)
+            else:
+                enr_ids = sorted(_uniq(enr_ids + roster))
+                enrollments, checks["enrollments"] = by_id("enrollments", enr_ids,
+                                                           enr_read + masked("enrollments", roster_read))
     except MondayError as exc:
         out.update(error=exc.code, detail=exc.detail[:200])
     except Exception as exc:  # noqa: BLE001 - said by class: a reading that crashed is a reading that failed
@@ -785,7 +791,10 @@ def read_delta(reader: MondayReader, base: dict, clock: Callable[[], float] = ti
     roster = [] if unread else [e for e in roster_ids(keep_only(lists["cohorts"], need["cohorts"]))
                                 if e not in set(need["enrollments"])]
     seen = asked_set["enrollments"] | set(ids_read["enrollments"])
-    _read_new(reader, lists, ids_read, names, reps, strangers, {"enrollments": [e for e in roster if e not in seen]})
+    try:
+        _read_new(reader, lists, ids_read, names, reps, strangers, {"enrollments": [e for e in roster if e not in seen]})
+    except Exception as exc:  # noqa: BLE001 - the review of D4: as a full reading's step 5, said and never raised
+        unread, roster = cohorts_unread("students", exc), []
     need["enrollments"] = sorted(_uniq(need["enrollments"] + roster))
     out = {"student_charge": {"items_count": paged["student_charge"][0], "rows": sc_rows},
            "b2b_charge": {"items_count": paged["b2b_charge"][0], "rows": b2_rows},

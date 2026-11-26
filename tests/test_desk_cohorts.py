@@ -1033,12 +1033,74 @@ def test_a_reading_without_the_track_is_kept_so_and_a_cold_instance_shows_it_as_
     assert fd.build_view(fresh, TODAY)["b2c"]["cohorts"]["state"] == "ok"
 
 
+def _failing_by_id(w: World, ids: set, crash: bool = False) -> None:
+    """monday failing every read by id that asks exactly `ids` - step 5's request, plain in a full reading or packed in a
+    refresh - as it fails a request it cannot answer (errors, no data), or the transport breaking in a way the reader does
+    not know (`crash`)."""
+    plain = w.handler
+
+    def handler(request):
+        body = json.loads(request.content)
+        asked = [{str(x) for x in v} for k, v in body["variables"].items() if k == "ids" or k[:1] == "i" and k[1:].isdigit()]
+        if "items(" in body["query"] and ids in asked:
+            if crash:
+                raise RuntimeError("a transport that breaks in a way the reader does not know")
+            return httpx.Response(200, json={"errors": [{"message": "Internal server error"}]})
+        return plain(request)
+
+    w.handler = handler
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_a_failed_read_of_the_priced_cohorts_students_leaves_the_reading_and_the_refresh_whole(crash):
+    """The review of D4 (MEDIUM): step 5 was one more request inside the reading's try, so a failure of it ended the whole
+    reading, though nothing D2 or D3 shows needs it. Now it is said (`students_failed`), as the track is."""
+    code = "internal" if crash else "graphql"
+    w = cohort_world()
+    held = rd.read_desk(reader_of(w))
+    whole = fd.build_view(held, TODAY)
+    _failing_by_id(w, {"203", "204"}, crash)
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None and r["complete"] is True
+    assert r["cohorts_read"] == {"ok": False, "reason": "students_failed", "code": code}
+    # what the reading read before step 5 is kept as it was: the payments' enrollments, counted whole
+    assert r["asked"]["enrollments"] == ["201", "202", "206"] and r["checks"]["enrollments"]["ok"] is True
+    assert r["asked"]["cohorts"] == held["asked"]["cohorts"]
+    v = fd.build_view(r, TODAY)
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2b"] == whole["b2b"] and v["checks"]["ok"] is True
+    part = v["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["cohorts"]) == ("unread", "students_failed", [])
+    assert part["said"] == ch.UNREAD_HEAD + ch.UNREAD_SAID["students_failed"] + ch.UNREAD_TAIL
+    assert rd.health_part(rd.summary(r))["cohorts"] == "students_failed"
+    # a refresh: a student newly linked to 401 is read by id after the windows, and that read fails - said, never raised,
+    # so HeldReading never reads whole for it
+    del w.handler
+    w.add(rd.ENROLLMENTS_BOARD, 207, "הרשמה-207", cohort=rel(401), voucher=status("טרם הוגש", 17),
+          status=status("נרשם", 1), person=rel(907))
+    w.touch(207)
+    w.set(401, roster=rel(201, 203, 204, 207), touch=False)
+    _failing_by_id(w, {"207"}, crash)
+    h = rd.HeldReading(lambda: reader_of(w), ttl_s=0)
+    h.reading = held
+    kept, last = h.get()
+    assert kept["kind"] == "delta" and last["error"] is None and h.health()["last_codes"][0] == "delta"
+    assert kept["cohorts_read"] == {"ok": False, "reason": "students_failed", "code": code}
+    assert "207" not in kept["asked"]["enrollments"] and fd.build_view(kept, TODAY)["b2c"]["rows"] == whole["b2c"]["rows"]
+    # once monday answers again, the next refresh reads the student it could not
+    del w.handler
+    again, _ = h.get()
+    assert again["cohorts_read"] == {"ok": True} and "207" in again["asked"]["enrollments"]
+    assert line(cohorts_of(again), "A401")["students"] == 4 and cohorts_of(again) == cohorts_of(rd.read_desk(reader_of(w)))
+
+
 def test_every_reason_the_reading_gives_has_its_words_and_the_part_of_another_shape_is_not_trusted():
     assert set(ch.UNREAD_SAID) == set(rd.COHORTS_UNREAD)
     for how, (reason, code) in UNREAD_HOW.items():
         if code != "internal":
             assert rd.cohorts_unread("track", monday.MondayError(code, "x"))["reason"] == reason, how
     assert rd.cohorts_unread("track", KeyError("t0")) == {"ok": False, "reason": "track_failed", "code": "internal"}
+    for code in ("graphql", "filter_shape", "not_visible", "http"):
+        assert rd.cohorts_unread("students", monday.MondayError(code, "x"))["reason"] == "students_failed"
     s = cohort_snapshot()
     ok = ch.build_cohorts(s, fd.build_view(s, TODAY)["b2c"]["rows"])
     assert ok["state"] == "ok" and ok["reason"] == "" and ok["said"] == "" and ok["cohorts"]

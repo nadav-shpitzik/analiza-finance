@@ -74,3 +74,21 @@ def test_a_refresh_whose_filter_is_refused_falls_back_to_a_reading_that_fails_th
                                                                                           full["error"]))
     else:
         assert got["student_charge"]["rows"]
+
+
+def test_a_failed_read_of_the_priced_cohorts_enrollments_must_not_end_the_whole_reading():
+    """MEDIUM. Step 5 (`roster_ids`: the enrollments of the priced voucher cohorts that no payment links to) is one more
+    request inside `read_desk`'s try. When it fails, the whole reading fails, though nothing D2 or D3 shows needs it."""
+    w = cohort_world()
+    plain = w.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode("utf-8")
+        if "items(ids:" in body and '"203"' in body and '"201"' not in body:    # step 5 asks 203 and 204 alone
+            return httpx.Response(200, json={"errors": [{"message": "Internal server error"}]})
+        return plain(request)
+
+    w.handler = handler
+    r = rd.read_desk(reader_of(w))
+    assert r["error"] is None, "step 5 (the cohorts' students) failing ended the whole reading: %s" % r["error"]
+    assert {x["id"] for x in r["student_charge"]["rows"]} == {"101", "102", "103"}
