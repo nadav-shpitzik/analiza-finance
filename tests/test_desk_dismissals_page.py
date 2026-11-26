@@ -169,8 +169,8 @@ def test_the_hidden_list_says_what_by_whom_and_when_and_offers_the_undo_only_on_
     assert len(items) == 2
     mine, theirs = items
     assert "<b>אורי פז</b> · מספר החשבונית שבשורה לא נמצא בחשבשבת כמסמך תקף: 40000 לא נמצא" in mine
-    assert "לא פער · בידי אתה · " in mine and 'data-nag-undo="books_ref_invalid:8:1">החזרה</button>' in mine
-    assert '<bdi dir="ltr">62606</bdi> חשבונית מס/קבלה' in theirs and "בידי משתמש/ת 9" in theirs and "data-nag-undo" not in theirs
+    assert "לא פער · על ידך · " in mine and 'data-nag-undo="books_ref_invalid:8:1">החזרה</button>' in mine
+    assert '<bdi dir="ltr">62606</bdi> חשבונית מס/קבלה' in theirs and "על ידי משתמש/ת 9" in theirs and "data-nag-undo" not in theirs
     assert got["posts"] == [[UNDO, {"kind": "books_ref_invalid", "subject": "8", "id": 1}]]
     back = got["steps"][2]["html"]
     assert "הוסתרו כלא פער" not in back and any("הוחזר" in t for t in got["steps"][2]["showing"])
@@ -196,8 +196,8 @@ def test_an_alert_that_came_back_says_so_beside_it():
     v = nag_view(stale)
     rows, tasks = draw(body(v), [{"tab": "b2c", "sc": {"state": "", "period": "", "open": {"7": True, "1": True}}}, TASKS])
     assert ("חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 על ידי משתמש/ת 9. הנתונים השתנו מאז.") in detail_of(rows, "7")
-    assert "חזר: הוסתר כ&quot;לא להציע&quot; ב-26.11, 11:00 על ידי אתה" in detail_of(rows, "1")
-    assert "חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 על ידי אתה" in doc_row(tasks, "50501")
+    assert "חזר: הוסתר כ&quot;לא להציע&quot; ב-26.11, 11:00 על ידך" in detail_of(rows, "1")
+    assert "חזר: הוסתר כ&quot;לא פער&quot; ב-26.11, 11:00 על ידך" in doc_row(tasks, "50501")
     assert v["b2c"]["books"]["returned_counts"] == {"books_receipt_unpaid": 1, "books_ref_fill": 1}
 
 
@@ -285,7 +285,7 @@ def test_in_a_browser_the_confirmation_floats_beside_the_press_and_the_hidden_li
     """Under "לטיפול", at monday's view widths: "לא פער" on a document of the books' list, and on a mark in a row's
     details, each open their confirmation beside what was pressed - in the view, clear of the pressed row, the pointer not
     on "הסתרה", the focus on the box - and no row of either list moves, open or closed, nor the page. "הסתרה" sends the
-    server's evidence and draws the desk after it: the document is gone, "הוסתרו כלא פער (1)" opens it with "בידי אתה" and
+    server's evidence and draws the desk after it: the document is gone, "הוסתרו כלא פער (1)" opens it with "על ידך" and
     "החזרה", which brings it back. The page logs no console error and throws nothing."""
     raw = computed()[0]
     v = nag_view()
@@ -357,7 +357,7 @@ def test_in_a_browser_the_confirmation_floats_beside_the_press_and_the_hidden_li
             assert box["inView"] and box["clear"] and not box["onGo"] and box["focus"], (size, name, box)
         assert "המסמך יוסתר מהרשימה לכולם" in steps["doc"]["box"]["text"]
         assert "הסימון יוסתר לכולם" in steps["mark"]["box"]["text"]
-        assert "62606" in steps["hidden"] and "בידי אתה" in steps["hidden"] and "החזרה" in steps["hidden"]
+        assert "62606" in steps["hidden"] and "על ידך" in steps["hidden"] and "החזרה" in steps["hidden"]
         assert steps["back"] == 0
     sent = [x for x in log if x.get("path") in (NAG, UNDO)]
     evidence = alerts(raw)[("books_doc_students", "62606")]

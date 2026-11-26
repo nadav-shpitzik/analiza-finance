@@ -217,9 +217,9 @@ NOT_TIED = "הסכומים של מחזור לא מתאזנים עם הסטודנ
 # read, why in its own words, and that nothing else is touched (the review of D4)
 _TRACK_LIST = "רשימת המחזורים במסלול %s" % _q(TRACK_LABEL)
 UNREAD_SAID = OrderedDict([
-    ("track_refused", "מאנדיי לא קיבל את הבקשה ל%s." % _TRACK_LIST),
+    ("track_refused", "מאנדיי לא קיבלה את הבקשה ל%s." % _TRACK_LIST),
     ("track_shape", "התשובה של מאנדיי ל%s לא הגיעה בצורה שהמסך ביקש." % _TRACK_LIST),
-    ("track_not_visible", "מאנדיי לא הראה את לוח המחזורים בבקשה ל%s." % _TRACK_LIST),
+    ("track_not_visible", "מאנדיי לא הראתה את לוח המחזורים בבקשה ל%s." % _TRACK_LIST),
     ("track_failed", "הבקשה למאנדיי ל%s לא הצליחה." % _TRACK_LIST),
     ("students_failed", "הבקשה למאנדיי להרשמות של המחזורים עם מחיר לא הצליחה."),
 ])

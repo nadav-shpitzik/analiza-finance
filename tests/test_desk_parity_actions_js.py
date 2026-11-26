@@ -362,7 +362,7 @@ def test_each_reason_the_page_cannot_write_is_its_own_sentence(context, monday, 
     out = run([{"show": {"tab": "b2c", "sc": {"state": "", "open": {"1": True}}}}], body_of([refund_row()]),
               {"1": sc_item("1")}, context=context, **monday)
     assert out["steps"][0]["can"] == {"state": "no", "why": why}
-    sentence = {"approve": "מאנדיי מבקש לאשר אותה בבאנר בראש התצוגה", "view_only": "יש לך הרשאת צפייה בלבד",
+    sentence = {"approve": "מאנדיי מבקשת לאשר אותה בבאנר בראש התצוגה", "view_only": "יש לך הרשאת צפייה בלבד",
                 "outside": "רק כשהתצוגה פתוחה מתוך מאנדיי"}[why]
     assert sentence in out["steps"][0]["html"]
 

@@ -1218,8 +1218,13 @@
     if (num(x.overpaid)) { out.push(w.overpaid + ": " + amountText(x.overpaid)); }
     if (x.unlinked.count) { out.push(w.unlinked + ": " + plural(x.unlinked.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.unlinked.money)); }
     if (x.shared.count) { out.push(w.shared + ": " + plural(x.shared.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.shared.money)); }
-    if (x.roster_missing) { out.push(plural(x.roster_missing, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, ומאנדיי לא החזיר אותן"); }
-    if (x.roster_elsewhere) { out.push(plural(x.roster_elsewhere, "הרשמה אחת", "הרשמות") + " שהמחזור מקושר אליהן, וההרשמה עצמה מקושרת למחזור אחר"); }
+    if (x.roster_missing) {
+      out.push(plural(x.roster_missing, "הרשמה אחת שהמחזור מקושר אליה לא התקבלה ממאנדיי", "הרשמות שהמחזור מקושר אליהן לא התקבלו ממאנדיי"));
+    }
+    if (x.roster_elsewhere) {
+      out.push(plural(x.roster_elsewhere, "הרשמה אחת שהמחזור מקושר אליה, וההרשמה עצמה מקושרת למחזור אחר",
+        "הרשמות שהמחזור מקושר אליהן, וההרשמות עצמן מקושרות למחזור אחר"));
+    }
     return out;
   }
   function cohortsTable(c, shown) {
@@ -1682,7 +1687,7 @@
      it, and the reading and the books' part on the screen to POST /api/alerts/not-a-gap. The server keeps its OWN evidence
      (the page's is only compared: one that is not the server's is refused) and answers the desk as it is after the press,
      which is drawn as any answer is: the alert is gone from the screen, and every count is the server's. Under each list,
-     "הוסתרו כלא פער (N)" opens what is hidden of it - what, by whom ("אתה", or the monday user id: the page holds no other
+     "הוסתרו כלא פער (N)" opens what is hidden of it - what, by whom ("על ידך", or the monday user id: the page holds no other
      person's name, and none is kept), when - and "החזרה" on one's own (the server refuses anyone else's). An alert whose
      evidence changed since it was hidden is shown again, and says so ("חזר"). Nothing is written to monday or the books.
      A viewer (the server's `user.view_only`) is shown no press: the server refuses one. */
@@ -1733,14 +1738,17 @@
     return "<button type=\"button\" class=\"fin-linkbtn fin-nag\" data-nag=\"" + esc(nagKey(kind, subject)) + "\" data-nag-from=\"" +
       from + "\" title=\"" + esc(nagSaid(kind)) + "\"" + (busy() ? " disabled" : "") + ">" + esc(nagWord(kind)) + "</button>";
   }
-  /* who hid it: "אתה", or the monday user id - the page knows no other person's name, and the server keeps none */
-  function nagWho(by) { return BODY && BODY.user && String(BODY.user.id) === String(by) ? "אתה" : "משתמש/ת " + by; }
+  /* who hid it: "על ידך", or "על ידי" the monday user id - the page knows no other person's name, and the server keeps none.
+     Gemini's review of 26.11 asked for "על ידי"; for the person herself it is "על ידך", one spelling for a woman and a man
+     ("בידי אתה", before it, was a man's) */
+  function nagMine(by) { return !!(BODY && BODY.user && String(BODY.user.id) === String(by)); }
+  function nagBy(by) { return nagMine(by) ? "על ידך" : "על ידי משתמש/ת " + by; }
   function nagWhen(at) { return stamp(at); }
   /* an alert whose evidence changed since it was hidden is shown again, and says so */
   function nagBack(alert) {
     var b = alert && alert.returned;
-    return b ? "<div class=\"fin-nag-back\">" + esc("חזר: הוסתר כ\"" + nagWord(alert.kind) + "\" ב-" + nagWhen(b.at) + " על ידי " +
-      nagWho(b.by) + ". הנתונים השתנו מאז.") + "</div>" : "";
+    return b ? "<div class=\"fin-nag-back\">" + esc("חזר: הוסתר כ\"" + nagWord(alert.kind) + "\" ב-" + nagWhen(b.at) + " " +
+      nagBy(b.by) + ". הנתונים השתנו מאז.") + "</div>" : "";
   }
   /* the alert a press names, as the answer on the screen holds it: { evidence, what } or null */
   function nagAlert(kind, subject) {
@@ -1821,8 +1829,8 @@
         var what = x.number ? "<bdi dir=\"ltr\">" + esc(x.number) + "</bdi> " + esc([x.type_name, d(x.date), x.card].filter(Boolean).join(" · ")) +
           (x.total_incl != null ? " · " + money2(x.total_incl) : "")
           : "<b>" + esc(x.name) + "</b> · " + esc(x.chip);
-        var key = x.kind + ":" + x.subject + ":" + x.id, mine = nagWho(x.by) === "אתה";
-        return "<li>" + what + " <span class=\"fin-subtle\">" + esc(x.word + " · בידי " + nagWho(x.by) + " · " + nagWhen(x.at)) + "</span>" +
+        var key = x.kind + ":" + x.subject + ":" + x.id, mine = nagMine(x.by);
+        return "<li>" + what + " <span class=\"fin-subtle\">" + esc(x.word + " · " + nagBy(x.by) + " · " + nagWhen(x.at)) + "</span>" +
           (mine && mayNag() ? " <button type=\"button\" class=\"fin-linkbtn\" data-nag-undo=\"" + esc(key) + "\"" +
             (UNDOING || busy() ? " disabled" : "") + ">" + (UNDOING === key ? "מחזיר..." : "החזרה") + "</button>" : "") + "</li>";
       }).join("") + "</ul>" : "") + "</div>";
@@ -2142,7 +2150,7 @@
   var ABILITY = {
     outside: "כדי לעדכן נתונים במאנדיי בשמך, יש לפתוח את התצוגה מתוך מאנדיי.",
     view_only: "במאנדיי יש לך הרשאת צפייה בלבד, ולכן אין כאן פעולות.",
-    approve: "לאפליקציה יש הרשאת כתיבה חדשה שעוד לא אישרת: מאנדיי מבקש לאשר אותה בבאנר בראש התצוגה. עד אז אין כאן פעולות.",
+    approve: "לאפליקציה יש הרשאת כתיבה חדשה שעוד לא אישרת: מאנדיי מבקשת לאשר אותה בבאנר בראש התצוגה. עד אז אין כאן פעולות.",
     no_scope: "לאפליקציה עוד אין הרשאת כתיבה ללוחות במאנדיי, ולכן אין כאן פעולות. עד אז: פתיחה במאנדיי."
   };
   var WRITE_ERRORS = {
