@@ -17,19 +17,21 @@ from __future__ import annotations
 import io
 import json
 import random
+import time
 from datetime import timedelta
 from decimal import Decimal
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import openpyxl
 import pytest
 
 from app.desk import cohorts as ch
 from app.desk import reading as rd
+from app.desk import routes as dr
 from app.desk import view as fd
 from app.monday.client import NEVER_READ
 from tests.desk_fixtures import TODAY, lead, sc, served, snap
-from tests.test_desk import SC, World, desk, reader_of, rel, session_token, status  # noqa: F401 - `desk` is the fixture
+from tests.test_desk import SC, SECRET, World, desk, reader_of, rel, session_token, status  # noqa: F401 - `desk`: a fixture
 
 D = Decimal
 STATUS = {"0": "Registered", "1": "נרשם", "2": "פעיל", "3": "At Risk", "4": "סיים", "5": "עבר לקורס אחר",
@@ -361,7 +363,13 @@ def test_the_sums_tie_through_random_cohorts():
                 seen["overpaid"] += bool(s["overpaid"])
             seen["shared"] += ln["shared"]["count"]
         total = ch.cohort_totals(part["cohorts"])
-        assert part["totals"] == total and total["balance"] == sum((x["balance"] for x in part["cohorts"]), D(0))
+        assert part["totals"] == total
+        # every total is its lines' sum, each field summed here and not by the module's own function
+        for f in ch.SUM_FIELDS + tuple("part_" + k for k in ch.PARTS):
+            assert total[f] == sum((x[f] for x in part["cohorts"]), D(0)), f
+        for f in ch.COUNT_FIELDS:
+            assert total[f] == sum(x[f] for x in part["cohorts"]), f
+        assert total["count"] == len(part["cohorts"])
         # every payment is counted for at most one student of one cohort
         counted_ids = [p for ln in part["cohorts"] for s in ln["students_list"] for p in s["payments"]]
         assert len(counted_ids) == len(set(counted_ids))
@@ -653,11 +661,13 @@ def test_through_random_edits_a_refresh_holds_the_students_a_full_reading_holds(
 
 # ---- the routes: the totals and the file of the view, gated as the students' list ------------------------------------
 def cohort_snapshot() -> dict:
-    """A701 (10,000): E1 approved, 4,000 paid; E2 settled, its deposit and the helper's balance row; E3 waived. A702
+    """A701 (10,000): E1 approved, 4,000 paid; E2 settled, its deposit and the helper's balance row; E3 waived, its
+    4,000 deposit paid. A702
     (12,000): E4 not submitted, 4,000 paid; E5 submitted, nothing paid. A703 without a price."""
     balance = sc(3, paid="6000", enr=["E2"], receipt="0", invoice="", ctype="השלמת תשלום")
     balance["name"] = "סטודנט/ית E2 | השלמת תשלום"
-    payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), balance, sc(4, paid="4000", enr=["E4"])]
+    payments = [sc(1, paid="4000", enr=["E1"]), sc(2, paid="4000", enr=["E2"]), balance, sc(4, paid="4000", enr=["E4"]),
+                sc(5, paid="4000", enr=["E3"])]       # E3's deposit: waived, so in no sum of A701's line
     cohorts = [coh("C1", "A701", roster=["E1", "E2", "E3"]), coh("C2", "A702", price="12000", roster=["E4", "E5"]),
                coh("C3", "A703", price="")]
     enrollments = [enr("E1", "C1", voucher="1", name="רונית כהן"), enr("E2", "C1", voucher="4"),
@@ -731,6 +741,7 @@ def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_coho
             assert sum(s[h] or 0 for s in srows if s["מחזור"] == code) == (ln[h] or 0), (code, h)
     waived = next(s for s in srows if s["מזהה במאנדיי"] == "E3")
     assert waived[ch.PAID_WORD] is None and waived["בחשבון"].startswith(ch.WAIVED_WORD)
+    assert waived["%s, %s או %s" % (ch.PAID_WORD, ch.WAIVED_WORD, ch.OUT_WORD)] == 4000      # in a column of its own
     unpriced = wb["בלי מחיר"]
     assert [unpriced.cell(row=2, column=c).value for c in (1, 5)] == ["A703", "אין מחיר"]
     info = {row[0].value: row[1].value for row in wb["פרטים"].iter_rows()}
@@ -743,6 +754,14 @@ def test_the_cohorts_file_is_the_view_as_filtered_its_students_sum_to_their_coho
     assert "%D7%97%D7%99%D7%A4%D7%95%D7%A9" in f.headers["content-disposition"]           # "חיפוש" in the Hebrew name
     # gated as the students' list; no state, period or company
     assert link(user=3).status_code == 403 and link(state="tasks").status_code == 400 and link(period="2026-10").status_code == 400
+    # Student Charge's member alone gets the file, and the file's route asks that board again: a link signed for a reader of
+    # B2B Charge only gives no file
+    assert desk.client.get(link(user=2).json()["url"]).status_code == 200
+    exp = str(int(time.time()) + 60)
+    sig = dr.export_sig(SECRET, dr.link_fields(3, exp, "b2c_cohorts", "", "", "", "", "", ""))
+    forged = "/api/desk/export.xlsx?" + urlencode({"tab": "b2c_cohorts", "state": "", "period": "", "q": "", "taken": "",
+                                                   "customer": "", "u": 3, "exp": exp, "sig": sig})
+    assert desk.client.get(forged).json() == {"error": "not_a_board_member"}
 
 
 def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, monkeypatch):  # noqa: F811
