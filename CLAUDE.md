@@ -66,6 +66,15 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   only (`scripts/books_check.py`): series, what the cleaning cost, id gaps, what a tick reads in its box.
   **Demo holds no documents** (every id probed, 22.11). The cleaning judges a number whole (`app/books/clean.py`'s
   docstring is the rule); a new text field goes through it, and a new number shape comes with its test.
+- **The ledger report (B3, 26.11; ADR-0187):** `app/books/ledger.py`. The definition is the External file of "כרטסת
+  לאנליזה", the whole JSON as the Replit Secret `WIZ_LEDGER_REPORT`, never in git; `load_definition` finds its four parameters
+  by name and `opOrigin`, never by position, and refuses in a closed word (`REASONS`). `month_parameters` sends the file's
+  entries whole with only `defVal` changed, the shape the vendor documents (wizcloud-api's docx, all 16 versions): a sort code
+  bare, by default the whole range; a date as `'YYYY-MM-DD'`, the file's own form, **a hypothesis the first live answer
+  settles**. `describe` says an answer's shape only: keys and types, the row count and `hit_limit`, the columns carried and
+  missing, distinct sort codes and months, rows outside the month asked, whether debit and credit are numeric. A key that is
+  neither the definition's nor a plain field name is counted, never said, and `tests/test_ledger.py` scans every output for
+  every fixture value (and proves the scan sees a leak). Nothing is kept yet; no schema change.
 - **The reconciliation's reading of monday (R0):** `app/monday/client.py` reads only (a query that does not start with
   `query` is refused, and so is a job that asks for a `NEVER_READ` column: ID numbers, a sole proprietor's business number,
   bank details; moved there from `app/recon/reading.py` in D1); `app/recon/reading.py` holds the profile and `monday_side`, the

@@ -411,8 +411,11 @@ class WizClient:
     def triggers(self) -> Any:
         return self.call("TriggersApi/getURL")
 
-    def export_report(self, datafile: str, parameters: Optional[list] = None) -> Any:
-        return self.call("ExportDataApi/exportData", {"datafile": datafile, "parameters": parameters or []})
+    def export_report(self, datafile: str, parameters: Optional[list] = None, deadline: Optional[float] = None) -> Any:
+        """Run a report of the report designer: the body the vendor documents, `{datafile, parameters}`, with the External
+        file's parameter entries whole and only their `defVal` changed (app/books/ledger.py says where that is written)."""
+        body = {"datafile": datafile, "parameters": parameters or []}
+        return self.call("ExportDataApi/exportData", body, deadline=deadline)
 
     def get_doc(self, stock_id: int, deadline: Optional[float] = None) -> Any:
         """One document by its internal id, or NOT_FOUND. Money arrives as Decimal (read_envelope)."""

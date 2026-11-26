@@ -299,6 +299,22 @@ def test_export_and_get_doc_send_json_bodies(clock):
     assert seen[2].read() == b'{"stockID":17}'
 
 
+def test_a_report_is_bounded_by_its_deadline(clock):
+    """B3's probe boxes its exportData like a tick: a deadline already reached starts nothing, the session included."""
+    import time
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, text=SESSION)
+
+    c = WizClient("lb19.wizcloud.co.il", "wizdb2245n4", KEY, transport=httpx.MockTransport(handler), clock=clock)
+    with pytest.raises(wizcloud.DeadlineReached):
+        c.export_report("DF", [], deadline=time.monotonic())
+    assert seen == []
+
+
 def test_kinds_are_a_closed_list():
     with pytest.raises(AssertionError):
         WizError("something_new")
