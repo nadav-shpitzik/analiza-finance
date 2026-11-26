@@ -217,6 +217,15 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   and agorot only where an amount has them, the figures above the table as the table writes them (the table fits 1280 and
   1400), its legend part the server's; its clicks on
   `document`, inside the desk only. Tests: `tests/test_desk_cohorts.py`, `tests/test_desk_cohorts_page.py` (node, Playwright).
+- **"לא פער" (R5, 26.11; the spec §6.1 item 4), the one thing the desk keeps of an alert:** `alert_dismissals`
+  (migrations/008, **a schema change: it ships in the order below**) through `app/desk/dismissals_store.py`. One live
+  dismissal per (company, kind, subject), held by a partial unique index (two presses at once are one, the other
+  `already_hidden`); nothing deleted or edited: an undo sets `undone_at`/`undone_by`, only by its own dismisser (ADR-0190
+  §6's norm; the repo has no admin), and an alert that came back and is dismissed again closes the old row with
+  `replaced_by` naming the new, in one transaction. `kind` is checked by its shape only (the closed list is `KINDS` in
+  `app/desk/dismissals.py`), so a kind added later drops no constraint in a publish. A user id and digits only: never a
+  name, an amount or a card key. Errors by kind (`STORE_KINDS`), never the text. Tests: `tests/test_desk_dismissals_store.py`
+  (the store and the tests' double, `tests/dismissal_fixtures.py`, held to one contract; the table's own checks).
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).
