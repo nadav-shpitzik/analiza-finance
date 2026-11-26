@@ -30,8 +30,14 @@ A ROW IS PROPOSED ONE NUMBER (`fill`) ONLY WHEN ALL OF THESE HOLD:
    prices repeat, so a row and a document of the same name and the same price a season apart are the likeliest false link
    (two payments of one student, or two students of one name): such a document is counted (`date_far`), never proposed.
 6. **Exactly one each way:** the row has exactly one document that meets 2 to 5, an invoice-receipt; its number names it
-   alone (FR-3: no other status-1 document carries it, and A1 reads it back as one number); and no other row that meets 1
-   has that document among its own (a row that has two holds both).
+   alone (FR-3: no other status-1 document carries it, and A1 reads it back as one number); and no other row holds it. A
+   row holds a document when it is active, its cell is empty as A1 reads one, its "סכום ששולם" reads as an amount equal
+   to the document's, its name equals the card's and the document is near its day (3 to 5) - **whatever its status, and
+   whatever its year**. A same-name, same-amount row still marked "לא שולם" or "יש בעיה" may be the document's real row
+   (statuses lag: the case of 23.11), and a row made in late December may be the real row of an invoice-receipt of early
+   January, so either blocks the fill; condition 1 decides only who may receive one. An archived row, one whose cell is
+   not empty as A1 reads one (a number, or text A1 cannot read), and one with no amount hold nothing; a row that holds
+   two documents holds both.
 
 Every row lands in exactly one bucket, the first that fits in BUCKETS, so the counts add up to the rows read. The plan is
 what `fill` holds: per row its link, the value now, the number proposed and the document's date - never a name or an
@@ -80,7 +86,7 @@ BUCKETS = (
     "tax_invoice_waits",      # a tax invoice carries its name and amount: a demand, never proof of money (FR-C1)
     "two_candidates",         # two or more invoice-receipts carry its name and amount
     "number_ambiguous",       # its one invoice-receipt's number would not name it alone (FR-3)
-    "document_wanted_twice",  # its one invoice-receipt is among another row's documents too
+    "document_wanted_twice",  # its one invoice-receipt is held by another row too, whatever that row's status (6)
     "fill",                   # exactly one each way: the plan
 )
 # The buckets whose rows the plan lists by id: what a person's eye can decide. A row that already cites a number, one
@@ -136,7 +142,7 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
     snapshot); `b2b_rows`: B2B Charge's rows (a number they cite is no student's); `keys`: the Accounts' cards
     (`account_keys_of`). Returns {"rows": {item_id: {"bucket", "current", "documents", "proposed", "document_date"}},
     "counts": {bucket: n}, "documents": {"students", "proposed", "era_listed", "era_left"}}: `documents` of a row are the
-    numbers of its documents of 2 to 5, `proposed` the one number of a `fill`."""
+    numbers of the documents it holds (condition 6, whatever its bucket), `proposed` the one number of a `fill`."""
     rows, documents, keys = list(rows), list(documents), keys or {}
     by_number = a1.index_documents(documents)
     cited = cited_numbers(rows, COLUMN) | cited_numbers(list(b2b_rows), B2B_REF_COLUMN)
@@ -149,7 +155,8 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
             by_words[words].append(d)
 
     out: dict = {}
-    wants: dict = {}  # item id -> its documents of 2 to 5, for every row that meets 1 and has some
+    holds: dict = {}  # item id -> the documents it holds (condition 6): every active row with an empty cell, any status
+    receives: list = []  # of those rows, the ones that meet 1: only they may receive a fill
     for row in rows:
         item_id = str(row.get("id"))
         entry = {"bucket": None, "current": str(row.get(COLUMN) or "").strip(), "documents": [], "proposed": None,
@@ -158,8 +165,14 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
         refs = a1.parse_refs(row.get(COLUMN))
         amount = a1.parse_amount(row.get(a1.AMOUNT_COLUMN))
         day = row_day(row)
-        words = name_words(row.get("name"))
-        if row.get("state", "active") != "active":
+        named = by_words.get(name_words(row.get("name"))) or []
+        equal = [d for d in named if _equal_amount(amount, d)] if amount is not None else []
+        near = [d for d in equal if _near(day, d)] if day is not None else []
+        active = row.get("state", "active") == "active"
+        if active and refs == [] and near:  # whatever its status, and whatever its year
+            holds[item_id] = near
+            entry["documents"] = sorted({number_of(d) or "" for d in near}, key=lambda n: (len(n), n))
+        if not active:
             entry["bucket"] = "not_active"
         elif str(row.get(a1.STATUS_COLUMN + "#", "")) not in a1.MONEY_IN:
             entry["bucket"] = "not_money_in"
@@ -171,25 +184,21 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
             entry["bucket"] = "amount_unreadable"
         elif day is None or day.year != a1.WINDOW_YEAR:
             entry["bucket"] = "out_of_window"
-        elif not by_words.get(words):
+        elif not named:
             entry["bucket"] = "no_candidate"
+        elif not equal:
+            entry["bucket"] = "amount_differs"
+        elif not near:
+            entry["bucket"] = "date_far"
         else:
-            equal = [d for d in by_words[words] if _equal_amount(amount, d)]
-            near = [d for d in equal if _near(day, d)]
-            if not equal:
-                entry["bucket"] = "amount_differs"
-            elif not near:
-                entry["bucket"] = "date_far"
-            else:
-                wants[item_id] = near
-                entry["documents"] = sorted({number_of(d) or "" for d in near}, key=lambda n: (len(n), n))
+            receives.append(item_id)
 
-    wanted_by: dict = defaultdict(set)  # a document (its stock id) -> the rows that hold it among their own
-    for item_id, docs in wants.items():
+    wanted_by: dict = defaultdict(set)  # a document (its stock id) -> the rows that hold it
+    for item_id, docs in holds.items():
         for d in docs:
             wanted_by[d["stock_id"]].add(item_id)
-    for item_id, docs in wants.items():
-        entry = out[item_id]
+    for item_id in receives:
+        docs, entry = holds[item_id], out[item_id]
         if any(role(d.get("doc_type")) == INVOICE for d in docs):
             entry["bucket"] = "tax_invoice_waits"
         elif len(docs) > 1:
@@ -204,7 +213,7 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
     counts = {b: 0 for b in BUCKETS}
     for entry in out.values():
         counts[entry["bucket"]] += 1
-    proposed = {docs[0]["stock_id"] for item_id, docs in wants.items() if out[item_id]["bucket"] == "fill"}
+    proposed = {holds[item_id][0]["stock_id"] for item_id in receives if out[item_id]["bucket"] == "fill"}
     era = [d for d in documents if place_of(d, cited, sides, era_from=ERA_FROM)[0] == "students"]  # the desk's list
     return {"rows": out, "counts": counts,
             "documents": {"students": len(pool), "proposed": len(proposed), "era_listed": len(era),

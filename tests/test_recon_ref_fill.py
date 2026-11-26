@@ -141,13 +141,14 @@ def test_an_archived_row_is_neither_filled_nor_holds_a_document():
 
 def test_a_status_that_does_not_say_money_came_in_is_never_filled():
     """FR-C2 ("a paid or refunded row") and ADR-0035, by A1's MONEY_IN by index: שולם, תשלום הוחזר, הוחזר חלקי and ביקש
-    החזר are filled; לא שולם, יש בעיה, מלגת אנליזה, an empty status and a label the board added later are not - and such
-    a row wants no document, so the paid row of the same name is filled."""
+    החזר are filled; לא שולם, יש בעיה, מלגת אנליזה, an empty status and a label the board added later are not. Such a row
+    still holds its document (condition 6), and with no other row of its name and amount nothing is proposed."""
     statuses = ["1", "4", "5", "9", "0", "2", "3", "", "7"]
     rows, docs = one_each([{"status": s} for s in statuses])
     assert buckets(rows, docs) == {0: "fill", 1: "fill", 2: "fill", 3: "fill", 4: "not_money_in", 5: "not_money_in",
                                    6: "not_money_in", 7: "not_money_in", 8: "not_money_in"}
-    assert buckets([row(0), row(1, status="0")], [doc(62500)]) == {0: "fill", 1: "not_money_in"}
+    got = analysis([row(0, status="0")], [doc(62500)])
+    assert got["rows"][str(SC_BASE)]["documents"] == ["62500"] and got["documents"]["proposed"] == 0
 
 
 def test_a_row_that_cites_a_number_is_a1s_never_this_rules():
@@ -315,6 +316,58 @@ def test_the_window_comes_after_the_amount_and_before_the_document_kind():
     card = [doc(62490, total="1200", day="2026-09-01")]  # the card's invoice-receipt of another amount: a students' card
     assert fills([row(0)], card + [doc(50400, doc_type=1, day="2026-03-01"), doc(62500)]) == {0: "62500"}
     assert fills([row(0)], [doc(62500), doc(62501, card="20002", day="2026-05-01")]) == {0: "62500"}
+
+
+# ---- condition 6: who holds a document --------------------------------------------------------------------------------
+def test_a_rival_whose_status_says_no_money_came_blocks_the_fill():
+    """Condition 6, whatever the rival's status: a row of the same name and amount, near in time, with an empty cell, still
+    marked "לא שולם" or "יש בעיה" - or any status that says no money came, or a label the desk does not know - may be the
+    document's real row (statuses lag: the case of 23.11). The paid row is not filled (`document_wanted_twice`), and the
+    rival is never filled either: condition 1 decides who may receive a number."""
+    for status in ("0", "2", "3", "", "7"):
+        got = analysis([row(0), row(1, status=status, made="2026-11-20T08:00:00Z")], [doc(62500)])
+        entries = {int(i) - SC_BASE: e for i, e in got["rows"].items()}
+        assert (entries[0]["bucket"], entries[1]["bucket"]) == ("document_wanted_twice", "not_money_in"), status
+        assert entries[1]["documents"] == ["62500"] and got["documents"]["proposed"] == 0
+    # from the paid row's side, two documents of its own stay `two_candidates`, rival or not
+    assert buckets([row(0), row(1, status="0")], [doc(62500), doc(62501, card="20002")]) == {
+        0: "two_candidates", 1: "not_money_in"}
+    # a rival that holds two documents holds both: the paid row's one is wanted twice
+    got = buckets([row(0, paid="3517"), row(1, status="0", paid="3518.60")],
+                  [doc(62500, total="3517.70"), doc(62501, card="20002", total="3519.50")])
+    assert got == {0: "document_wanted_twice", 1: "not_money_in"}
+
+
+def test_an_archived_rival_or_one_with_no_amount_does_not_block():
+    """Condition 6 needs an active row with an amount equal to the document's: an archived row of the same name, and one
+    whose "סכום ששולם" is empty or not a number (whatever its status), hold nothing, so the paid row is filled."""
+    for rival in (row(1, state="archived"), row(1, state="archived", status="0"), row(1, paid=""), row(1, paid="",
+                  status="0"), row(1, paid="abc", status="2")):
+        assert fills([row(0), rival], [doc(62500)]) == {0: "62500"}, rival
+
+
+def test_a_rival_with_a_number_another_amount_another_name_or_far_in_time_does_not_block():
+    """Condition 6 asks the rival what it asks the row, but its status: a row whose cell cites a number or holds text A1
+    cannot read, one of another amount, one of a similar name, and one 31 days from the document hold nothing."""
+    rivals = [row(1, ref="62480", status="0"), row(1, ref="חשבונית", status="0"), row(1, paid="2843.5", status="0"),
+              row(1, name="נועה ברקן", status="0"), row(1, day="2026-12-13", status="0"),
+              row(1, day="2026-10-12", status="0")]
+    for rival in rivals:
+        assert fills([row(0), rival], [doc(62500), doc(62480, card="20009", name="אחר")]) == {0: "62500"}, rival
+    # 30 days from the document, the rival blocks
+    assert buckets([row(0), row(1, day="2026-12-12", status="0")], [doc(62500)]) == {
+        0: "document_wanted_twice", 1: "not_money_in"}
+
+
+def test_a_rival_made_in_late_december_blocks_an_invoice_receipt_of_early_january():
+    """Condition 6, whatever the rival's year: the 30 days around the document decide, not Student Charge's year (FR-7
+    decides only who may receive a fill). A row made on 25.12.2025, unpaid or paid, may be the real row of an
+    invoice-receipt of 5.1.2026: the row made on 6.1.2026 is not filled."""
+    docs = [doc(62500, day="2026-01-05")]
+    for status in ("0", "1"):
+        got = buckets([row(0, made="2026-01-06T08:00:00Z"), row(1, made="2025-12-25T08:00:00Z", status=status)], docs)
+        assert got == {0: "document_wanted_twice", 1: "not_money_in" if status == "0" else "out_of_window"}, status
+    assert fills([row(0, made="2026-01-06T08:00:00Z"), row(1, made="2025-12-05T08:00:00Z")], docs) == {0: "62500"}
 
 
 # ---- condition 5 and the plan -----------------------------------------------------------------------------------------
