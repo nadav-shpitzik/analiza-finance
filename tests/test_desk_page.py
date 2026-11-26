@@ -48,11 +48,15 @@ if (input.clock) { const RealDate = Date; global.Date = class extends RealDate {
 const toasts = [], copied = [], sent = [], calls = [], posts = [], usage = [], executed = [], handlers = {}, listeners = {};
 const updates = [];
 const search = { focus() {}, setSelectionRange() {}, value: "" };
-global.document = { visibilityState: "visible", activeElement: null, body: { appendChild() {} },
+/* the flashes on the screen: each appended to the body and not removed yet, by what it says */
+const showing = [];
+global.document = { visibilityState: "visible", activeElement: null,
+  body: { appendChild(el) { if (el.className === "fin-toast") { showing.push(el); } } },
   addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
   getElementById(id) { return id === "fin-q" ? search : null; },
-  createElement() { const el = { setAttribute() {}, remove() {}, click() {}, style: {}, select() {} };
-    Object.defineProperty(el, "textContent", { set(v) { toasts.push(v); } }); return el; },
+  createElement() { const el = { setAttribute() {}, remove() { const i = showing.indexOf(el); if (i !== -1) { showing.splice(i, 1); } },
+    click() {}, style: {}, select() {} };
+    Object.defineProperty(el, "textContent", { set(v) { el.said = v; toasts.push(v); } }); return el; },
   execCommand() { return !!input.oldCopyWorks; } };
 Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: input.clipboard === "none" ? {} :
   { clipboard: { writeText(t) { if (input.clipboard === "refuses") { return Promise.reject(new Error("denied")); }
@@ -211,7 +215,9 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await new Promise((r
         why: it.why || "", result: it.result || null })) } : null, picked: Object.keys(F._picked()).sort(),
       /* D2 (ADR-0188): a company's billing edit */
       bill: F._billState() ? { phase: F._billState().phase, error: F._billState().error || "", outcome: F._billState().outcome || null }
-        : null });
+        : null,
+      /* D4's review (4c): what the flashes on the screen say after the step */
+      showing: showing.map((el) => el.said) });
   }
   /* written at once: console.log to a pipe is asynchronous, and process.exit would cut a long answer short */
   fs.writeSync(1, JSON.stringify({ steps: steps, first: first, sent: sent, calls: calls, posts: posts,
@@ -1249,6 +1255,22 @@ def test_opening_the_card_of_a_row_written_here_says_once_that_mondays_card_may_
     # outside monday a row's link opens its page in a new tab, which shows the value at once: nothing to say
     source = code_of(PAGE)
     assert source.index("cardNote(el.dataset.open)") > source.index("if (deps.monday) {", source.index("if (el.dataset.open) {"))
+
+
+def test_one_flash_shows_at_a_time_and_the_newest_takes_the_place_of_the_one_on_the_screen():
+    """QA 24.11, left for D4 (its review, 4c): two flashes within their time stacked in the same corner, one drawn over the
+    other - a write's "נכתב במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at a
+    time: the newest takes the place of the one on the screen."""
+    answers = {"GET /api/desk": [{"body": answer(receipts_view())}],
+               "POST /api/desk/refresh": [{"body": answer(receipts_done(), taken_at="2026-11-24T08:00:09+00:00")}]}
+    got = drive(steps=[{"show": TASKS}, {"click": [{"rowAct": "sc:3102:receipt_sent"}]}, {"click": [{"batchGo": "1"}]},
+                       {"click": [{"open": "3102"}, ["fin-name"]]}, {"click": [{"pick": "sc:3106"}]},
+                       {"click": [{"pick": "sc:3106"}]}],
+                monday=receipts_world(), context=WRITES, answers=answers)
+    shown = [s["showing"] for s in got["steps"]]
+    assert shown[2] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן."]
+    assert shown[3] == [CARD_NOTE]                                  # the write's flash gave way to the card's note
+    assert all(len(x) <= 1 for x in shown) and got["toasts"] == ["נכתב במאנדיי בשמך בשורה אחת. המסך מתעדכן.", CARD_NOTE]
 
 
 # --- ported: the ID number, read as the person (analiza-metrics tests/test_finance_id_js.py) ----------------------------

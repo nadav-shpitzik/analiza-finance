@@ -175,6 +175,8 @@
  *      it down, and so did its reading, its progress and its result. Each floats now beside the action's control (actPop,
  *      fin-pop, placed by placePop, following a scroll), as a batch does beside what was pressed: never over the button or
  *      the box typed into, the focus on it, and still the details' own (it closes with them). Measured in Playwright.
+ * 4c Two flashes within their time stacked in the same corner, one over the other (a write's "נכתב במאנדיי..." and the note
+ *      on monday's card of the row just written). One shows at a time: a new one takes the place of the one on the screen.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -3585,10 +3587,16 @@
       if (BODY && BODY.refreshing) { followUp(BODY); }
     });
   }
+  /* QA 24.11, left for D4 (its review, 4c): two flashes within their time stacked in the same corner, one drawn over the
+     other - a write's "נכתב במאנדיי..." and, a moment later, the note on monday's card of the row just written. One shows at
+     a time: a new one takes the place of the one on the screen, and the time of the one it replaced ends with it */
+  var TOAST = null;
   function flash(text, ms) {
+    if (TOAST) { clearTimeout(TOAST.timer); TOAST.el.remove(); }
     var t = document.createElement("div"); t.className = "fin-toast"; t.setAttribute("role", "alert"); t.textContent = text;
     document.body.appendChild(t);
-    setTimeout(function () { t.remove(); }, ms || 6000);
+    var shown = TOAST = { el: t, timer: null };
+    shown.timer = setTimeout(function () { t.remove(); if (TOAST === shown) { TOAST = null; } }, ms || 6000);
   }
   /* QA2 2 (24.11): "פתיחה במאנדיי" after "שליחת קבלה: יצאה" was written from here showed "טרם" - closed and opened again, and
      after "רענון" too - and only reloading the page showed "יצאה"; the item's page in a new tab showed it at once. monday's
