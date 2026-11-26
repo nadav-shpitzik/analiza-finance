@@ -86,7 +86,7 @@ import re  # noqa: E402
 
 from app.desk import usage  # noqa: E402
 from app.desk.view import json_safe  # noqa: E402
-from tests.test_desk_books_fill import B2B, DOCS, ROWS, part_of  # noqa: E402
+from tests.test_desk_books_fill import B2B, DOCS, ROWS, part_of, pay  # noqa: E402
 from tests.test_recon_ref_fill import doc  # noqa: E402
 from tests.test_desk_books_page import cell  # noqa: E402
 from tests.test_desk_page import drive  # noqa: E402
@@ -363,6 +363,25 @@ def test_the_rows_details_write_its_proposal_and_show_it_at_once():
     part = books_part(tasks)
     assert 'data-books-fill="sc:1"' not in part and "הצעה: לרשום בשורה של נועה ברק <span class=\"fin-written\">" in part
     assert "(3)" in part                                                               # the others still wait
+
+
+def test_a_date_written_here_files_the_row_under_its_new_month_at_once():
+    """D4's review (3): applyWritten laid the written "תאריך תקבול" on the row as the day it is shown by, but not its month,
+    so until the next reading the row stayed under its old period and was missing from the new one. Row 15 was made on 30.10
+    and the books date its invoice-receipt 02.11: written from its details under "2026-10", it is listed at once under
+    "2026-11" by that date, marked "נכתב, מתעדכן", and no longer under "2026-10"."""
+    rows = ROWS + [pay(15, "טל אור", ref="62617", made="2026-10-30T08:00:00Z")]
+    view = fill_view(rows, DOCS + [doc(62617, name="טל אור", card="20017", day="2026-11-02")])[0]
+    assert {r["id"]: r for r in view["b2c"]["rows"]}["15"]["books_fill"] == {"date": "2026-11-02"}
+    october = {"tab": "b2c", "sc": {"state": "", "period": "2026-10", "open": {"15": True}}}
+    november = {"tab": "b2c", "sc": {"state": "", "period": "2026-11", "open": {}}}
+    got = run([{"show": october}, {"click": [{"booksFill": "sc:15", "booksFrom": "detail"}]}, {"click": [{"batchGo": "1"}]},
+               {"show": november}, {"show": dict(october, sc=dict(october["sc"], open={}))}],
+              view=view, monday=monday_of(rows), hold=True)
+    before, _plan, _done, nov, octo = got["steps"]
+    assert 'data-row="15"' in before["html"] and writes_of(got) == [(SC_BOARD, "15", {DATE_COL: {"date": "2026-11-02"}})]
+    assert cell(nov["html"], "15", "date") == "02.11.26" and "נכתב, מתעדכן" in cell(nov["html"], "15", "student")
+    assert 'data-row="15"' not in octo["html"]
 
 
 def test_past_one_batchs_worth_the_rest_waits_for_the_next_press():

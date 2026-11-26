@@ -180,7 +180,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   reads take what the proposal rests on too (the action's `rests_on`: "סטטוס תשלום" by index, "סכום ששולם"), held to the
   reading (`restsMoved`), and right before a number is written one `items_page_by_column_values` read as the person
   (`READ_CITING`, `citedElsewhere`) finds a row of Student Charge that already cites it; a check that cannot be made fails
-  the row. The legend says exactly what is checked. Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
+  the row. The legend says exactly what is checked. A date written here files its row under that date's month at once
+  (`applyWritten`). Usage kind `books_fill` (`from`, `rows`). Tests: `tests/test_desk_books_fill.py` (the desk's proposals equal
   `ref_fill.plan`'s and A1's plan's on the same rows; the gate), `tests/test_desk_books_fill_page.py` (node, Playwright).
 - **The students by cohort (D4, 26.11; backlog 0313), read only:** `app/desk/cohorts.py`, in the desk's answer as
   `b2c.cohorts` (Student Charge's members only). Only cohorts on the voucher track (Registration Flow `color_mm31k62f` index

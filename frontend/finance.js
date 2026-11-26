@@ -165,6 +165,8 @@
  *      items_page_by_column_values) asks for the rows of Student Charge whose "אסמכתת חשבונית" is that number, and another
  *      one stops it (citedElsewhere; a check that cannot be made fails the row, never passes it). The legend says exactly
  *      what is checked.
+ * 3  A "תאריך תקבול" written from here was laid on the row as the day it is shown by, but not as its month, so the row stayed
+ *      under its old period until the next reading. applyWritten files it under the written date's month too.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -1861,8 +1863,11 @@
       /* column by column: one still behind is covered, one that shows a third value saw a later change and stays the
          truth (review 11.11: a status behind covered a "סכום החזר" changed after the write) */
       keys.forEach(function (f) { if (!sameField(f, row[f], w.fields[f]) && sameField(f, row[f], w.before[f])) { row[f] = w.fields[f]; } });
-      /* D4: a "תאריך תקבול" written from here is the day the row is shown by, as the next reading will file it */
-      if (w.fields.paid_date && row.paid_date === w.fields.paid_date) { row.date = row.paid_date; row.date_from = "paid"; }
+      /* D4: a "תאריך תקבול" written from here is the day the row is shown by, as the next reading will file it - and its
+         month the period it is listed under (D4's review: it stayed under the old period until that reading) */
+      if (w.fields.paid_date && row.paid_date === w.fields.paid_date) {
+        row.date = row.paid_date; row.date_from = "paid"; row.month = row.paid_date.slice(0, 7);
+      }
       row.written = true;
     });
   }
