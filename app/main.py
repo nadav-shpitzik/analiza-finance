@@ -201,7 +201,7 @@ def health(request: Request) -> dict:
         },
         "store": store,
         "books": {"sync_key": sync_key_state(cfg), "ledger_report": ledger_state(cfg.ledger_report), **(books or {}),
-                  "ledger": ledger},
+                  "ledger": {"salary_codes": salary_state(cfg.ledger_salary_codes), **(ledger or {})}},
         "recon": {"monday_token_set": bool(cfg.monday_token), "last_reading": recon},
         "desk": desk_health(state, cfg, desk_stored, now),
         "last_check": None
@@ -630,15 +630,24 @@ def _run_input(payload: Any, now_ts: float) -> tuple:
     return sorted(months), None
 
 
+def salary_state(text: str) -> str:
+    """What /health says of LEDGER_SALARY_CODES: "set", "missing" or "bad". Never the list."""
+    from .books.ledger_totals import salary_codes
+
+    return salary_codes(text)[0]
+
+
 @app.post("/api/books/ledger/run")
 async def ledger_run(request: Request) -> JSONResponse:
-    """B3 (backlog 0301; ADR-0187 §2-§5): the ledger report run for whole months, each summed by sort code and replaced in
-    one transaction (app/books/ledger_totals.py). Behind the sync key, checked before the body is read. The body is
-    `{"months": ["YYYY-MM", ...]}` (1 to 12), or nothing for the previous and the current month in Israel time. Always 200
-    after the key, boxed like a tick (REQUEST_BOX_S from the request's arrival): `ok`, `skipped`, `reasons` (closed:
-    ledger_totals.RUN_REASONS), and per month its counts - rows, sort_codes, kept_lines, single_account, single_sides,
-    masked_keys, batch_9998_rows, cut, parts, stored and why not. Never a value of a row, never a total: the totals are
-    read behind the same key (GET /api/books/ledger/totals). Make will call it nightly."""
+    """B3 (backlog 0301; ADR-0187 §2-§5): the ledger report run for whole months, each summed by sort code, its salary codes
+    and its thin lines merged into one line, and replaced in one transaction (app/books/ledger_totals.py). Behind the sync
+    key, checked before the body is read. The body is `{"months": ["YYYY-MM", ...]}` (1 to 12 months), or nothing for the
+    previous and the current month in Israel time. Always 200 after the key, boxed like a tick
+    (REQUEST_BOX_S from the request's arrival): `ok`, `skipped`, `reasons` (closed: ledger_totals.RUN_REASONS), and per
+    month its counts - rows, sort_codes, kept_lines, merged_codes, merged, merged_by, masked_keys, batch_9998_rows, cut,
+    parts, stored and why not. Without LEDGER_SALARY_CODES nothing is stored (`salary_codes_not_set`). Never a value of a
+    row, never a total: the totals are read behind the same key
+    (GET /api/books/ledger/totals). Make will call it nightly."""
     started = time.monotonic()
     cfg = config.load()
     refusal = _sync_key_refusal(request, cfg)
@@ -662,7 +671,7 @@ async def ledger_run(request: Request) -> JSONResponse:
 
             try:
                 return ledger_totals.run(get_client(state, cfg), LedgerStore(cfg.database_url), cfg.db, months,
-                                         cfg.ledger_report, deadline)
+                                         cfg.ledger_report, deadline, salary_text=cfg.ledger_salary_codes)
             except Exception as exc:  # noqa: BLE001 - by class, never the text: a message could carry what a row held
                 return {"ok": False, "skipped": False, "reasons": ["crashed"], "months": {}, "error": type(exc).__name__,
                         "detail": getattr(exc, "detail", None)}
@@ -675,9 +684,9 @@ async def ledger_run(request: Request) -> JSONResponse:
 def ledger_totals_read(request: Request) -> JSONResponse:
     """The kept lines of the ledger (B3; ADR-0187 §2), `?from=YYYY-MM&to=YYYY-MM` (`to` defaults to `from`, at most
     LEDGER_MAX_SPAN months): per month and sort code its name, debit, credit, rows, accounts and masked keys - category
-    totals, never a person's (a line of one account was never stored; a side one account alone fills is null). And per
-    month its counts and batch 9998 apart. Money as exact text. Behind the sync key: no total is anyone's business on a
-    public URL."""
+    totals, never a person's: the salary codes and every line fewer than three accounts fill are the month's one merged
+    line (sort code -1, `merged: true`), itself never stored with fewer. And per month its counts and batch 9998 apart.
+    Money as exact text. Behind the sync key: no total is anyone's business on a public URL."""
     cfg = config.load()
     refusal = _sync_key_refusal(request, cfg)
     if refusal is not None:

@@ -3,7 +3,8 @@
 A month is replaced whole, in one transaction (ADR-0187 §4): its lines are deleted and the new ones inserted, its row in
 ledger_months is overwritten, and the sort codes' names and the account keys' sort codes it carried are upserted. So a
 rerun never doubles a line, and a line that left the books leaves the store. What is written is what
-app/books/ledger_totals.py computed: lines of two accounts or more, keys the copy's cleaning keeps whole - never a row.
+app/books/ledger_totals.py computed: lines of three accounts or more and the month's merged line (MERGED_CODE), keys the
+copy's cleaning keeps whole - never a row.
 
 A run of one company holds a transaction-scoped advisory lock on a connection of its own (its own lock id: a ledger run
 never waits for a tick, nor a tick for it), so a second run finds it held and is skipped. Errors become LedgerStoreError
@@ -17,13 +18,15 @@ from contextlib import contextmanager
 from datetime import date
 from typing import Iterator, Optional
 
+from .ledger_totals import MERGED_CODE, MERGED_NAME
+
 CONNECT_TIMEOUT_S = 10
 STATEMENT_TIMEOUT_MS = 15000
 MIN_STATEMENT_MS = 500
 # What the writes name, per table. app/migrate.py checks the live schema against it.
 LEDGER_TABLES = {
     "ledger_runs": ("run_id", "company", "trigger", "started_at", "finished_at", "months", "ok", "reasons", "note"),
-    "ledger_months": ("company", "month", "row_count", "sort_codes", "kept_lines", "single_account", "single_sides",
+    "ledger_months": ("company", "month", "row_count", "sort_codes", "kept_lines", "merged_codes", "merged_state",
                       "masked_keys", "batch_9998_rows", "batch_9998_debit", "batch_9998_credit", "parts", "run_id",
                       "computed_at"),
     "ledger_totals": ("company", "month", "sort_code", "debit", "credit", "row_count", "account_count", "masked_keys",
@@ -149,15 +152,15 @@ class LedgerStore:
                      [x.masked_keys for x in lines]))
             batch = month.batch
             cur.execute(
-                "INSERT INTO ledger_months (company, month, row_count, sort_codes, kept_lines, single_account, single_sides, "
+                "INSERT INTO ledger_months (company, month, row_count, sort_codes, kept_lines, merged_codes, merged_state, "
                 "masked_keys, batch_9998_rows, batch_9998_debit, batch_9998_credit, parts, run_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (company, month) DO UPDATE SET "
                 "row_count = EXCLUDED.row_count, sort_codes = EXCLUDED.sort_codes, kept_lines = EXCLUDED.kept_lines, "
-                "single_account = EXCLUDED.single_account, single_sides = EXCLUDED.single_sides, "
+                "merged_codes = EXCLUDED.merged_codes, merged_state = EXCLUDED.merged_state, "
                 "masked_keys = EXCLUDED.masked_keys, batch_9998_rows = EXCLUDED.batch_9998_rows, "
                 "batch_9998_debit = EXCLUDED.batch_9998_debit, batch_9998_credit = EXCLUDED.batch_9998_credit, "
                 "parts = EXCLUDED.parts, run_id = EXCLUDED.run_id, computed_at = now()",
-                (company, day, month.rows, month.sort_codes, len(lines), month.single_account, month.single_sides,
+                (company, day, month.rows, month.sort_codes, len(lines), month.merged_codes, month.merged,
                  month.masked_keys, batch.rows, batch.debit, batch.credit, month.parts, run_id))
             if names:
                 cur.execute(
@@ -176,14 +179,15 @@ class LedgerStore:
 
 
 def _money(value) -> Optional[str]:
-    """A total as exact text ("48213.77"), never a float (spec §2.1); None stays None (a side withheld)."""
+    """A total as exact text ("48213.77"), never a float (spec §2.1)."""
     return None if value is None else format(value, "f")
 
 
 def read_totals(url: str, company: str, first: str, last: str, connect_timeout_s: int = CONNECT_TIMEOUT_S) -> dict:
     """The kept lines of the months from `first` to `last` ("YYYY-MM"), each with its sort code's name, and each month's
     counts and batch 9998 - in ONE repeatable-read transaction, on a connection of its own (a read never waits for a run's
-    lock). Category totals only: a line of one account was never stored, and a side one account alone fills is None."""
+    lock). Category totals only: a line of fewer than three accounts, or a side fewer fill, was folded into the merged line
+    (MERGED_CODE, named MERGED_NAME), and a merged line of fewer was never stored."""
     with _guard():
         conn = _connect(url, autocommit=True, connect_timeout_s=connect_timeout_s)
         try:
@@ -196,21 +200,23 @@ def read_totals(url: str, company: str, first: str, last: str, connect_timeout_s
                     "ON s.company = t.company AND s.sort_code = t.sort_code WHERE t.company = %s AND t.month BETWEEN %s AND %s "
                     "ORDER BY t.month, t.sort_code", (company, first_day(first), first_day(last))).fetchall()
                 months = conn.execute(
-                    "SELECT to_char(month, 'YYYY-MM'), row_count, sort_codes, kept_lines, single_account, single_sides, "
+                    "SELECT to_char(month, 'YYYY-MM'), row_count, sort_codes, kept_lines, merged_codes, merged_state, "
                     "masked_keys, batch_9998_rows, batch_9998_debit, batch_9998_credit, parts, run_id, computed_at "
                     "FROM ledger_months WHERE company = %s AND month BETWEEN %s AND %s ORDER BY month",
                     (company, first_day(first), first_day(last))).fetchall()
         finally:
             conn.close()
     return {
-        "lines": [{"month": m, "sort_code": code, "name": name, "debit": _money(debit), "credit": _money(credit),
-                   "rows": rows, "accounts": accounts, "masked_keys": masked}
+        "lines": [{"month": m, "sort_code": code, "name": MERGED_NAME if code == MERGED_CODE else name,
+                   "merged": code == MERGED_CODE, "debit": _money(debit), "credit": _money(credit), "rows": rows,
+                   "accounts": accounts, "masked_keys": masked}
                   for m, code, name, debit, credit, rows, accounts, masked in lines],
-        "months": {m: {"rows": rows, "sort_codes": codes, "kept_lines": kept, "single_account": single,
-                       "single_sides": sides, "masked_keys": masked, "batch_9998_rows": b_rows,
+        "months": {m: {"rows": rows, "sort_codes": codes, "kept_lines": kept, "merged_codes": merged_codes,
+                       "merged": merged, "masked_keys": masked, "batch_9998_rows": b_rows,
                        "batch_9998_debit": _money(b_debit), "batch_9998_credit": _money(b_credit), "parts": parts,
                        "run_id": run_id, "computed_at": at.isoformat(timespec="seconds") if at else None}
-                   for m, rows, codes, kept, single, sides, masked, b_rows, b_debit, b_credit, parts, run_id, at in months},
+                   for m, rows, codes, kept, merged_codes, merged, masked, b_rows, b_debit, b_credit, parts, run_id, at
+                   in months},
     }
 
 

@@ -2,8 +2,10 @@
 (app/books/ledger.py) and keeps only category totals, never a row (app/books/ledger_store.py, migrations/007).
 
 What a run keeps, per company:
-(a) per month (by "תאריך", the reference's date) and sort code - a line: the debit and credit totals, the rows, the
-    distinct accounts, and how many of their keys the map may not keep (`masked_keys`: counted, never kept);
+(a) per month (by "תאריך", the reference's date) and sort code, a line that may stand on its own (below): its debit and
+    credit totals, its rows, its distinct accounts, and how many of their keys the map may not keep (`masked_keys`:
+    counted, never kept). Every other line of the month is folded into ONE merged line, sort code MERGED_CODE (-1), named
+    MERGED_NAME;
 (b) per sort code: its name ("שם קוד מיון"), cleaned like any text from the books (app/books/clean.py, spec §3.4);
 (c) per account key: its sort code - only for a key the copy's own cleaning keeps whole and that holds fewer than six
     digits (`storable_key`). **Student cards are keyed by ID numbers (ADR-0173 §1)**, and an ID number is never stored
@@ -12,16 +14,27 @@ What a run keeps, per company:
     the map can hold, in the same cleaned form.
 Never kept: an account's name, details, a reference, a counter-account, a cost code, or one account's amount.
 
-**One person's money is never stored alone** (ADR-0187 "שארית ידועה": a code that holds one person's account exposes their
-monthly amount). A line whose sort code holds one account in the month is not stored at all; it is counted as
-`single_account`. And a side of a kept line - its debit or its credit total - that a single account alone fills is not
-stored either (NULL, counted as `single_sides`): with two accounts on a code, one debited and one credited, each total would
-be one account's own. What this does not stop, and the report of 26.11 says: the books balance, so when a month withholds
-exactly one line, its net follows from the kept lines'.
+**The merge (the owner's decision, 26.11): salaries, and every line few accounts fill, are one line a month.** A month's
+line goes into the merged line when
+1. its sort code is a salary code: listed explicitly in LEDGER_SALARY_CODES (a Replit Secret, chosen by a person),
+   never guessed by a name. Until the list is set, a run stores nothing (`salary_codes_not_set`);
+2. it has fewer than MIN_ACCOUNTS (3) distinct accounts (`small`): a code that holds one person's account exposes their
+   monthly amount (ADR-0187 "שארית ידועה");
+3. its debit or its credit is filled by fewer than MIN_ACCOUNTS accounts (`side`): with one account debited and others
+   credited, the debit total is that one account's own. A side is filled by the accounts whose sum on it is not zero; an
+   empty side exposes no one. The whole line moves.
+The merged line is kept only when it has MIN_ACCOUNTS accounts or more and neither of its sides is filled by fewer (the
+same rule a line stands by); otherwise it is withheld whole and counted (`merged: "withheld"`).
+
+**What the balance still reveals.** A month's lines net to zero: every transaction balances, the date cut takes whole
+transactions, and batch 9998 balances on its own and is kept apart. So the one cell a month can withhold - the merged
+line - has as its net minus the kept lines' nets, and the balance reveals that withheld aggregate and nothing finer: a
+multi-person sum, except in a month with fewer than 3 such accounts, when it is those one or two accounts' own. And a
+multi-person sum can still be almost one account's (there is no dominance rule).
 
 **Batch 9998** (the income and expense transfer at the end of a year or a quarter, which zeroes the expense cards) never
 enters a line: its rows and totals are counted apart, per month (ADR-0187 §5), even though the report is defined without
-income transfers. Its debit equals its credit, so neither side is withheld.
+income transfers. Its debit equals its credit.
 
 **A run recomputes whole months and replaces them** (ADR-0187 §4), one transaction per month (LedgerStore.replace_month).
 A month is replaced only when it was read whole:
@@ -29,16 +42,16 @@ A month is replaced only when it was read whole:
    the median of the codes it carried, until every part is under the limit; a part of one sort code at the limit, or more
    than MAX_PARTS calls, is `cut`. The sort-code cut narrower than the whole range is unverified live (only the whole
    range was sent, 26.11), so a part whose rows fall outside its range is `outside`, never summed.
-2. every row readable: a date in the month asked, a sort code in its part's range, a key, numeric debit and credit, a
-   batch that is a whole number when it is there (`unreadable`, `outside`); and the rows carry every column the totals
-   read (`columns`).
-3. the month balances: its debits equal its credits (`unbalanced`). Every transaction balances and the date cut takes
-   whole transactions, so a month that does not balance was not read whole. This is the one check that does not depend
-   on knowing the cap the vendor applies: the External file's `limit` is not sent (app/books/ledger.py), so an answer cut
-   by a lower cap of the server's would pass `hit_limit`. A hypothesis the first run settles.
+2. every row readable: a date in the month asked, a sort code in its part's range (never MERGED_CODE), a key, numeric
+   debit and credit, a batch that is a whole number when it is there (`unreadable`, `outside`); and the rows carry every
+   column the totals read (`columns`).
+3. the month balances: its debits equal its credits (`unbalanced`). This is the one check that does not depend on knowing
+   the cap the vendor applies: the External file's `limit` is not sent (app/books/ledger.py), so an answer cut by a lower
+   cap of the server's would pass `hit_limit`. A hypothesis the first run settles.
 4. an answer of no rows ("data not found") for a month the store holds rows of is doubted, not trusted (`emptied`).
-The rows live only in the run's memory (ADR-0187 §3): read, summed and dropped, never logged, kept or returned. The run's
-answer is counts and closed words; no message here ever carries a value of a row.
+
+The rows live only in the run's memory (ADR-0187 §3): read, summed and dropped, never logged, kept or returned. The answers
+are counts and closed words; no message here ever carries a value of a row.
 """
 
 from __future__ import annotations
@@ -64,19 +77,51 @@ SORT_NAME_CAPTION = "שם קוד מיון"
 BATCH_CAPTION = "מספר מנה"
 NEEDED = (DATE_CAPTION, KEY_CAPTION, SORT_CAPTION, DEBIT_CAPTION, CREDIT_CAPTION, BATCH_CAPTION)
 TRANSFER_BATCH = 9998
-MIN_ACCOUNTS = 2  # a line, or a side of one, filled by fewer accounts is never stored
+MIN_ACCOUNTS = 3  # a line, or a side of one, filled by fewer accounts never stands alone (the owner, 26.11)
+MERGED_CODE = -1  # the merged line's sort code: never a real one (a row that carries it is unreadable)
+MERGED_NAME = "שכר ונלווים וקודים קטנים"
+MERGE_WHY = ("salary", "small", "side")  # why a line went into the merged line, in the order they are asked
+MERGED_STATES = ("none", "kept", "withheld")
 KEY_DIGITS_MAX = 5  # a key with more digits is never stored, whatever shape the cleaning gave it
 MAX_KEY = 64
 MAX_NAME = 200
 MAX_MONTHS = 12
 MAX_PARTS = 16  # report calls for one month: a split that needs more is `cut`
 MARGIN_S = 1.0
-# Why a month was not stored. The run's reasons are these, after the run's own.
-MONTH_REASONS = ("cut", "out_of_time", "wizcloud", "bad_answer", "columns", "unreadable", "outside", "unbalanced",
-                 "emptied", "store")
+# The salary list's states (/health says them, never the list).
+SALARY_STATES = ("set", "missing", "bad")
+# Why a month was not stored. The run's reasons are the run's own, then these.
+MONTH_REASONS = ("salary_codes_not_set", "salary_codes_bad", "cut", "out_of_time", "wizcloud", "bad_answer", "columns",
+                 "unreadable", "outside", "unbalanced", "emptied", "store")
 RUN_REASONS = ("bad_request", "not_set", "bad_definition", "no_limit", "crashed") + MONTH_REASONS
 # The fields a row is unreadable in (`unreadable`), as closed words.
 FIELDS = ("date", "sort_code", "key", "debit", "credit", "batch")
+
+
+# ---- the salary codes --------------------------------------------------------------------------------------------------
+
+_CODE = re.compile(r"-?\d{1,9}")
+
+
+def salary_codes(text: Optional[str]) -> tuple:
+    """(state, codes): LEDGER_SALARY_CODES as a frozenset of sort codes. "missing" when it is not set; "bad" when an entry
+    is not a whole number in the report's range, names MERGED_CODE, or the list names none; "set" otherwise. Entries are
+    comma separated, spaces around them allowed, an empty entry skipped."""
+    raw = (text or "").strip()
+    if not raw:
+        return "missing", frozenset()
+    entries = [entry.strip() for entry in raw.split(",")]
+    codes = set()
+    for entry in entries:
+        if not entry:
+            continue
+        if not _CODE.fullmatch(entry):
+            return "bad", frozenset()
+        code = int(entry)
+        if code == MERGED_CODE or not WHOLE_SORT[0] <= code <= WHOLE_SORT[1]:
+            return "bad", frozenset()
+        codes.add(code)
+    return ("set", frozenset(codes)) if codes else ("bad", frozenset())
 
 
 # ---- one cell ----------------------------------------------------------------------------------------------------------
@@ -100,9 +145,11 @@ def whole_of(value: Any) -> Optional[int]:
 
 
 def sort_of(value: Any) -> Optional[int]:
-    """A sort code (a number, 26.11), in the report's range, or None."""
+    """A sort code (a number, 26.11), in the report's range and never the merged line's, or None."""
     code = None if _empty(value) else whole_of(value)
-    return code if code is not None and WHOLE_SORT[0] <= code <= WHOLE_SORT[1] else None
+    if code is None or code == MERGED_CODE:
+        return None
+    return code if WHOLE_SORT[0] <= code <= WHOLE_SORT[1] else None
 
 
 def money_of(value: Any) -> Optional[Decimal]:
@@ -170,11 +217,11 @@ def name_of(value: Any) -> Optional[str]:
 
 @dataclass(frozen=True)
 class Line:
-    """A kept line: one sort code in one month. `debit` or `credit` None: that side was one account's alone."""
+    """A kept line: one sort code in one month, or the merged line (MERGED_CODE)."""
 
     sort_code: int
-    debit: Optional[Decimal]
-    credit: Optional[Decimal]
+    debit: Decimal
+    credit: Decimal
     rows: int
     accounts: int
     masked_keys: int
@@ -206,9 +253,12 @@ class MonthResult:
     parts: int = 0
     rows: Optional[int] = None
     sort_codes: Optional[int] = None
-    single_account: Optional[int] = None
-    single_sides: Optional[int] = None
     masked_keys: Optional[int] = None
+    batch_rows: Optional[int] = None
+    kept_lines: Optional[int] = None  # the lines stored, the merged line among them when it is kept
+    merged_codes: Optional[int] = None
+    merged: Optional[str] = None  # MERGED_STATES
+    merged_by: Optional[dict] = None  # MERGE_WHY -> codes
     key_conflicts: int = 0
     unreadable: dict = field(default_factory=dict)
     outside: int = 0
@@ -240,9 +290,9 @@ class MonthResult:
 
     def answer(self) -> dict:
         out = {"stored": self.stored, "reason": self.reason, "cut": self.cut, "parts": self.parts, "rows": self.rows,
-               "sort_codes": self.sort_codes, "kept_lines": len(self.lines) if self.computed else None,
-               "single_account": self.single_account, "single_sides": self.single_sides, "masked_keys": self.masked_keys,
-               "batch_9998_rows": self.batch.rows if self.computed else None}
+               "sort_codes": self.sort_codes, "kept_lines": self.kept_lines, "merged_codes": self.merged_codes,
+               "merged": self.merged, "merged_by": self.merged_by, "masked_keys": self.masked_keys,
+               "batch_9998_rows": self.batch_rows}
         if self.kind is not None:
             out["kind"] = self.kind
         if self.vendor is not None:
@@ -275,16 +325,23 @@ class _Reader:
         return None if read is None else read(row)
 
 
-def _side(accounts: dict, index: int) -> Optional[Decimal]:
-    """One side's total, or None when a single account alone fills it (MIN_ACCOUNTS)."""
-    total = sum((sums[index] for sums in accounts.values()), Decimal(0))
-    filled = sum(1 for sums in accounts.values() if sums[index] != 0)
-    return None if 0 < filled < MIN_ACCOUNTS else total
+def _thin(accounts: dict) -> bool:
+    """Whether a side - the debit or the credit - is filled by some accounts but fewer than MIN_ACCOUNTS. An account fills
+    a side when its sum on that side is not zero; a side no account fills is empty and exposes no one."""
+    for index in (0, 1):
+        filled = sum(1 for sums in accounts.values() if sums[index] != 0)
+        if 0 < filled < MIN_ACCOUNTS:
+            return True
+    return False
+
+
+def _total(accounts: dict, index: int) -> Decimal:
+    return sum((sums[index] for sums in accounts.values()), Decimal(0))
 
 
 class _Month:
-    """The month being summed: lines by sort code, each with its accounts' own sums (in memory only, for the
-    single-account rules), batch 9998 apart, and the whole month's debit and credit for the balance."""
+    """The month being summed: lines by sort code, each with its accounts' own sums (in memory only, for the merge),
+    batch 9998 apart, and the whole month's debit and credit for the balance."""
 
     def __init__(self, month: str):
         first = month_bounds(month)[0]
@@ -367,87 +424,115 @@ class _Month:
         sums[0] += debit
         sums[1] += credit
 
-    def finish(self, result: MonthResult) -> MonthResult:
-        """The lines to keep, once every part was read: or `unbalanced`."""
+    def balanced(self) -> bool:
+        return self.debit == self.credit
+
+    def counts(self, result: MonthResult) -> MonthResult:
+        """What the month says whatever the salary list: its rows, its codes, its masked keys, batch 9998's rows."""
         result.rows = self.rows
-        if self.debit != self.credit:
-            return result.refuse("unbalanced")
-        lines, single, sides = [], 0, 0
-        for code in sorted(self.lines):
-            rows, accounts = self.lines[code]
-            if len(accounts) < MIN_ACCOUNTS:
-                single += 1
-                continue
-            debit, credit = _side(accounts, 0), _side(accounts, 1)
-            sides += (debit is None) + (credit is None)
-            lines.append(Line(code, debit, credit, rows, len(accounts), sum(1 for who in accounts if who in self.masked)))
-        result.lines = lines
         result.sort_codes = len(self.lines)
-        result.single_account = single
-        result.single_sides = sides
         # the month's accounts outside batch 9998 whose key the map may not keep
         result.masked_keys = len({who for _, accounts in self.lines.values() for who in accounts if who in self.masked})
+        result.batch_rows = self.batch_rows
+        return result
+
+    def finish(self, result: MonthResult, salary: frozenset) -> MonthResult:
+        """The lines to keep: each line that stands on its own, and the merged line (the module's docstring)."""
+        self.counts(result)
+        lines, merged, merged_rows, why_counts = [], {}, 0, Counter()
+        for code in sorted(self.lines):
+            rows, accounts = self.lines[code]
+            why = ("salary" if code in salary else "small" if len(accounts) < MIN_ACCOUNTS
+                   else "side" if _thin(accounts) else None)
+            if why is None:
+                lines.append(Line(code, _total(accounts, 0), _total(accounts, 1), rows, len(accounts),
+                                  sum(1 for who in accounts if who in self.masked)))
+                continue
+            why_counts[why] += 1
+            merged_rows += rows
+            for who, sums in accounts.items():
+                into = merged.setdefault(who, [Decimal(0), Decimal(0)])
+                into[0] += sums[0]
+                into[1] += sums[1]
+        if not why_counts:
+            result.merged = "none"
+        elif len(merged) >= MIN_ACCOUNTS and not _thin(merged):
+            result.merged = "kept"
+            lines.append(Line(MERGED_CODE, _total(merged, 0), _total(merged, 1), merged_rows, len(merged),
+                              sum(1 for who in merged if who in self.masked)))
+        else:
+            result.merged = "withheld"
+        result.lines = lines
+        result.kept_lines = len(lines)
+        result.merged_codes = sum(why_counts.values())
+        result.merged_by = {why: why_counts[why] for why in MERGE_WHY}
         result.batch = Batch(self.batch_rows, self.batch_debit, self.batch_credit)
-        result.names = {code: sorted(names.items(), key=lambda item: (-item[1], item[0]))[0][0]
-                        for code, names in self.names.items()}
+        result.names = {code: _best(names) for code, names in self.names.items()}
         result.keys = {key: next(iter(codes)) for key, codes in self.keys.items() if len(codes) == 1}
         result.key_conflicts = sum(1 for codes in self.keys.values() if len(codes) > 1)
         result.computed = True
         return result
 
 
+def _best(names: Counter) -> str:
+    """The name a code carried most, the first in order on a tie."""
+    return sorted(names.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
 Call = Callable[[list, float], Any]
 
 
 def read_month(call: Call, definition: Definition, month: str, deadline: float,
-               clock: Callable[[], float] = time.monotonic) -> MonthResult:
-    """One month read whole and summed, or refused (MonthResult.reason). `call(parameters, deadline)` runs the report
-    (WizClient.export_report with the definition's datafile). A part that reaches the limit is split by sort code
-    (the module's docstring); every answer is summed and dropped as it comes."""
+               clock: Callable[[], float] = time.monotonic) -> tuple:
+    """(MonthResult, _Month): one month read whole, balanced and summed in memory - or (refused MonthResult, None).
+    `call(parameters, deadline)` runs the report (WizClient.export_report with the definition's datafile). A part that
+    reaches the limit is split by sort code (the module's docstring); every answer is summed and dropped as it comes."""
     result = MonthResult(month)
     acc = _Month(month)
     pending = [WHOLE_SORT]
     while pending:
         low, high = pending.pop(0)
         if result.parts >= MAX_PARTS:
-            return result.refuse("cut", cut=True)
+            return result.refuse("cut", cut=True), None
         if deadline - clock() <= MIN_CALL_S + MARGIN_S:
-            return result.refuse("out_of_time")
+            return result.refuse("out_of_time"), None
         result.parts += 1
         try:
             answer = call(month_parameters(definition, month, low, high), deadline)
         except DeadlineReached:
-            return result.refuse("out_of_time")
+            return result.refuse("out_of_time"), None
         except WizError as exc:
             word = vendor_word(exc.message)
             if word == "data_not_found":
                 continue  # no rows in this part
-            return result.refuse("wizcloud", kind=exc.kind, vendor=word)
+            return result.refuse("wizcloud", kind=exc.kind, vendor=word), None
         rows = find_rows(answer)[0]
         if rows is None:
             word = _vendor_in(answer)
             if word == "data_not_found":
                 continue
-            return result.refuse("bad_answer", vendor=word)
+            return result.refuse("bad_answer", vendor=word), None
         del answer
         if not rows:
             continue
         reader = _Reader(rows, definition)
         if reader.missing():
-            return result.refuse("columns")
+            return result.refuse("columns"), None
         if len(rows) >= definition.limit:  # hit_limit: this part may be cut
             codes = acc.codes_in(rows, reader, low, high)
             del rows, reader
             if len(codes) < 2:
-                return result.refuse("cut", cut=True)
+                return result.refuse("cut", cut=True), None
             middle = codes[len(codes) // 2 - 1]
             pending[:0] = [(low, middle), (middle + 1, high)]
             continue
         problem = acc.add(rows, reader, low, high)
         del rows, reader
         if problem:
-            return result.refuse(problem, unreadable=dict(acc.unreadable), outside=acc.outside, rows=acc.rows)
-    return acc.finish(result)
+            return result.refuse(problem, unreadable=dict(acc.unreadable), outside=acc.outside, rows=acc.rows), None
+    if not acc.balanced():
+        return result.refuse("unbalanced", rows=acc.rows), None
+    return result, acc
 
 
 # ---- the run -------------------------------------------------------------------------------------------------------------
@@ -458,21 +543,35 @@ def _reasons(words) -> list:
     return [word for word in RUN_REASONS if word in words]
 
 
-def run(client, store, company: str, months: list, text: Optional[str], deadline: float, trigger: str = "http",
-        clock: Callable[[], float] = time.monotonic) -> dict:
-    """One run: each month asked, read whole and replaced, in order, inside the box (`deadline`, time.monotonic). Always a
-    dict with `ok`, `skipped`, `reasons` (RUN_REASONS) and per month its counts (MonthResult.answer). `store` is a
-    LedgerStore; a second run of the company is skipped. No session is opened for a run that cannot run."""
+def _definition(text: Optional[str]) -> tuple:
+    """(Definition, None), or (None, the answer of a run that cannot run): not_set, bad_definition, no_limit."""
     if not (text or "").strip():
-        return {"ok": False, "skipped": False, "reasons": ["not_set"], "months": {},
-                "detail": "WIZ_LEDGER_REPORT is not set (a Replit Secret: the External file of the report, whole)"}
+        return None, {"ok": False, "skipped": False, "reasons": ["not_set"], "months": {},
+                      "detail": "WIZ_LEDGER_REPORT is not set (a Replit Secret: the External file of the report, whole)"}
     try:
         definition = load_definition(text)
     except DefinitionError as exc:
-        return {"ok": False, "skipped": False, "reasons": ["bad_definition"], "definition": exc.reason, "months": {}}
+        return None, {"ok": False, "skipped": False, "reasons": ["bad_definition"], "definition": exc.reason, "months": {}}
     if definition.limit is None:
-        return {"ok": False, "skipped": False, "reasons": ["no_limit"], "months": {},
-                "detail": "the report's External file names no limit: an answer cut short could not be told"}
+        return None, {"ok": False, "skipped": False, "reasons": ["no_limit"], "months": {},
+                      "detail": "the report's External file names no limit: an answer cut short could not be told"}
+    return definition, None
+
+
+def _caller(client, definition: Definition) -> Call:
+    return lambda parameters, until: client.export_report(definition.datafile, parameters, deadline=until)
+
+
+def run(client, store, company: str, months: list, text: Optional[str], deadline: float, trigger: str = "http",
+        clock: Callable[[], float] = time.monotonic, salary_text: Optional[str] = None) -> dict:
+    """One run: each month asked, read whole and replaced, in order, inside the box (`deadline`, time.monotonic). Always a
+    dict with `ok`, `skipped`, `reasons` (RUN_REASONS) and per month its counts (MonthResult.answer). `store` is a
+    LedgerStore; a second run of the company is skipped. No session is opened for a run that cannot run. Without the
+    salary list (`salary_text`, LEDGER_SALARY_CODES) the months are read and counted, and nothing of them is stored."""
+    definition, refused = _definition(text)
+    if refused is not None:
+        return refused
+    state, salary = salary_codes(salary_text)
     from .ledger_store import LedgerStoreError
 
     with store.session(company) as held:
@@ -484,10 +583,11 @@ def run(client, store, company: str, months: list, text: Optional[str], deadline
         try:
             with client.connection():
                 for month in months:
-                    result = read_month(
-                        lambda parameters, until: client.export_report(definition.datafile, parameters, deadline=until),
-                        definition, month, deadline, clock)
-                    if result.ready:
+                    result, acc = read_month(_caller(client, definition), definition, month, deadline, clock)
+                    if acc is not None and state != "set":
+                        acc.counts(result).refuse(f"salary_codes_{'not_set' if state == 'missing' else 'bad'}")
+                    elif acc is not None:
+                        acc.finish(result, salary)
                         try:
                             why = held.replace_month(company, run_id, result, budget_s=deadline - clock())
                         except LedgerStoreError:
@@ -496,6 +596,7 @@ def run(client, store, company: str, months: list, text: Optional[str], deadline
                             result.stored = True
                         else:
                             result.refuse(why)
+                    del acc
                     out[month] = result.answer()
                     result.drop()
         except Exception as exc:
