@@ -672,6 +672,17 @@ DESK_ACTIONS = OrderedDict([
                     "steps": [[_typed(SC["credit_ref"], "אסמכתת זיכוי", "text", required=False)]]}),
     ("sc_invoice", {"board": "sc", "button": "שמירה", "field": True,
                     "steps": [[_typed(SC["invoice"], "אסמכתת חשבונית", "text", required=False)]]}),
+    # D4: what the books propose for the row (app/desk/books.py `proposals`: FR-C2's number, A1's date) - offered only on a
+    # row that carries a proposal (`books_fill`, laid by books.merge), never typed: each write is the value the books
+    # propose under its key (`books`), sent only when proposed, and only into a cell that is empty (`if_empty`, as "חויב"
+    # writes its demand day). The page reads the row right before it writes, and a cell that is no longer what the desk
+    # read is skipped and said, never written over (frontend/finance.js planAction, and the batch's reading)
+    ("books_fill", {"board": "sc", "button": BOOKS_FILL_BUTTON,
+                    "steps": [[{"column": SC["invoice"], "title": "אסמכתת חשבונית", "kind": "text", "books": "number",
+                                "if_empty": True},
+                               {"column": SC["paid_date"], "title": "תאריך תקבול", "kind": "date", "books": "date",
+                                "if_empty": True}]],
+                    "after": "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."}),
     # a company charge billed: with its invoice's reference when typed (an empty box never clears one), and "מועד דרישת
     # תשלום" today when it is empty (MON-92: a charge that moves to "חויב" without one gets the day it moved)
     ("billed", {"board": "b2", "button": "סימון %s" % _q(BILLING[B_BILLED]),

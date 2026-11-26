@@ -153,8 +153,10 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   `fill` bucket: an empty "תאריך תקבול" only; a row that already cites a valid invoice-receipt gets the date alone). Only a
   row the desk dates from ERA_FROM on, with a document from it on (older is C1's cleanup). A proposal and a mark never meet
   on a row; a proposal leaves the server only from an `ok` part computed on the reading shown (`merge`), never a held one.
-  The chips `books_ref_fill` / `books_date_fill` are the legend's. Tests: `tests/test_desk_books_fill.py` (the desk's
-  proposals equal `ref_fill.plan`'s and A1's plan's on the same rows).
+  The chips `books_ref_fill` / `books_date_fill` are the legend's. The action `books_fill` (DESK_ACTIONS) writes them as the
+  person: one step, the number (text) and the date (date), each only the value proposed and only into an empty cell
+  (`if_empty`); `date_mm8yh4bn` is on `desk_writes` and WRITABLE as a date. Tests: `tests/test_desk_books_fill.py` (the
+  desk's proposals equal `ref_fill.plan`'s and A1's plan's on the same rows), `tests/test_desk_books_fill_page.py`.
 - Deploy: Replit Autoscale. The build ships GitHub `main` (`scripts/build.sh` runs `scripts/deploy_source.py`,
   a byte-identical copy of the generic one: change it in every repo or none); `/health` shows `build.source`
   and `build.sha`. A code-only landing: `main`, then Republish (`/deploy` once the Repl is in its table).

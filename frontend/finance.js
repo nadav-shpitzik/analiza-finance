@@ -1269,7 +1269,7 @@
      and only on an account the desk shows (ITEM_GUARD). */
   var WRITABLE = {
     "5093448677": { color_mm1kxpvt: [4, 5], numeric_mm62za1f: "number", text_mm8fjzfj: "text", text_mm6d6s97: "text",
-      color_mm4cq1hw: [1] },
+      color_mm4cq1hw: [1], date_mm8yh4bn: "date" },
     "5097721228": { color_mm3zx2n7: [6], text_mm3y6snz: "text", date_mm4a6y8y: "date", color_mm4bhvta: [0, 1],
       numeric_mm8zqhag: "number" },
     "5089697343": { text_mm3y3gm7: "vat_id", text_mm3yprqa: "hash_key", text_mm3yfrew: "invoice_name",
@@ -1305,7 +1305,7 @@
   /* a written column on the row the page shows: its label and index, or its value (the row is patched until a reading
      shows the same) */
   var ROW_FIELD = { color_mm1kxpvt: ["status", "status_idx"], color_mm4cq1hw: ["receipt", "receipt_idx"],
-    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"],
+    numeric_mm62za1f: ["refund_typed"], text_mm8fjzfj: ["credit_ref"], text_mm6d6s97: ["invoice"], date_mm8yh4bn: ["paid_date"],
     color_mm3zx2n7: ["billing", "billing_idx"], color_mm4bhvta: ["payment", "payment_idx"], text_mm3y6snz: ["invoice"],
     date_mm4a6y8y: ["demand"], numeric_mm8zqhag: ["paid_so_far"] };
   var NUMERIC_FIELD = { refund_typed: 1, paid_so_far: 1 };
@@ -1514,6 +1514,14 @@
           if (cell.index === String(w.index)) { line.same = true; lines.push(line); return; }
           values[w.column] = { index: Number(w.index) };
           line.to = w.label;
+        } else if (w.books) {
+          /* D4: what the books propose for the row (the server's `books_fill`, given here in `typed` by column) - never
+             typed by the person, never today: not proposed, not written; an empty cell only (if_empty) */
+          var proposed = typed[w.column];
+          if (proposed === undefined || proposed === "") { return; }
+          if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
+          values[w.column] = w.kind === "date" ? { date: proposed } : proposed;
+          line.to = proposed;
         } else if (w.kind === "date") {
           if (w.if_empty && cell.text) { line.kept = true; lines.push(line); return; }
           values[w.column] = { date: today };

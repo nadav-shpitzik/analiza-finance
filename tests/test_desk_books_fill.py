@@ -226,3 +226,24 @@ def test_the_desks_reading_holds_every_cell_the_rules_read():
     row = flatten(item, rd.ROW_COLUMNS["student_charge"])
     assert {k: row[k] for k in ("name", "state", "created_at", a1.STATUS_COLUMN + "#")} == {
         "name": "נועה ברק", "state": "active", "created_at": "2026-11-10T08:00:00Z", a1.STATUS_COLUMN + "#": "1"}
+
+
+# ---- the action (D4): what the page may write, and how --------------------------------------------------------------------
+def test_books_fill_writes_only_what_the_books_propose_and_each_cell_only_when_it_is_empty():
+    """"רישום מחשבשבת" is one step of two writes, nothing typed and nothing of its own: the number into "אסמכתת חשבונית"
+    (text) and the date into "תאריך תקבול" (date), each the value the books propose under its key, each only into an empty
+    cell (`if_empty`, as "חויב" writes its demand day) - never today's date, never a box."""
+    a = fd.DESK_ACTIONS[db.FILL_ACTION]
+    assert a["board"] == "sc" and a["button"] == "רישום מחשבשבת" == fd.BOOKS_FILL_BUTTON
+    step, = a["steps"]
+    assert step == [
+        {"column": "text_mm6d6s97", "title": "אסמכתת חשבונית", "kind": "text", "books": "number", "if_empty": True},
+        {"column": "date_mm8yh4bn", "title": "תאריך תקבול", "kind": "date", "books": "date", "if_empty": True}]
+    assert a["after"] == "אסמכתת חשבונית ותאריך תקבול נכתבים רק כשהם ריקים במאנדיי, ורק מה שחשבשבת מציעה."
+    # the allowlist gains exactly the date, as a date (spec §7.3); the number's column was on it (sc_invoice)
+    assert fd.desk_writes()[fd.STUDENT_CHARGE]["date_mm8yh4bn"] == "date"
+    assert fd.desk_writes()[fd.STUDENT_CHARGE]["text_mm6d6s97"] == "text"
+    # the view's own rules never offer it: a row offers it only when the books propose something for it (books.merge)
+    rows = [pay(1, "נועה ברק"), pay(2, "מאיה גולן", ref="62603")]
+    view = fd.build_view(reading_of(snap(rows, [])), TODAY)
+    assert all(db.FILL_ACTION not in r["actions"] for r in view["b2c"]["rows"])
