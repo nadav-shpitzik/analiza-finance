@@ -177,7 +177,8 @@ def test_a_row_with_no_amount_has_nothing_to_equal():
 
 def test_a_row_is_dated_in_the_window_by_its_receipt_date_else_the_day_it_was_made():
     """FR-7: Student Charge's window is 2026. A row is dated as the desk files a payment: its "תאריך תקבול" when it is a
-    day, else the day it was made in Israel's time - so 22:30 UTC on 31.12.2025 is 1.1.2026, and in the window."""
+    day, else the day it was made in Israel's time - so 22:30 UTC on 31.12.2025 is 1.1.2026, and in the window. Each
+    document is near its row (condition 5), so the year alone decides here."""
     rows, docs = one_each([
         {"day": "2025-12-30"},                                          # its receipt date: 2025
         {"made": "2025-12-30T10:00:00Z"},                               # made in 2025, no receipt date
@@ -187,7 +188,8 @@ def test_a_row_is_dated_in_the_window_by_its_receipt_date_else_the_day_it_was_ma
         {"day": "2026-03-01", "made": "2025-12-01T10:00:00Z"},          # the receipt date wins
         {"day": "לא ידוע", "made": "2026-02-01T10:00:00Z"},             # a typed date that is no day: the day made
         {"made": "2026-12-31T22:30:00Z"},                               # 1.1.2027 in Israel
-    ])
+    ], [{"day": d} for d in ("2026-01-05", "2026-01-05", "2026-01-05", "2026-12-28", "2026-11-12", "2026-03-05",
+                             "2026-02-03", "2026-12-28")])
     assert buckets(rows, docs) == {0: "out_of_window", 1: "out_of_window", 2: "fill", 3: "out_of_window",
                                    4: "out_of_window", 5: "fill", 6: "fill", 7: "out_of_window"}
     assert rf.row_day(row(0, made="2026-03-01T10:00:00")) == date(2026, 3, 1)  # a stamp with no zone is UTC
@@ -292,6 +294,29 @@ def test_an_empty_name_on_either_side_is_never_equal():
     assert buckets([row(0, name="")], [doc(62500, name="")]) == {0: "no_candidate"}
 
 
+# ---- condition 5: near in time -------------------------------------------------------------------------------------
+def test_a_document_is_near_its_row_within_thirty_days_before_or_after():
+    """Condition 5: course prices repeat, so a document of the row's name and amount is a candidate only when its date is
+    at most FILL_WINDOW_DAYS (30) days before or after the row's day; at 31 days either way it is `date_far`, counted and
+    never proposed. The row's day is the desk's: made at 22:30 UTC on 14.06 is 15.06 in Israel, 30 days before 15.07."""
+    assert rf.FILL_WINDOW_DAYS == 30
+    rows, docs = one_each([{"day": "2026-06-15"}] * 4 + [{"made": "2026-06-14T22:30:00Z"}] * 2,
+                          [{"day": d} for d in ("2026-05-16", "2026-05-15", "2026-07-15", "2026-07-16",
+                                                "2026-07-15", "2026-07-16")])
+    assert buckets(rows, docs) == {0: "fill", 1: "date_far", 2: "fill", 3: "date_far", 4: "fill", 5: "date_far"}
+
+
+def test_the_window_comes_after_the_amount_and_before_the_document_kind():
+    """`date_far` is the row's when its name and amount meet only documents a season away - after `amount_differs` (a near
+    document of another amount is no candidate either) and before the kind: a far tax invoice makes nobody wait, and a far
+    invoice-receipt is no second candidate (another payment of the same price), so the near one is proposed."""
+    far_equal_near_other = [doc(62500, day="2026-03-01"), doc(62501, card="20002", total="2843.5")]
+    assert buckets([row(0)], far_equal_near_other) == {0: "date_far"}
+    card = [doc(62490, total="1200", day="2026-09-01")]  # the card's invoice-receipt of another amount: a students' card
+    assert fills([row(0)], card + [doc(50400, doc_type=1, day="2026-03-01"), doc(62500)]) == {0: "62500"}
+    assert fills([row(0)], [doc(62500), doc(62501, card="20002", day="2026-05-01")]) == {0: "62500"}
+
+
 # ---- condition 5 and the plan -----------------------------------------------------------------------------------------
 def rich() -> tuple:
     """Rows and documents that land in every bucket: (rows, documents, B2B rows, keys)."""
@@ -307,7 +332,8 @@ def rich() -> tuple:
             row(9, name="מאיה גולן"),                                        # two_candidates
             row(10, name="רוני אבן"),                                        # number_ambiguous
             row(11, name="יואב שטרן"), row(12, name="שטרן יואב"),            # document_wanted_twice
-            row(13), row(14, name="דור לב", paid="4180", day="2026-04-02")]  # fill, fill (before the desk's era)
+            row(13), row(14, name="דור לב", paid="4180", day="2026-04-02"),  # fill, fill (before the desk's era)
+            row(15, name="עמית שלו", made="2026-03-01T10:00:00Z")]            # date_far
     docs = [doc(62480, card="20100", name="גל עמית"), doc(62481, card="20100", name="גל עמית"),
             doc(62482, card="20100", name="גל עמית"),
             doc(62483, card="20101", name="תומר נחום"),
@@ -320,7 +346,8 @@ def rich() -> tuple:
             doc(62490, card="20001"), doc(62491, card="20108", name="דור לב", total="4180", day="2026-04-02"),
             doc(62492, card="20109", name="ליאת כרמי"),
             doc(62493, card="30001", name="חברה בדויה"),                     # a company's: never a student's
-            doc(62494, card="20110", name="אפרת חן")]                        # a student's with no row: stays listed
+            doc(62494, card="20110", name="אפרת חן"),                        # a student's with no row: stays listed
+            doc(62496, card="20111", name="עמית שלו")]                       # row 15's name and amount, a season on
     return rows, docs, [b2(0, "62495")], {"30001": ["חברה בדויה"]}
 
 
@@ -337,7 +364,7 @@ def test_every_row_is_in_exactly_one_bucket_and_no_document_is_proposed_twice():
     assert len(proposed) == len(set(proposed)) == got["documents"]["proposed"] == 2
     assert all(isinstance(p, str) and a1.parse_refs(p) == [p] for p in proposed)
     # the pool: the uncited students' documents of 2026; of them the desk lists those from ERA_FROM
-    assert got["documents"] == {"students": 12, "proposed": 2, "era_listed": 11, "era_left": 10}
+    assert got["documents"] == {"students": 13, "proposed": 2, "era_listed": 12, "era_left": 11}
 
 
 def a_reading(rows: list, b2b: list = (), accounts: list = ()) -> dict:
@@ -389,9 +416,10 @@ def test_the_plan_says_counts_links_numbers_and_dates_and_never_a_name_or_an_amo
         {"item_id": str(SC_BASE + 13), "url": pulse % (SC_BASE + 13), "column": "text_mm6d6s97", "value_now": "",
          "value_proposed": "62490", "document_date": "2026-11-12"}]
     assert body["ids_by_bucket"] == {b: sorted(str(SC_BASE + n) for n in ns) for b, ns in {
-        "ref_unreadable": [3], "amount_unreadable": [4], "amount_differs": [7], "tax_invoice_waits": [8],
-        "two_candidates": [9], "number_ambiguous": [10], "document_wanted_twice": [11, 12]}.items()}
-    assert body["documents"] == {"students": 12, "proposed": 2, "era_listed": 11, "era_left": 10}
+        "ref_unreadable": [3], "amount_unreadable": [4], "amount_differs": [7], "date_far": [15],
+        "tax_invoice_waits": [8], "two_candidates": [9], "number_ambiguous": [10],
+        "document_wanted_twice": [11, 12]}.items()}
+    assert body["documents"] == {"students": 13, "proposed": 2, "era_listed": 12, "era_left": 11}
     text = json.dumps(body, ensure_ascii=False)
     names = {r["name"] for r in rows} | {d["account_name"] for d in docs} | {"חברה בדויה"}
     for leak in {w for n in names for w in n.split()} | names:
@@ -422,7 +450,7 @@ def test_the_desk_lists_every_document_the_plan_proposes_with_its_row_among_the_
             doc(62481, card="20002", name="יואב שטרן", day="2026-11-12"),                     # proposed to 2
             doc(62482, card="20003", name="יואב שטרן", total="2843.5", day="2026-11-13"),    # proposed to 3
             doc(62483, card="20004", name="דור לב", total="4180", day="2026-04-02"),         # proposed to 5: before the era
-            doc(62484, card="20005", name="מאיה גולן", day="2026-11-14"),                     # proposed to 6 (4 has a number)
+            doc(62484, card="20005", name="מאיה גולן", day="2026-11-14"),                     # proposed to 6 (4 cites one)
             doc(62485, card="20006", name="מאיה גולן", total="1960", day="2026-11-01"),      # cited by 4
             doc(62486, card="20007", name="עידו רז", day="2026-11-15"),                       # 7: no money came in
             doc(62487, card="20008", name="שירה אלון", day="2026-11-16"),                     # 8: another amount
@@ -474,7 +502,9 @@ def test_verify_says_verified_only_for_one_valid_students_invoice_receipt_of_the
             doc(62505, card="20005", name="שירה אלון"),
             doc(62506, card="20006", name="יואב שטרן"),
             doc(62507, card=cards.VOUCHER_CARD, name="רוני שגב"),                  # the vouchers' card (FR-D1)
-            doc(62508, card=None, name=None)]                                     # judged alone: a student's, no name
+            doc(62508, card=None, name=None),                                     # judged alone: a student's, no name
+            doc(62509, card="20012", name="גל עמית", day="2026-05-01"),           # a season before the row
+            doc(62513, card="20013", name="תומר נחום")]
     after = [row(0, ref="62500"),                                   # verified
              row(1),                                                # empty: not written
              row(2, ref="62510, 62511", name="אורי פז"),             # several numbers
@@ -489,16 +519,19 @@ def test_verify_says_verified_only_for_one_valid_students_invoice_receipt_of_the
              row(12, ref="62506", name="יואב שטרן", paid="2000"),    # A1: the sum differs
              row(13, ref="62507", name="רוני שגב"),                  # the vouchers' card: never a student's
              row(14, state="archived"),                             # archived, whatever its cell holds
-             row(15, ref="62508", name="12 א")]                     # no name on either side: never equal
+             row(15, ref="62508", name="12 א"),                     # no name on either side: never equal
+             row(16, ref="62509", name="גל עמית"),                  # its document a season before it (condition 5)
+             row(17, ref="62513", name="תומר נחום", made="")]       # no day at all: near nothing
     accounts = accounts_of({"30001": ["חברה בדויה"]})
-    ids = [str(SC_BASE + i) for i in range(17)]
+    ids = [str(SC_BASE + i) for i in range(19)]
     body = rf.verify("analiza", a_reading(after, [b2(0, "62503")], accounts), docs, ids)
     states = {int(k) - SC_BASE: v["state"] for k, v in body["items"].items()}
     assert states == {0: "verified", 1: "empty", 2: "several_numbers", 3: "ref_not_in_books", 4: "invoice_needs_receipt",
                       5: "not_a_students_card", 6: "name_differs", 7: "cited_by_b2b", 8: "amount_differs",
                       9: "amount_differs", 10: "not_active", 11: "ref_unreadable", 12: "amount_mismatch",
-                      13: "not_a_students_card", 14: "not_active", 15: "name_differs", 16: "not_found"}
-    assert body["verified"] == 1 and body["asked"] == 17 and set(body["counts"]) <= set(rf.VERIFY_STATES)
+                      13: "not_a_students_card", 14: "not_active", 15: "name_differs", 16: "date_far",
+                      17: "date_far", 18: "not_found"}
+    assert body["verified"] == 1 and body["asked"] == 19 and set(body["counts"]) <= set(rf.VERIFY_STATES)
     # the number is said only when a status-1 document carries it: never the cell's text
     assert body["items"][str(SC_BASE)] == {"state": "verified", "document": "62500"}
     assert body["items"][str(SC_BASE + 3)]["document"] is None and body["items"][str(SC_BASE + 2)]["document"] is None

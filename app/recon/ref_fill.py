@@ -20,13 +20,16 @@ A ROW IS PROPOSED ONE NUMBER (`fill`) ONLY WHEN ALL OF THESE HOLD:
    number it may name), not answered "not found", not on the vouchers' card 10091, and on a students' card (`side_of`: no
    Account's key, not unclear; a masked or empty key is judged by the card's name, or the document alone by its type).
    **Only an invoice-receipt is proposed** (type 2: it pays itself, FR-L12). A tax invoice alone is a demand (FR-C1,
-   `b2c_paid_no_proof`): one that meets 3 and 4 makes the row wait for a person (`tax_invoice_waits`).
+   `b2c_paid_no_proof`): one that meets 3 to 5 makes the row wait for a person (`tax_invoice_waits`).
 3. **An equal amount:** the row's "סכום ששולם" and the document's `total_incl` within TOLERANCE_PER_DOC (1 ₪ for one
    document, the contract §0.3). There is no rounding band here: anything past 1 ₪ is `amount_differs`.
 4. **An equal name as a set** (`name_words`: words of two letters or more, none with a digit, in any order, NFKC and case
    folded): the row's name and the card's, neither empty. A similar name is never proposed: it needs a person's eye,
    which the desk's list gives.
-5. **Exactly one each way:** the row has exactly one document that meets 2 to 4, an invoice-receipt; its number names it
+5. **Near in time:** the document's `value_date` within FILL_WINDOW_DAYS (30) of the row's day, before or after it. Course
+   prices repeat, so a row and a document of the same name and the same price a season apart are the likeliest false link
+   (two payments of one student, or two students of one name): such a document is counted (`date_far`), never proposed.
+6. **Exactly one each way:** the row has exactly one document that meets 2 to 5, an invoice-receipt; its number names it
    alone (FR-3: no other status-1 document carries it, and A1 reads it back as one number); and no other row that meets 1
    has that document among its own (a row that has two holds both).
 
@@ -38,8 +41,9 @@ desk's list.
 
 `verify` reads a reading made after the write: a row is `verified` when its cell cites exactly one number, A1 matches it
 (FR-C1 and A1's FR-3, FR-4, FR-7 and FR-L12: one valid invoice-receipt of the window, not "not found", the rows citing it
-summing to its total), no B2B Charge row cites it, it is on a students' card, and the row's name and amount equal the
-card's and the document's. Otherwise its state says what it is (VERIFY_STATES).
+summing to its total), no B2B Charge row cites it, it is on a students' card, the row's name and amount equal the card's
+and the document's, and the document is near the row in time (5): the plan's question, asked again. Otherwise its state
+says what it is (VERIFY_STATES).
 """
 
 from __future__ import annotations
@@ -60,6 +64,7 @@ COLUMN = a1.REF_COLUMN  # text_mm6d6s97, אסמכתת חשבונית
 B2B_REF_COLUMN = B2["invoice"]  # text_mm3y6snz: a number B2B Charge cites is never a student's to fill
 WINDOW_START = date(a1.WINDOW_YEAR, 1, 1)  # FR-7: Student Charge's window, from its first day
 DESK_TZ = ZoneInfo("Asia/Jerusalem")  # the day a row was made, as the desk files a payment
+FILL_WINDOW_DAYS = 30  # condition 5: a document dated at most this many days before or after the row's day
 
 # The first that fits wins; every row is in exactly one.
 BUCKETS = (
@@ -71,6 +76,7 @@ BUCKETS = (
     "out_of_window",          # dated outside 2026 (FR-7), or with no day at all
     "no_candidate",           # no students' document of the window, uncited, carries its name
     "amount_differs",         # documents carry its name, none its amount: a payment with no row, or an amount typed wrong
+    "date_far",               # documents carry its name and amount, none dated within FILL_WINDOW_DAYS of its day (5)
     "tax_invoice_waits",      # a tax invoice carries its name and amount: a demand, never proof of money (FR-C1)
     "two_candidates",         # two or more invoice-receipts carry its name and amount
     "number_ambiguous",       # its one invoice-receipt's number would not name it alone (FR-3)
@@ -79,7 +85,7 @@ BUCKETS = (
 )
 # The buckets whose rows the plan lists by id: what a person's eye can decide. A row that already cites a number, one
 # whose status says no money came, one outside the window and one with no document of its name are counted only.
-LISTED = ("ref_unreadable", "amount_unreadable", "amount_differs", "tax_invoice_waits", "two_candidates",
+LISTED = ("ref_unreadable", "amount_unreadable", "amount_differs", "date_far", "tax_invoice_waits", "two_candidates",
           "number_ambiguous", "document_wanted_twice")
 
 # A1's buckets of a row it matched (FR-C1 holds: the group's rows and documents tie, no tax invoice, one day); any other
@@ -90,7 +96,7 @@ A1_MATCHED = a1.BUCKETS[a1.BUCKETS.index("status_not_money_in"):]
 # Charge cites too, one on a card that is not a students', a name or an amount that is not the document's
 VERIFY_STATES = (("verified", "not_found", "not_active", "empty", "ref_unreadable", "several_numbers")
                  + tuple(b for b in a1.BUCKETS[a1.BUCKETS.index("ref_not_in_books"):] if b not in A1_MATCHED)
-                 + ("cited_by_b2b", "not_a_students_card", "name_differs", "amount_differs"))
+                 + ("cited_by_b2b", "not_a_students_card", "name_differs", "amount_differs", "date_far"))
 
 
 def row_day(row: dict) -> Optional[date]:
@@ -113,6 +119,12 @@ def _equal_amount(amount, doc: dict) -> bool:
     return total is not None and abs(amount - total) <= a1.TOLERANCE_PER_DOC
 
 
+def _near(day: date, doc: dict) -> bool:
+    """Condition 5: whether a document's `value_date` is at most FILL_WINDOW_DAYS before or after the row's day. Both
+    callers pass a dated document: one of the pool (`place_of` keeps none without a day) and one A1 matched."""
+    return abs((day_of(doc.get("value_date")) - day).days) <= FILL_WINDOW_DAYS
+
+
 def _names_alone(number: Optional[str], by_number: dict) -> bool:
     """Whether a document's number, written in the cell, names it and nothing else: A1 reads it back as one number, and
     one status-1 document carries it (FR-3)."""
@@ -124,7 +136,7 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
     snapshot); `b2b_rows`: B2B Charge's rows (a number they cite is no student's); `keys`: the Accounts' cards
     (`account_keys_of`). Returns {"rows": {item_id: {"bucket", "current", "documents", "proposed", "document_date"}},
     "counts": {bucket: n}, "documents": {"students", "proposed", "era_listed", "era_left"}}: `documents` of a row are the
-    numbers of its documents of 2 to 4, `proposed` the one number of a `fill`."""
+    numbers of its documents of 2 to 5, `proposed` the one number of a `fill`."""
     rows, documents, keys = list(rows), list(documents), keys or {}
     by_number = a1.index_documents(documents)
     cited = cited_numbers(rows, COLUMN) | cited_numbers(list(b2b_rows), B2B_REF_COLUMN)
@@ -137,7 +149,7 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
             by_words[words].append(d)
 
     out: dict = {}
-    wants: dict = {}  # item id -> its documents of 2 to 4, for every row that meets 1 and has some
+    wants: dict = {}  # item id -> its documents of 2 to 5, for every row that meets 1 and has some
     for row in rows:
         item_id = str(row.get("id"))
         entry = {"bucket": None, "current": str(row.get(COLUMN) or "").strip(), "documents": [], "proposed": None,
@@ -163,11 +175,14 @@ def analyse(rows: list, documents: Iterable[dict], b2b_rows: Iterable[dict] = ()
             entry["bucket"] = "no_candidate"
         else:
             equal = [d for d in by_words[words] if _equal_amount(amount, d)]
+            near = [d for d in equal if _near(day, d)]
             if not equal:
                 entry["bucket"] = "amount_differs"
+            elif not near:
+                entry["bucket"] = "date_far"
             else:
-                wants[item_id] = equal
-                entry["documents"] = sorted({number_of(d) or "" for d in equal}, key=lambda n: (len(n), n))
+                wants[item_id] = near
+                entry["documents"] = sorted({number_of(d) or "" for d in near}, key=lambda n: (len(n), n))
 
     wanted_by: dict = defaultdict(set)  # a document (its stock id) -> the rows that hold it among their own
     for item_id, docs in wants.items():
@@ -257,6 +272,9 @@ def _read_back(row: Optional[dict], matched: Optional[dict], by_number: dict, b2
     # the plan proposed was cited by no row - shared since, it is no longer the fill that was approved
     if not _equal_amount(a1.parse_amount(row.get(a1.AMOUNT_COLUMN)), doc):
         return "amount_differs"
+    day = row_day(row)
+    if day is None or not _near(day, doc):  # a row with no day is near nothing
+        return "date_far"
     return "verified"
 
 

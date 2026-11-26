@@ -80,10 +80,12 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   A row whose status says money came in (A1's MONEY_IN), with an empty "אסמכתת חשבונית", a readable amount and a day in
   2026 (its "תאריך תקבול", else the day it was made, Israel's time) is proposed one number: the one uncited invoice-receipt of
   2026 (type 2 only; a tax invoice is counted, `tax_invoice_waits`) on a students' card (D3's side logic) whose card's name
-  equals the row's as a set of words and whose total is within 1 ₪, wanted by no other row, its number carried by no other
-  valid document. The cards, names and `place_of` are `app/recon/cards.py`, the desk's moved there, never copied (a test holds
-  the desk's list and the plan in agreement). It reads `matching_snapshot(wide=True)` (the cards, one transaction); A1's
-  stays narrow. The plan never says a name or an amount; `verify` says a number only when the books hold it.
+  equals the row's as a set of words, whose total is within 1 ₪ and whose date is within 30 days of the row's day
+  (`FILL_WINDOW_DAYS`; farther is `date_far`: course prices repeat, so a same-name, same-price pair a season apart is the
+  likeliest false link), wanted by no other row, its number carried by no other valid document. The cards, names and
+  `place_of` are `app/recon/cards.py`, the desk's moved there, never copied (a test holds the desk's list and the plan in
+  agreement). It reads `matching_snapshot(wide=True)` (the cards, one transaction); A1's stays narrow. The plan never says
+  a name or an amount; `verify` asks the plan's question again, the window too, and says a number only when the books hold it.
 - **The desk (D1, 24.11):** `app/desk/` and `frontend/`. The page `/desk/` is the Board View "כספים", a second feature of
   analiza-metrics' monday app (the desk move plan §2, option A), so `MONDAY_CLIENT_SECRET` (a Replit Secret, reported as set
   or not) is the value analiza-metrics holds. `/api/desk` verifies the sessionToken (`app/desk/auth.py`; Analiza's account
