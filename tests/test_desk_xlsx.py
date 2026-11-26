@@ -163,3 +163,33 @@ def test_the_writer_reaches_nothing_and_keeps_nothing():
                  r"\bdocument\.", r"\bwindow\.(?!DeskXlsx\b)", r"setTimeout", r"console\.", r"\bimport\(", r"eval\(",
                  r"new Function"):
         assert not re.search(word, code), word
+
+
+# ---- the review of 26.11: two texts whose browser file was not the server's -----------------------------------------------
+def _one_column(texts: list) -> tuple:
+    """(the server's cells, the browser's cells) of one text column holding these texts, read back with openpyxl."""
+    import base64 as _b64
+    book = {"sheets": [{"title": "תקבולים", "columns": [{"head": "t", "kind": "text", "width": 9}],
+                        "rows": [[t] for t in texts], "total": "סה\"כ"},
+                       {"title": "פרטים", "pairs": [["k", "v", "text"]], "widths": [10, 20]}]}
+    server = openpyxl.load_workbook(io.BytesIO(fx.write(book)))["תקבולים"]
+    got = written(book)
+    assert "b64" in got, got
+    browser = openpyxl.load_workbook(io.BytesIO(_b64.b64decode(got["b64"])))["תקבולים"]
+    return ([server.cell(row=i + 2, column=1).value for i in range(len(texts))],
+            [browser.cell(row=i + 2, column=1).value for i in range(len(texts))])
+
+
+def test_a_carriage_return_reads_back_as_the_servers_file_holds_it():
+    """XML reads a raw carriage return back as a line feed; xlsx.js writes it as a character reference, as the server's
+    openpyxl (with lxml) does, so "\r\n" and a lone "\r" stay as typed."""
+    server, browser = _one_column(["62601\r\n62602", "שורה\rשנייה", "\rבראש", "בסוף\r"])
+    assert browser == server == ["62601\r\n62602", "שורה\rשנייה", "\rבראש", "בסוף\r"]
+
+
+def test_a_text_longer_than_a_cell_holds_is_cut_as_the_server_cuts_it():
+    """Excel's limit is 32,767 characters a cell (it refuses a longer one); openpyxl cuts to it, in code points."""
+    astral = "\U0001F600"
+    server, browser = _one_column(["א" * 40000, "ב" * 32767, astral * 32768, "ג" * 32766 + astral * 2])
+    assert [len(v) for v in server] == [32767, 32767, 32767, 32767]
+    assert browser == server

@@ -317,6 +317,9 @@ BOOKS_FILL_ALL = "לרשום את כל ההצעות"
 # R5 (app/desk/dismissals.py): "לא פער" pressed on an alert of the books, "לא להציע" on a proposal of them, the list of what
 # is hidden under each list of the books, and what an alert says when its evidence changed since it was hidden
 NAG_WORD, NAG_FILL_WORD, NAG_LIST_WORD, NAG_BACK_WORD = "לא פער", "לא להציע", "הוסתרו כלא פער", "חזר"
+# what a candidate row says under its document once the proposal to write the number in it was hidden ("לא להציע"):
+# app/desk/dismissals.py `hide` (the review of 26.11: the proposal's line was gone and the row said nothing)
+NAG_FILL_WHY = "הוצע לרשום את המסמך בשורה הזו, וסומן \"%s\"" % NAG_FILL_WORD
 _NAG_KEPT = ("נשמר בשולחן מי הסתיר ומתי, ולא נכתב כלום במאנדיי או בחשבשבת. כשמשהו מזה משתנה, הוא חוזר למסך, וכתוב לידו %s. "
              "%s, מתחת לרשימה, מראה מה הוסתר, בידי מי ומתי, ומי שהסתיר יכול להחזיר. צופה במאנדיי לא יכול להסתיר."
              % ('"%s"' % NAG_BACK_WORD, '"%s (N)"' % NAG_LIST_WORD))

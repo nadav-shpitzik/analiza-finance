@@ -309,6 +309,12 @@ def _not_yet(entry: dict, idx: dict) -> list:
             and not_yet_read(n, idx["ends"])]
 
 
+def late_numbers(entry: dict, idx: dict) -> list:
+    """The numbers of a row the desk says are not yet in the copy (`_not_yet`), for a row A1 refused a number of: the ones
+    its mark leaves out and its details' note names, and so part of a mark's evidence (app/desk/dismissals.py `not_yet`)."""
+    return _not_yet(entry, idx) if entry["bucket"] in REF_BUCKETS else []
+
+
 def _flag_text(kind: str) -> str:
     """A mark's chip as the legend words it (view.LEGEND_FLAGS, the one place its words live), to be filled."""
     return next(t for k, t, _x in LEGEND_FLAGS["b2c"] if k == kind)
@@ -446,7 +452,7 @@ def marks_of(analysis: dict, rows_by_id: dict, idx: dict) -> tuple:
         mark = mark_of(entry, row, idx)
         if mark is not None:
             marks[item_id] = [mark]
-        late = _not_yet(entry, idx) if entry["bucket"] in REF_BUCKETS else []
+        late = late_numbers(entry, idx)
         if late:
             notes[item_id] = "%s: %s" % (", ".join(late), NOT_YET_SAID)
     return marks, notes
@@ -588,8 +594,9 @@ def compute(reading: dict, view: dict, snapshot: dict, keys: dict) -> dict:
     held = dz.held_by_number(documents)
     for item_id, ms in marks.items():
         for m in ms:
+            entry = analysis["rows"][item_id]
             m.update(name=rows_by_id[item_id].get("name", ""), evidence=dz.digest(dz.mark_evidence(
-                m["kind"], item_id, analysis["rows"][item_id], rows_by_id[item_id], held)))
+                m["kind"], item_id, entry, rows_by_id[item_id], held, not_yet=late_numbers(entry, idx))))
     fills = proposals(sc_raw, b2_raw, documents, keys, rows_by_id, c2)
     for item_id, fill in fills.items():
         fill["mark"] = fill_mark(fill, idx)

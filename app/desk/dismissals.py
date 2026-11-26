@@ -10,7 +10,8 @@ WHAT MAY BE DISMISSED (KINDS, a closed list): every alert of the books the desk 
   (`books_doc_students`), the companies' (`books_doc_companies`), the unclear (`books_doc_unclear`): the list says whose
   question it is (spec §6.4.1), so a document that moves to another list is another alert;
 - what "רישום מחשבשבת" proposes (`books_ref_fill`, `books_date_fill`), its subject the row's item id - pressed as "לא
-  להציע": a wrong proposal must stop showing too.
+  להציע": a wrong proposal must stop showing too. Its document stays listed, and the row it was for says among the
+  document's candidates that it was proposed and hidden (`NAG_FILL_WHY`).
 Each kind's boards (BOARDS): a member of each may dismiss it, sees it hidden, and undoes their own.
 
 THE EVIDENCE (EVIDENCE says each kind's fields, and the functions below are the only place they are read): a sha256 over
@@ -29,6 +30,11 @@ chip's text, a legend, a row's name), so a change of wording never brings back w
   - `documents`, what the copy holds under each cited number, in any status - type, status, total including VAT, day,
     and whether it answered "not found": the other side of every comparison (a document issued, cancelled, re-typed,
     re-totalled or re-dated is new evidence; a draft is evidence too, "טיוטה");
+  - `not_yet`, the numbers it cites that no document of the copy holds and that are just past the end of their series
+    (app/desk/books.py `late_numbers`, the very numbers the mark leaves out and its details call "not yet in the copy"):
+    when the series moves past one without it, the mark names it "לא נמצא" - a new number missing, so the alert comes back
+    (the review of 26.11: the copy under the cited numbers was the same, and a hidden mark stayed hidden though it named a
+    second number). A series that moves on while the number is still just past its end changes nothing;
   - `group`, for a row judged with the rows that cite the same documents: their ids and A1's two sums - another row
     joining, leaving or changing its amount changes the comparison the mark says.
   Not in it: the row's name (a renamed row is the same gap), its date (it decides the era only, never the mark), its
@@ -66,7 +72,7 @@ from typing import Any, Iterable, Optional
 
 from ..recon import receipt_dates as a1
 from ..recon.cards import day_of, money_of, norm_name, number_of
-from .view import NAG_FILL_WORD, NAG_WORD
+from .view import NAG_FILL_WHY, NAG_FILL_WORD, NAG_WORD
 
 MARK_KINDS = ("books_ref_invalid", "books_amount_differs", "books_receipt_unpaid")
 # a document's kind by the list it is in (app/desk/books.py `compute`: the students', the companies', the unclear)
@@ -82,7 +88,7 @@ TAB = {**{k: "b2c" for k in MARK_KINDS + FILL_KINDS}, "books_doc_students": "b2c
 # the press's word, the legend's (app/desk/view.py; frontend/finance.js NAG_WORD holds the same, by a test)
 WORD = {k: NAG_FILL_WORD if k in FILL_KINDS else NAG_WORD for k in KINDS}
 # Each kind's fields, in the order the functions below build them (a test holds the two together)
-EVIDENCE = {**{k: ("kind", "row", "cited", "amount", "status", "documents", "group") for k in MARK_KINDS},
+EVIDENCE = {**{k: ("kind", "row", "cited", "amount", "status", "documents", "not_yet", "group") for k in MARK_KINDS},
             **{k: ("kind", "number", "type", "status", "total", "total_excl", "date", "card", "side")
                for k in DOC_KINDS.values()},
             **{k: ("kind", "row", "number", "date") for k in FILL_KINDS}}
@@ -139,16 +145,17 @@ def _held(d: dict) -> dict:
             "date": day_text(d.get("value_date")), "missing": bool(d.get("missing"))}
 
 
-def mark_evidence(kind: str, item_id: str, entry: dict, row: dict, held: dict) -> dict:
+def mark_evidence(kind: str, item_id: str, entry: dict, row: dict, held: dict, *, not_yet: Iterable = ()) -> dict:
     """A mark's fields: A1's judgement of the row (`entry`: its numbers and its group), the view's row (its status by
-    index, and its "סכום ששולם" as the reading holds it, `paid_raw`), and what the copy holds (`held_by_number`)."""
+    index, and its "סכום ששולם" as the reading holds it, `paid_raw`), what the copy holds (`held_by_number`), and the
+    numbers it cites that are not yet in the copy (`not_yet`: app/desk/books.py `late_numbers` of the same entry)."""
     cited = _ids(entry.get("documents") or [])
     group = entry.get("group")
     documents = sorted((dict(_held(d), number=n) for n in cited for d in held.get(n, ())),
                        key=lambda x: json.dumps(x, sort_keys=True))
     return {"kind": kind, "row": str(item_id), "cited": cited,
             "amount": amount_text(a1.parse_amount(row.get("paid_raw"))),
-            "status": str(row.get("status_idx") or ""), "documents": documents,
+            "status": str(row.get("status_idx") or ""), "documents": documents, "not_yet": _ids(not_yet),
             "group": None if group is None else {"rows": _ids(group["rows"]), "paid": amount_text(group["paid"]),
                                                  "total": amount_text(group["total"])}}
 
@@ -237,8 +244,14 @@ def hide(part: dict, live: Iterable[dict]) -> dict:
             if how == "returned":
                 e = dict(e, returned=_by(d))
             if e.get("proposal") and str(e["proposal"].get("item_id")) in withdrawn:
-                # its proposal was dismissed ("לא להציע"): the document stays, without the line that proposes it
+                # its proposal was dismissed ("לא להציע"): the document stays, without the line that proposes it, and the
+                # row it was for says so among its candidates (NAG_FILL_WHY, the key "withdrawn"): the proposal's line
+                # said it until now, and a candidate the books propose nothing to says why (the QA of 26.11, 9)
+                gone = str(e["proposal"].get("item_id"))
                 e = {k: v for k, v in e.items() if k != "proposal"}
+                if "candidates" in e:
+                    e["candidates"] = [dict(c, why=NAG_FILL_WHY, why_key="withdrawn") if str(c.get("id")) == gone else c
+                                       for c in e["candidates"]]
             shown.append(e)
         out[place] = shown
 

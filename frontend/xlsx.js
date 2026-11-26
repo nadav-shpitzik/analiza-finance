@@ -68,14 +68,25 @@
     }
     return out;
   }
+  /* a carriage return as a character reference: XML reads a raw one back as a line feed ("\r\n" and "\r" become "\n"),
+     and the server's openpyxl (with lxml) writes it so and keeps it (the review of 26.11) */
   function esc(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+      .replace(/\r/g, "&#13;");
+  }
+  /* Excel's limit of a cell's text, in characters (code points, as openpyxl counts them when it cuts a longer one: the
+     server's file holds the first 32,767; Excel refuses a longer cell; the review of 26.11) */
+  var CELL_MAX = 32767;
+  function cut(s) {
+    if (s.length <= CELL_MAX) { return s; }
+    var points = Array.from(s);
+    return points.length > CELL_MAX ? points.slice(0, CELL_MAX).join("") : s;
   }
   /* a string cell (t="inlineStr"): never read as a formula, an error or a number; no cell for an empty text */
   function textCell(ref, v, style) {
-    var s = clean(v);
+    var s = cut(clean(v));
     if (!s) { return ""; }
-    var keep = /^\s|\s$|[\n\t]/.test(s) ? " xml:space=\"preserve\"" : "";
+    var keep = /^\s|\s$|[\n\r\t]/.test(s) ? " xml:space=\"preserve\"" : "";
     return "<c r=\"" + ref + "\" s=\"" + style + "\" t=\"inlineStr\"><is><t" + keep + ">" + esc(s) + "</t></is></c>";
   }
   function fail(what) { var e = new Error("xlsx: " + what); e.code = "file"; throw e; }

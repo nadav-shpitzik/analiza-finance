@@ -148,6 +148,61 @@ def test_a_marks_evidence_stays_when_only_its_name_its_date_its_receipt_or_a_car
     assert evidence_of(kind, rows, docs) == evidence_of(kind)
 
 
+# The review of 26.11: which numbers a mark names depends on the end of the copy's series too (a cited number no document
+# holds, just past the end of its series, is "not yet in the copy" and left out of the mark). Row 20 cites 40000 (no
+# document holds it) and 62620, just past the last invoice-receipt of DOCS (62615).
+NOT_YET_ROW = pay(20, "שקד אור", ref="40000, 62620")
+
+
+def _row20(docs) -> dict:
+    return computed(ROWS + [NOT_YET_ROW], docs)[0]["marks"]["20"][0]
+
+
+def test_a_hidden_mark_comes_back_when_a_number_it_cites_is_no_longer_just_past_its_series():
+    before = _row20(ALL_DOCS)
+    assert (before["kind"], before["documents"]) == ("books_ref_invalid", ["40000"])
+    live = [{"id": 1, "kind": before["kind"], "subject": "20", "evidence": before["evidence"], "by": 7,
+             "at": "2026-11-26T10:00:00+00:00"}]
+    part = computed(ROWS + [NOT_YET_ROW], ALL_DOCS)[0]
+    assert "20" not in dz.hide(part, live)["marks"]  # she hid it: 40000 is an old number she knows
+    # the series of invoice-receipts moves on to 62617: 62620 is still just past its end - nothing new, still hidden
+    near = ALL_DOCS + [doc(62617, name="פלונית", card="20098", day="2026-11-20")]
+    assert _row20(near)["evidence"] == before["evidence"]
+    assert "20" not in dz.hide(computed(ROWS + [NOT_YET_ROW], near)[0], live)["marks"]
+    # it moves past 62620 (62625 held) and never held it: 62620 is a number inside the series, "לא נמצא" now
+    far = near + [doc(62625, name="אלמונית", card="20099", day="2026-11-21")]
+    after = _row20(far)
+    assert after["documents"] == ["40000", "62620"] and after["evidence"] != before["evidence"]
+    shown = dz.hide(computed(ROWS + [NOT_YET_ROW], far)[0], live)
+    assert shown["marks"]["20"][0]["returned"]["id"] == 1  # back, "חזר"
+
+
+def test_a_marks_not_yet_numbers_are_its_evidence():
+    entry, row = {"documents": ["40000", "62620"], "group": None}, {"paid_raw": "3517", "status_idx": "1"}
+    base = dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, {}, not_yet=["62620"]))
+    assert dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, {})) != base
+    assert dz.digest(dz.mark_evidence("books_ref_invalid", "8", entry, row, {}, not_yet=("62620",))) == base
+
+
+def test_after_not_to_propose_the_row_it_was_for_says_so_under_its_document():
+    """The review of 26.11 beside the QA's rule 9 (a candidate the books propose nothing to says why): "לא להציע" takes
+    the proposal's line off its document, and the row it was for says it was proposed and hidden - never nothing."""
+    part = computed()[0]
+    fill = part["fills"]["1"]["mark"]                      # row 1 is proposed 62601 (and its date)
+    live = [{"id": 1, "kind": fill["kind"], "subject": "1", "evidence": fill["evidence"], "by": 7,
+             "at": "2026-11-26T10:00:00+00:00"}]
+    shown = dz.hide(part, live)
+    document = next(e for e in shown["students"] if e["number"] == "62601")
+    assert "proposal" not in document
+    candidate = next(c for c in document["candidates"] if c["id"] == "1")
+    assert (candidate["why"], candidate["why_key"]) == (fd.NAG_FILL_WHY, "withdrawn")
+    assert "לא להציע" in candidate["why"]
+    # nothing else of the document's candidates changes, and the part given is not changed
+    before = next(e for e in part["students"] if e["number"] == "62601")
+    assert [c for c in document["candidates"] if c["id"] != "1"] == [c for c in before["candidates"] if c["id"] != "1"]
+    assert "proposal" in before and next(c for c in before["candidates"] if c["id"] == "1").get("why") is None
+
+
 HELD_FIELDS = [("type", {"doc_type": 3}), ("status", {"status": 2}), ("total", {"total_incl": Decimal("3600")}),
                ("date", {"value_date": TODAY.replace(day=4)}), ("missing", {"missing": True})]
 
