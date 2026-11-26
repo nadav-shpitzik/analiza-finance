@@ -193,17 +193,23 @@ def test_every_label_the_view_draws_is_defined_in_the_students_legend_and_the_le
     assert set(ch.NOTES.values()) <= {x["term"] for x in v["b2c"]["cohorts"]["legend"]["items"]}
 
 
-def test_a_view_not_read_says_why_in_the_servers_words_and_the_list_is_as_it_is():
-    # the review of D4: a reading whose filter monday refused shows no cohort and no money, says why where the table would be,
-    # and offers no file; the switch stays, and the payments' list is drawn as it is
+@pytest.mark.parametrize("state", ["unread", "error"])
+def test_a_view_not_read_or_not_computed_says_why_in_the_servers_words_and_the_list_is_as_it_is(state):
+    # the review of D4: a reading whose filter monday refused, or a computation of the view that failed, shows no cohort and
+    # no money, says why where the table would be, and offers no file; the switch stays, and the payments' list is as it is
     whole = real_view()
-    v = real_view(dict(cohort_snapshot(), cohorts_read={"ok": False, "reason": "track_refused", "code": "graphql"}))
-    assert v["b2c"]["rows"] == whole["b2c"]["rows"]
+    if state == "unread":
+        v = real_view(dict(cohort_snapshot(), cohorts_read={"ok": False, "reason": "track_refused", "code": "graphql"}))
+        said = ch.UNREAD_SAID["track_refused"]
+    else:
+        v = dict(whole, b2c=dict(whole["b2c"], cohorts=ch.not_shown("error", "crashed")))
+        said = ch.CRASHED_SAID
+    assert v["b2c"]["rows"] == whole["b2c"]["rows"] and v["b2c"]["cohorts"]["state"] == state
     cohorts, listed = render([case(), case("list")], v)
     (whole_list,) = render([case("list")], whole)
     part = v["b2c"]["cohorts"]
     assert '<p class="fin-badtext">%s</p>' % part["said"].replace('"', "&quot;") in cohorts
-    assert ch.UNREAD_SAID["track_refused"].replace('"', "&quot;") in cohorts
+    assert said.replace('"', "&quot;") in cohorts
     assert "fin-cohorts-t" not in cohorts and "fin-figs" not in cohorts and 'data-export="b2c_cohorts"' not in cohorts
     assert 'data-scview="list"' in cohorts and 'data-scview="cohorts"' in cohorts
     assert listed == whole_list

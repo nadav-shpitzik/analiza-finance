@@ -44,6 +44,7 @@ WHAT IT NEVER HOLDS. Three values analiza-metrics' server read, and this one nev
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from collections import Counter, OrderedDict, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -53,6 +54,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..recon.ref_fill import FILL_WINDOW_DAYS
 from .reading import TAB_BOARDS
+
+logger = logging.getLogger("analiza_finance.desk")
 from .reading import (AC, ACCOUNTS_BOARD, B2, B2B_CHARGE, BOARDS, CO, COHORTS_BOARD, DEALS_BOARD, DL, EN,  # noqa: F401
                       ENROLLMENTS_BOARD, LD, LEADS_BOARD, SC, STUDENT_CHARGE, _uniq, cohort_ids, enrollment_cohorts,
                       enrollment_ids, lead_ids, lead_names_of, lead_rep, lead_reps_of, leads_deciding)
@@ -1581,10 +1584,16 @@ def legend_terms(tab: str) -> set[str]:
 
 def _cohorts_of(snapshot: dict, rows: list[dict]) -> dict:
     """D4's students by cohort (app/desk/cohorts.py) of this snapshot and its built payments. Imported here, when a view is
-    built: cohorts.py builds on this module's money and labels, so it imports this module, never the other way at load."""
-    from .cohorts import build_cohorts
+    built: cohorts.py builds on this module's money and labels, so it imports this module, never the other way at load.
+    A failure of it is its part's alone (the review of D4: it was `view_error` "crashed" for both tabs, routes.py
+    `_view_of`): logged by its class, never a row or an amount, and the part says so in place of its money ("error")."""
+    from . import cohorts
 
-    return build_cohorts(snapshot, rows)
+    try:
+        return cohorts.build_cohorts(snapshot, rows)
+    except Exception as exc:  # noqa: BLE001 - said by class and on the part: the tabs stand without the cohorts
+        logger.error("desk cohorts not built (%s)", type(exc).__name__)
+        return cohorts.not_shown("error", "crashed")
 
 
 def build_view(snapshot: dict, today: date) -> dict:

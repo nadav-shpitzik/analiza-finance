@@ -50,7 +50,9 @@ they paid, in no sum of the cohort's line but their own (`waived_paid`, `out_pai
 WHEN IT IS NOT SHOWN (the review of D4): the reading could not read the cohorts on the voucher track (app/desk/reading.py
 `cohorts_read`, COHORTS_UNREAD: monday refused the filter, answered it in another shape, showed no board, or the request
 failed), or the enrollments of those with a price (step 5). The part then holds no cohort and no money, `state` "unread", and says why in its own words (UNREAD_SAID); the
-rest of the desk is read and shown as always. A part that is not "ok" is never exported as complete (`checks["ties"]`).
+rest of the desk is read and shown as always. And when its own computation fails (app/desk/view.py `_cohorts_of`): the
+part alone says so (`state` "error"), never the view of both tabs. A part that is not "ok" is never exported as complete
+(`checks["ties"]`).
 
 WHAT IT IS NOT: a writer, or a second money rule. It reads the reading and the desk's own payment rows; nothing here asks
 monday, and the page adds no money up (frontend/finance.js draws these sums, and the totals of a filtered list come from
@@ -174,6 +176,8 @@ UNREAD_SAID = OrderedDict([
 ])
 UNREAD_HEAD = "התצוגה %s לא מוצגת בקריאה הזאת: " % _q(VIEW_WORD)
 UNREAD_TAIL = " שאר המסך נקרא כרגיל, והתצוגה תחזור בקריאה הבאה שתצליח."
+# said in its place when its own computation failed (app/desk/view.py `_cohorts_of`): a fault of the server's
+CRASHED_SAID = "התצוגה %s לא מוצגת: החישוב שלה נכשל. זו תקלה בשרת, ונדב צריך לבדוק אותה. שאר המסך מוצג כרגיל." % _q(VIEW_WORD)
 OUT_WHY = {"status": "Status", "voucher": "סטטוס השובר", "cohorts": "ההרשמה מקושרת ליותר ממחזור אחד"}
 
 # The table's columns, once, for the page and its Excel file: (key, header, kind, shown_when). A column with `shown_when`
@@ -333,11 +337,13 @@ def _frame() -> dict:
 
 
 def not_shown(state: str, reason: str) -> dict:
-    """The part when the view cannot be shown - `state` "unread": the reading could not read what it needs (UNREAD_SAID) -
-    with no cohort and no money, and why in its own words (`said`), which the page draws where the table would be.
-    `checks["ties"]` is false, so nothing of it is ever exported as complete."""
-    return dict(_frame(), state=state, reason=reason, said=UNREAD_HEAD + UNREAD_SAID[reason] + UNREAD_TAIL, cohorts=[],
-                unpriced=[], totals=cohort_totals([]), checks={"ties": False})
+    """The part when the view cannot be shown - `state` "unread": the reading could not read what it needs (UNREAD_SAID);
+    "error", reason "crashed": its own computation failed (app/desk/view.py `_cohorts_of`, CRASHED_SAID) - with no cohort
+    and no money, and why in its own words (`said`), which the page draws where the table would be. `checks["ties"]` is
+    false, so nothing of it is ever exported as complete."""
+    said = CRASHED_SAID if state == "error" else UNREAD_HEAD + UNREAD_SAID[reason] + UNREAD_TAIL
+    return dict(_frame(), state=state, reason=reason, said=said, cohorts=[], unpriced=[], totals=cohort_totals([]),
+                checks={"ties": False})
 
 
 def _unread(snapshot: dict) -> str:

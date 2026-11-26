@@ -802,6 +802,34 @@ def test_a_cohorts_line_that_does_not_tie_is_never_exported_as_complete(desk, mo
     assert "לא שלמה" in info["שימו לב"]
 
 
+def test_a_cohorts_module_that_breaks_is_its_parts_alone_and_both_tabs_stand(desk, monkeypatch, caplog):  # noqa: F811
+    """The review of D4 (MEDIUM): `build_view` called `build_cohorts` unguarded, so an exception in the newest module was
+    `view_error` "crashed" for both tabs - no payments, no companies, no actions."""
+    served(monkeypatch, cohort_snapshot())
+
+    def broken(snapshot, rows):
+        raise KeyError("רונית כהן 4000")                                # a key the module did not expect: never logged
+
+    monkeypatch.setattr(ch, "build_cohorts", broken)
+    body = desk.get(session_token(1)).json()
+    assert body["view_error"] is None and sorted(r["id"] for r in body["view"]["b2c"]["rows"]) == ["1", "2", "3", "4", "5"]
+    assert body["view"]["b2b"] is not None and body["view"]["checks"]["ok"] is True
+    part = body["view"]["b2c"]["cohorts"]
+    assert (part["state"], part["reason"], part["said"], part["cohorts"]) == ("error", "crashed", ch.CRASHED_SAID, [])
+    assert part["checks"] == {"ties": False} and part["legend"]["title"] == ch.LEGEND_TITLE
+    assert "KeyError" in caplog.text and "רונית" not in caplog.text and "4000" not in caplog.text
+    # the payments' totals and file as always; the cohorts' none, and their file never complete
+    taken = quote(body["taken_at"])
+    t = desk.client.get("/api/desk/totals?tab=b2c&taken=" + taken, headers=_auth()).json()
+    assert t["count"] == 5
+    t = desk.client.get("/api/desk/totals?tab=b2c_cohorts&taken=" + taken, headers=_auth()).json()
+    assert t["count"] == 0 and t["sums"]["balance"] == "0"
+    url = desk.client.post("/api/desk/export-link", headers=_auth(), json={"tab": "b2c_cohorts"}).json()["url"]
+    info = {row[0].value: row[1].value for row in openpyxl.load_workbook(
+        io.BytesIO(desk.client.get(url).content))["פרטים"].iter_rows()}
+    assert "לא שלמה" in info["שימו לב"]
+
+
 # ---- the voucher track: only its cohorts, and every one of them, paid for or not ---------------------------------------
 from app.monday import client as monday  # noqa: E402
 

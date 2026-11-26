@@ -190,7 +190,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (the review of D4) - and they join the payments' cohorts. A track that cannot be read (refused, another shape, no board,
   the request failed) never fails a reading or a refresh: step 5 is skipped and `cohorts_read` says why (`COHORTS_UNREAD`),
   which the view shows in place of its money (`state` "unread", `UNREAD_SAID`) and /health as `desk.last_reading.cohorts`;
-  a step 5 that fails is said the same way (`students_failed`), the reading kept as it was before it.
+  a step 5 that fails is said the same way (`students_failed`), the reading kept as it was before it. An exception in the
+  module stays in its part (`state` "error", `CRASHED_SAID`, logged by class: view.py `_cohorts_of`), never `view_error`.
   The enrollments of those with a price through `board_relation_mm1hetrb` (step 5, `roster_ids`); a refresh reads
   those cohorts again every time (`BODY_SCHEMA` 4). Its totals and its Excel
   file are the list `b2c_cohorts` of `/api/desk/totals` and the export link (`app/desk/cohorts_export.py`: a line per

@@ -92,3 +92,18 @@ def test_a_failed_read_of_the_priced_cohorts_enrollments_must_not_end_the_whole_
     r = rd.read_desk(reader_of(w))
     assert r["error"] is None, "step 5 (the cohorts' students) failing ended the whole reading: %s" % r["error"]
     assert {x["id"] for x in r["student_charge"]["rows"]} == {"101", "102", "103"}
+
+
+def test_an_exception_in_the_cohorts_module_must_not_take_the_view_of_both_tabs(monkeypatch):
+    """MEDIUM. `build_view` calls `build_cohorts` unguarded; routes.py `_view_of` turns any exception of build_view into
+    `view_error: "crashed"` - no payments, no companies, no actions. The new module is the least proven code in the view."""
+    def broken(snapshot, rows):
+        raise KeyError("a cohort shape the module did not expect")
+
+    monkeypatch.setattr(ch, "build_cohorts", broken)
+    try:
+        v = fd.build_view(cohort_snapshot(), TODAY)
+    except KeyError:
+        pytest.fail("an exception in app/desk/cohorts.py fails build_view, so routes.py answers view_error 'crashed' "
+                    "for both tabs")
+    assert v["b2c"]["rows"] and v["b2b"] is not None
