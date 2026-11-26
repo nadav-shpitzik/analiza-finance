@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -287,7 +288,10 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
                                         "/api/usage"}
     assert not [x for x in log if x["path"].startswith("/api/finance")]
     assert all(x["auth"] == "Bearer stub-session-token" for x in api)
-    sent = json.dumps(log, ensure_ascii=False)
+    # (the page's own files are asked by their content's hash, `?v=` and twelve hex digits: a bank code of two digits is in
+    # one of them by chance - 19cb26cc1012 - so the hash is left out of what is searched, never a request the page makes)
+    sent = json.dumps([dict(x, query=re.sub(r"(?:^|&)v=[0-9a-f]{12}(?=&|$)", "", x["query"])) for x in log],
+                      ensure_ascii=False)
     for secret in list(LEADS.values()) + list(BANK.values()) + list(VAT.values()):
         assert not secret or secret not in sent, secret
 
