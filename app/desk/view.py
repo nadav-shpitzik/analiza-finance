@@ -261,7 +261,7 @@ B2C_STATES = OrderedDict([
                          "money": "money_in",
                          # why, not only what (QA 7): money came in and its receipt has not gone out
                          "about": "נכנס כסף, והקבלה עליו עוד לא יצאה: סטטוס תשלום %s, ושליחת קבלה %s או ריקה, %s. "
-                                  "הוותיק ראשון, וליד התאריך כמה ימים הוא ממתין."  # Nadav 26.11: receipts go out slowly
+                                  "הוותיק ראשון, וליד התאריך כמה ימים הוא ממתין, באדום משבוע ומעלה."  # Nadav 26.11: receipts go out slowly
                                   % (_quoted([PAY[P_PAID], PAY[P_ASKED]]), _q(RECEIPT[R_PENDING]), _NO_REFUND)}),
     ("refund_asked", {"label": "%s, טרם אושר" % PAY[P_ASKED], "task": False, "money": "money_in",
                       "about": "סטטוס תשלום %s, ושליחת קבלה %s, %s. הבקשה עצמה מטופלת בהרשמה, באפליקציית ההחזרים."

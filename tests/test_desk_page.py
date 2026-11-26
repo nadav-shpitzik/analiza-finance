@@ -2138,7 +2138,20 @@ def test_a_pending_receipt_says_how_long_it_has_waited_beside_its_date_and_in_it
     queue, details, everything = (step["html"] for step in got["steps"])
     assert "ממתין 21 ימים" in queue and queue.count("ממתין ") == 1
     assert details.count("ממתין 21 ימים") == 2      # beside its date, and in the details' line
-    assert everything.count("ממתין 21 ימים") == 1 and everything.count("fin-waited") == 1
+    assert everything.count("ממתין 21 ימים") == 1 and everything.count("fin-waited\"") + everything.count("fin-waited ") == 1
+    # 21 days is past a week: the wait is red (WAIT_LATE_DAYS); the details' line says it in words only
+    assert queue.count("fin-waited fin-waited-late") == 1
+
+
+def test_a_wait_under_a_week_is_not_red():
+    """The reading's day moved to 9.11: 3102 (paid 3.11) has waited 6 days - blue, not red; on 10.11, 7 days - red."""
+    for today, days, late in (("2026-11-09", 6, False), ("2026-11-10", 7, True)):
+        v = answer()["view"]
+        v = dict(v, today=today)
+        got = drive(answer(v), [{"show": {"tab": "b2c", "sc": {"state": "receipt_pending", "period": "", "open": {}}}}])
+        html = got["steps"][0]["html"]
+        assert "ממתין %d ימים" % days in html, today
+        assert ("fin-waited-late" in html) is late, today
 
 
 # --- the queue split by what the books say (Nadav 26.11): the label beside "טרם", and the line over the queue ----------------

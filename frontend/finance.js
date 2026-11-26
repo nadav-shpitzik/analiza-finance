@@ -642,11 +642,17 @@
     }
     return "<p class=\"fin-rcpt-line\">" + esc(out.join(" ")) + "</p>";
   }
+  /* from a week on, the wait is red: a receipt is due when the money comes in (Nadav 26.11: receipts go out slowly) */
+  var WAIT_LATE_DAYS = 7;
+  function waitedLate(r) {
+    var n = r.state === "receipt_pending" ? daysFrom(r.date) : null;
+    return n !== null && -n >= WAIT_LATE_DAYS;
+  }
   function waitedMark(r) {
     var t = waitedText(r);
     /* its own line under the date, free to wrap: on the date's line it widened the column, and at 1280 the books' chips of
        "לטיפול" went to three lines (tests/test_desk_books_page.py, the QA's widths) */
-    return t ? "<span class=\"fin-waited\">" + t + "</span>" : "";
+    return t ? "<span class=\"fin-waited" + (waitedLate(r) ? " fin-waited-late" : "") + "\">" + t + "</span>" : "";
   }
   function paidDateSaid(r) {
     return r.date_from === "paid" ? d(r.date) : d(r.date) + " <span class=\"fin-subtle\">" + CREATED_BY + "</span>";
