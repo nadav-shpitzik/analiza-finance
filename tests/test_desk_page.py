@@ -1470,7 +1470,12 @@ def test_a_bank_account_monday_holds_empty_outside_monday_and_while_it_is_read_a
     assert bank_box(outside["steps"][0]["html"]) == '<span class="fin-subtle">מוצגים רק כשהתצוגה פתוחה מתוך מאנדיי</span>'
     assert outside["sent"] == []
     held = drive(answer(), [{"show": REFUND_OPEN}], monday=world(answers=[{"hold": True}]))
-    assert bank_box(held["steps"][0]["html"]) == '<span class="fin-subtle">קורא ממאנדיי...</span>'
+    # changed deliberately (QA 26.11, 10): a read on its way shows its own small spinner in its cell
+    assert bank_box(held["steps"][0]["html"]) == READING
+
+
+READING = ('<span class="fin-reading" role="status"><span class="fin-spin" aria-hidden="true"></span>'
+           '<span class="fin-subtle">קורא ממאנדיי...</span></span>')
 
 
 def test_a_companys_vat_id_is_read_as_the_person_only_when_its_ledger_shows_the_billing_details():

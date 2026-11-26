@@ -452,6 +452,12 @@ body[data-theme="dark"] #screen-finance .fin-btn.fin-primary { color: #0e1420; }
 #screen-finance .fin-panel.fin-books { margin-top: 16px; }
 #screen-finance .fin-books-asof { margin: 6px 0 0; max-width: 760px; font-size: 13px; line-height: 1.5; }
 #screen-finance .fin-books .fin-cand + .fin-cand { margin-top: 3px; }
+/* QA 26.11 (10): a value read from monday on its way - a small spinner in its own cell, never anything over the desk */
+#screen-finance .fin-reading { display: inline-flex; align-items: center; gap: 6px; }
+#screen-finance .fin-spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 2px solid var(--fin-line);
+  border-top-color: var(--fin-focus); animation: fin-spin .8s linear infinite; }
+@keyframes fin-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #screen-finance .fin-spin { animation-duration: 2.4s; } }
 /* QA 26.11 (9): why the books propose nothing for this document on the row, quietly under it */
 #screen-finance .fin-books .fin-cand-why { display: block; font-size: 12.5px; color: var(--fin-muted); white-space: normal; }
 #screen-finance table.fin-books-t td { vertical-align: top; }

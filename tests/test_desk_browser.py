@@ -226,6 +226,24 @@ const [base, sdk, shot] = process.argv.slice(1);
 """
 
 
+# QA 26.11 (10): the fake SDK, its reads waiting until the page's window.__go() lets them through - a read on its way
+HOLD_READS = r"""
+(function () {
+  var make = window.mondaySdk;
+  window.__held = []; window.__hold = true;
+  window.mondaySdk = function () {
+    var sdk = make(), real = sdk.api;
+    sdk.api = function (q, o) {
+      if (!window.__hold) { return real(q, o); }
+      return new Promise(function (ok) { window.__held.push(function () { ok(real(q, o)); }); });
+    };
+    return sdk;
+  };
+  window.__go = function () { window.__hold = false; window.__held.splice(0).forEach(function (f) { f(); }); };
+})();
+"""
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -301,6 +319,54 @@ def test_the_desk_in_a_browser_reads_what_the_server_never_sends_only_when_shown
                       ensure_ascii=False)
     for secret in list(LEADS.values()) + list(BANK.values()) + list(VAT.values()):
         assert not secret or secret not in sent, secret
+
+
+def test_the_first_details_read_shows_its_own_spinner_and_nothing_of_the_page_covers_the_desk(serve):
+    """QA 26.11 (10): the first time a row's details opened, the whole desk went grey for about a second. Opened here with
+    the first read of the visit held on its way (the bank account and the ID number, as the person): nothing of the page is
+    over the desk - every point of the view is the desk's own, no fixed or absolute element covers it, the page's colours and
+    opacity are what they were - and the cells being read show their own small spinner, gone when the values land. The grey
+    is not drawn by the page: it is monday's, around the view."""
+    base, _log = serve()
+    store = {"5089697337": {k: {"text_mkzvem4": v} for k, v in LEADS.items()}, "5093448677": {"3103": BANK}}
+    got = qa_visit(r"""
+  const look = () => page.evaluate(() => {
+    const vw = window.innerWidth, vh = window.innerHeight, root = document.getElementById("fin-root");
+    const over = [...document.querySelectorAll("body *")].filter((el) => {
+      const st = getComputedStyle(el), r = el.getBoundingClientRect();
+      return (st.position === "fixed" || st.position === "absolute") && st.display !== "none" && st.visibility !== "hidden"
+        && r.width * r.height > vw * vh * 0.25;
+    }).map((el) => el.tagName + "." + el.className);
+    const points = [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]].map(([x, y]) => {
+      const el = document.elementFromPoint(vw * x, vh * y);
+      return !!el && (root.contains(el) || el === document.body || el === document.documentElement || !!el.closest("#screen-finance"));
+    });
+    const screen = getComputedStyle(document.getElementById("screen-finance"));
+    return { over: over, points: points, body: getComputedStyle(document.body).backgroundColor, opacity: screen.opacity,
+      filter: screen.filter, spins: document.querySelectorAll(".fin-detail .fin-spin").length,
+      id: /000000034/.test((document.querySelector(".fin-detail") || {}).innerText || "") };
+  });
+  await page.click('[data-bstate="refund_to_execute"]');
+  await page.waitForSelector('tr[data-row="3103"]');
+  out.steps.before = await look();
+  await page.click('tr[data-row="3103"] td.k-to_refund');
+  await page.waitForSelector(".fin-detail .fin-spin");
+  await page.waitForTimeout(300);
+  out.steps.reading = await look();
+  out.steps.held = await page.evaluate(() => window.__held.length);
+  await page.evaluate(() => window.__go());
+  await page.waitForFunction(() => /000000034/.test((document.querySelector(".fin-detail") || {}).innerText || ""), null,
+    { timeout: 15000 });
+  out.steps.landed = await look();
+""", base, fake_sdk(store) + HOLD_READS)
+    assert got["errors"] == []
+    before, reading, landed = (got["steps"][k] for k in ("before", "reading", "landed"))
+    assert got["steps"]["held"] == 2                                   # the bank account and the ID number, on their way
+    for step in (before, reading, landed):
+        assert step["over"] == [] and all(step["points"]), step
+        assert (step["body"], step["opacity"], step["filter"]) == (before["body"], "1", "none"), step
+    assert reading["spins"] == 2 and not reading["id"]                 # a spinner in each cell being read
+    assert landed["spins"] == 0 and landed["id"]
 
 
 # --- the QA of 24.11: the page in monday as Chava sees it, each finding by its number in the QA report -------------------

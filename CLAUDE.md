@@ -121,7 +121,8 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   (`frontend/check.js`). The page calls `/api/desk` paths only, never one under `/api/finance`, and every monday request goes
   through finance.js's one door (`mondayCall`; its writes in `mondayWrite`, behind `WRITABLE`: a column change, and a billing edit's Update only when the app has `updates:write`). What the server never
   reads (an ID number, a refund's bank account, a company's ח.פ) is read there as the person, only when shown, kept in the
-  page's memory and sent nowhere. A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
+  page's memory and sent nowhere; a read on its way shows its own spinner in its cell, and nothing of the page covers the
+  desk (`READING`; QA 26.11: the grey on the visit's first details is monday's, around the view, on its first monday.api). A failed "רענון" keeps the desk and what was typed, and says so beside the reading's time
   until the next reading (`REFRESH_FAILED`, D4's review); a "not yet" (429) is a flash counted down to the wait's end, and
   gone with it (`flashWait`, QA 26.11). A row's action in its details floats beside its control, as a batch
   does (`actPop`), so no row moves. One flash shows at a time: a new one takes the place of the one on the screen. The root

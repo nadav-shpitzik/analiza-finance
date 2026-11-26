@@ -206,6 +206,9 @@
  * 9  A document in the books' list with a candidate by name and no proposal said nothing of why. Under such a candidate,
  *      the server's reason (app/desk/books.py `candidate_why`: FR-C2's bucket for the row, in the proposals' own
  *      computation): "לשורה כבר יש אסמכתה 62555", a sum or a date apart, another row on the same invoice, and so on.
+ * 10 The first opening of a row's details greyed the whole desk for about a second. Nothing of the page covers the desk
+ *      then (measured in Chromium), and only the visit's first opening greyed, though each row's first opening reads: it is
+ *      monday's, around the view, on the app's first monday.api(). A read on its way shows its own spinner in its cell.
  *
  * Drawn by desk.js on the board view, into #fin-root, from /api/desk - which answers a tab only to
  * the members of the board it reads. This file adds no money up: every amount comes from the server's one
@@ -2899,6 +2902,13 @@
   function liveStale() {
     [IDS, BANKS, VATS].forEach(function (store) { Object.keys(store).forEach(function (k) { store[k].stale = true; }); });
   }
+  /* QA 26.11 (10): the first opening of a row's details greyed the whole desk for about a second. The page draws nothing
+     over the desk - no overlay, no backdrop, no style of its own changes - and every row's first opening runs its own read
+     and draws the same, while only the visit's first opening greyed: the grey is monday's, around the view, on the app's
+     first monday.api() of the visit (tests/test_desk_browser.py holds that nothing of the page covers the desk then). What
+     the page does: a read on its way shows a small spinner of its own, in its cell, where the value will show */
+  var READING = "<span class=\"fin-reading\" role=\"status\"><span class=\"fin-spin\" aria-hidden=\"true\"></span>" +
+    subtle("קורא ממאנדיי...") + "</span>";
   function liveFailed(words, code, attr, key) {
     return "<span class=\"fin-badtext\">" + esc(words[code] || words.monday) + "</span> <button type=\"button\" class=\"fin-linkbtn\" " +
       attr + "=\"" + esc(key) + "\">לנסות שוב</button>";
@@ -2911,7 +2921,7 @@
     if (!(r.lead_ids || []).length) { return NOT_SET; }
     var e = liveEntry(IDS, r.id, function () { return readIdNumber(r); }, idSaid);
     if (e.phase === "outside") { return subtle("מוצגת רק כשהתצוגה פתוחה מתוך מאנדיי"); }
-    if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
+    if (e.phase === "reading") { return READING; }
     if (e.phase === "failed") { return liveFailed(ID_ERRORS, e.code, "data-id-retry", r.id); }
     if (!e.value) { return subtle("אין בליד"); }
     return "<bdi dir=\"ltr\" class=\"fin-idnum\">" + esc(e.value) + "</bdi> <button type=\"button\" class=\"fin-iconbtn\" data-id-copy=\"" +
@@ -2922,7 +2932,7 @@
   function bankCell(r) {
     var e = liveEntry(BANKS, r.id, function () { return readBank(r); });
     if (e.phase === "outside") { return subtle("מוצגים רק כשהתצוגה פתוחה מתוך מאנדיי"); }
-    if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
+    if (e.phase === "reading") { return READING; }
     if (e.phase === "failed") { return liveFailed(BANK_ERRORS, e.code, "data-bank-retry", r.id); }
     return bankText(e.value, true) || NOT_SET;
   }
@@ -2930,7 +2940,7 @@
   function vatCell(aid) {
     var e = liveEntry(VATS, aid, function () { return readVat(aid); });
     if (e.phase === "outside") { return subtle("מוצג רק כשהתצוגה פתוחה מתוך מאנדיי"); }
-    if (e.phase === "reading") { return subtle("קורא ממאנדיי..."); }
+    if (e.phase === "reading") { return READING; }
     if (e.phase === "failed") { return liveFailed(VAT_ERRORS, e.code, "data-vat-retry", aid); }
     return e.value ? ltr(e.value) : NOT_SET;
   }
