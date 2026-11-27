@@ -242,7 +242,7 @@ def test_a_second_step_that_fails_says_what_landed_and_the_row_keeps_it():
               body_of([refund_row()]), {"1": sc_item("1")}, fail={"write": {"at": 2, **denied}})
     failed = out["steps"][1]
     assert failed["phase"] == "failed"
-    assert failed["error"] == "נכתב רק סכום החזר, ושאר הפעולה לא: אין לך הרשאה לעדכן את השורה במאנדיי."
+    assert failed["error"] == "נשמר רק סכום החזר, ושאר הפעולה לא: אין לך הרשאה לעדכן את השורה במאנדיי."
     assert len(mutations(out)) == 2
     html = out["steps"][2]["html"]
     assert "נשמר, מתעדכן" in html and "User unauthorized to perform action" in html     # monday's own words, under it
@@ -485,11 +485,11 @@ def test_a_partial_refund_not_smaller_than_its_credit_is_warned_in_the_plan():
     out = run([{"act": ["sc:1", "refund_partial"], "typed": {fd.SC["refund"]: "1000"}}, show], body_of([refund_row()]),
               {"1": sc_item("1")})
     import html as h
-    assert 'הסכום אינו קטן מסכום לזיכוי (1,000.00 ₪). אם כל סכום לזיכוי הוחזר, מסמנים "תשלום הוחזר".' \
+    assert 'הסכום שווה לסכום לזיכוי (1,000.00 ₪) או גדול ממנו. אם כל סכום לזיכוי הוחזר, מסמנים "תשלום הוחזר".' \
         in h.unescape(out["steps"][1]["html"])
     out = run([{"act": ["sc:1", "refund_partial"], "typed": {fd.SC["refund"]: "400"}}, show], body_of([refund_row()]),
               {"1": sc_item("1")})
-    assert "הסכום אינו קטן מסכום לזיכוי" not in h.unescape(out["steps"][1]["html"])
+    assert "הסכום שווה לסכום לזיכוי" not in h.unescape(out["steps"][1]["html"])
 
 
 def test_a_reference_written_leaves_its_box_to_the_rows_value():

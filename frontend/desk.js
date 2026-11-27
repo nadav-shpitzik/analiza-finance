@@ -153,7 +153,7 @@
     byId("check").hidden = false;
     if (window.FinanceDeskCheck) { window.FinanceDeskCheck.run(monday); return; }
     byId("check").hidden = true;
-    blocked("קובץ הבדיקה לא נטען. רעננו את הדף.");
+    blocked("קובץ הבדיקה לא נטען. אפשר לרענן את הדף.");
   }
 
   /* the rest is for tests/test_desk_page.py only */

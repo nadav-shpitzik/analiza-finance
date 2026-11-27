@@ -319,15 +319,15 @@
     cohort_no_link: ["תקבול אחד בלי הרשמה ובלי ליד מקור", "תקבולים בלי הרשמה ובלי ליד מקור"],
     cohort_no_cohort: ["תקבול מקושר אחד בלי מחזור", "תקבולים מקושרים בלי מחזור"],
     cohort_missing: ["תקבול אחד שהמחזור שלו לא נמצא במאנדיי", "תקבולים שהמחזור שלהם לא נמצא במאנדיי"],
-    enrollments_missing: ["הרשמה המקושרת לתקבולים לא התקבלה ממאנדיי", "הרשמות המקושרות לתקבולים לא התקבלו ממאנדיי"],
-    leads_missing: ["ליד מקור המקושר לתקבולים לא התקבל ממאנדיי", "לידי מקור המקושרים לתקבולים לא התקבלו ממאנדיי"],
+    enrollments_missing: ["הרשמה המקושרת לתקבולים לא נמצאה במאנדיי", "הרשמות המקושרות לתקבולים לא נמצאו במאנדיי"],
+    leads_missing: ["ליד מקור המקושר לתקבולים לא נמצא במאנדיי", "לידי מקור המקושרים לתקבולים לא נמצאו במאנדיי"],
     cohort_ambiguous: ["תקבול אחד עם יותר ממחזור אחד (בהרשמה או בליד מקור)", "תקבולים עם יותר ממחזור אחד (בהרשמה או בליד מקור)"],
     refund_exceeds_paid: ["סכום החזר אחד גדול מסכום ששולם (נספר עד סכום ששולם)", "סכומי החזר גדולים מסכום ששולם (נספרו עד סכום ששולם)"],
     amount_missing: ["תקבול אחד שסכום ששולם בו לא הוקלד", "תקבולים שסכום ששולם בהם לא הוקלד"],
     payer_mismatch: ["חיוב עסקי אחד שהחברה בו אינה Account משלם בעסקה", "חיובים עסקיים שהחברה בהם אינה Account משלם בעסקה"],
     deals_split: ["עסקה אחת שהחיובים שלה רשומים על שתי חברות", "עסקאות שהחיובים שלהן רשומים על שתי חברות"],
-    deals_missing: ["עסקה המקושרת לחיובים לא התקבלה ממאנדיי", "עסקאות המקושרות לחיובים לא התקבלו ממאנדיי"],
-    accounts_missing: ["חברה המקושרת לחיובים לא התקבלה ממאנדיי", "חברות המקושרות לחיובים לא התקבלו ממאנדיי"],
+    deals_missing: ["עסקה המקושרת לחיובים לא נמצאה במאנדיי", "עסקאות המקושרות לחיובים לא נמצאו במאנדיי"],
+    accounts_missing: ["חברה המקושרת לחיובים לא נמצאה במאנדיי", "חברות המקושרות לחיובים לא נמצאו במאנדיי"],
     price_unclear: ["מחזור אחד שהמחיר בו אינו מספר אחד", "מחזורים שהמחיר בהם אינו מספר אחד"],
     expected_missing: ["יתרה פתוחה אחת בלי מחיר מחזור, ולכן בלי סכום", "יתרות פתוחות בלי מחיר מחזור, ולכן בלי סכום"],
     terms_unknown: ["חברה אחת שתנאי התשלום שלה לא מוכרים למסך (נספרה לפי מועד דרישת התשלום)", "חברות שתנאי התשלום שלהן לא מוכרים למסך (נספרו לפי מועד דרישת התשלום)"],
@@ -1219,7 +1219,7 @@
     if (x.unlinked.count) { out.push(w.unlinked + ": " + plural(x.unlinked.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.unlinked.money)); }
     if (x.shared.count) { out.push(w.shared + ": " + plural(x.shared.count, "תקבול אחד", "תקבולים") + ", " + amountText(x.shared.money)); }
     if (x.roster_missing) {
-      out.push(plural(x.roster_missing, "הרשמה אחת שהמחזור מקושר אליה לא התקבלה ממאנדיי", "הרשמות שהמחזור מקושר אליהן לא התקבלו ממאנדיי"));
+      out.push(plural(x.roster_missing, "הרשמה אחת שהמחזור מקושר אליה לא נמצאה במאנדיי", "הרשמות שהמחזור מקושר אליהן לא נמצאו במאנדיי"));
     }
     if (x.roster_elsewhere) {
       out.push(plural(x.roster_elsewhere, "הרשמה אחת שהמחזור מקושר אליה, וההרשמה עצמה מקושרת למחזור אחר",
@@ -1456,7 +1456,7 @@
   function idLines(c) {
     var out = [];
     if (c.not_found) {
-      out.push(["שימו לב", c.not_found === 1 ? "לתקבול אחד אין ת.ז בקובץ: הליד שלו לא נמצא בלוח הלידים במאנדיי (נמחק, " +
+      out.push(["לתשומת לבך", c.not_found === 1 ? "לתקבול אחד אין ת.ז בקובץ: הליד שלו לא נמצא בלוח הלידים במאנדיי (נמחק, " +
         "הועבר ללוח אחר, או שאין לך גישה אליו)." : "ל-" + NF.format(c.not_found) + " תקבולים אין ת.ז בקובץ: הלידים שלהם לא " +
         "נמצאו בלוח הלידים במאנדיי (נמחקו, הועברו ללוח אחר, או שאין לך גישה אליהם).", "text"]);
     }
@@ -1718,7 +1718,7 @@
   /* a refusal in the page's words; one it has none for is said as what did not happen, with the server's word */
   function nagRefused(word, nothing) {
     return NAG_ERRORS[word] || (word === "rate_limited" ? nothing + ": יותר מדי בקשות. אפשר לנסות שוב עוד רגע."
-      : nothing + " (" + (word || "שגיאה") + ").");
+      : nothing + ". אפשר לנסות שוב בעוד רגע.");   /* never the server's word on the screen (the second review of 26.11) */
   }
   /* what the server's answer to a refusal leaves on the screen behind: the desk is asked again */
   var NAG_RELOAD = { other_reading: 1, not_shown: 1, already_hidden: 1, evidence_changed: 1, not_live: 1 };
@@ -2494,14 +2494,15 @@
     var landed = (e && e.landed) || [], titles = [];
     landed.forEach(function (values) { Object.keys(values).forEach(function (c) { titles.push(titleOf(c)); }); });
     /* a write monday answered with another value: something may be in the row, so never "nothing was written" */
-    if (e && e.code === "unverified") { return (titles.length ? "נכתב " + titles.join(", ") + ". " : "") + why + "."; }
+    if (e && e.code === "unverified") { return (titles.length ? "נשלח עדכון של " + titles.join(", ") + ". " : "") + why + "."; }
     /* a write sent and not answered in time (runSteps marks what it sent with `landed`): whether it landed is not known */
     if (e && e.code === "timeout" && e.landed) {
-      return (titles.length ? "נכתב " + titles.join(", ") + ". " : "") +
+      /* "sent", never "written": whether it landed is what is not known (the second review of 26.11) */
+      return (titles.length ? "נשלח עדכון של " + titles.join(", ") + ", אך " : "") +
         "מאנדיי לא הגיבה בזמן לבקשת העדכון. לא ידוע אם השינוי נשמר. יש לבדוק את השורה במאנדיי לפני ניסיון נוסף.";
     }
     if (!titles.length) { return why + ". לא נשמרו שינויים."; }
-    return "נכתב רק " + titles.join(", ") + ", ושאר הפעולה לא: " + why + ".";
+    return "נשמר רק " + titles.join(", ") + ", ושאר הפעולה לא: " + why + ".";
   }
   function titleOf(column) {
     var t = "";
@@ -2528,7 +2529,7 @@
     var x = agorot(typed[(stepWrites(a).filter(function (w) { return w.input; })[0] || {}).column]), credit = agorot(r.credit_approved);
     var full = (stepWrites(rowActions(r).filter(function (o) { return o.key === "refund_done"; })[0] || { steps: [] })
       .filter(function (w) { return w.kind === "status"; })[0] || {}).label;
-    return x !== null && credit && x >= credit ? "הסכום אינו קטן מסכום לזיכוי (" + amountText(r.credit_approved) + ")" +
+    return x !== null && credit && x >= credit ? "הסכום שווה לסכום לזיכוי (" + amountText(r.credit_approved) + ") או גדול ממנו" +
       (full ? ". אם כל סכום לזיכוי הוחזר, מסמנים \"" + full + "\"." : ".") : "";
   }
   function changedSince(before, now, cols) {
@@ -3585,7 +3586,9 @@
     }, function (e) {
       if (BILL !== bill) { return; }
       bill.phase = "failed";
-      bill.error = "פרטי החברה לא נקראו ממאנדיי: " + (BILL_READ_ERRORS[e && e.code] || BILL_ERRORS[e && e.code] || BILL_READ_ERRORS.monday) +
+      /* the reason when there is one: the fallback was the sentence itself, said twice (the second review of 26.11) */
+      var billWhy = BILL_READ_ERRORS[e && e.code] || BILL_ERRORS[e && e.code] || "";
+      bill.error = "פרטי החברה לא נקראו ממאנדיי" + (billWhy && billWhy !== BILL_READ_ERRORS.monday ? ": " + billWhy : "") +
         ". לא נשמרו שינויים.";
       bill.detail = (e && e.text) || "";
       use("bill", { phase: "failed", code: useWord(e && e.code) || "monday" });
@@ -4039,7 +4042,8 @@
   var REFRESH_FAILED = "";
   function refreshFailedWords(e) {
     var key = e && e.error;
-    return "הרענון נכשל, ומוצגים הנתונים הקודמים" + (ERRORS[key] ? ": " + ERRORS[key] : key ? " (" + key + ")." : ".");
+    /* never an internal code on the screen (the second review of 26.11): a reason the page has words for, or none */
+    return "הרענון נכשל, ומוצגים הנתונים הקודמים" + (ERRORS[key] ? ": " + ERRORS[key] : key === "view_error" ? ": " + VIEW_ERROR : ".");
   }
   /* QA 26.11 (H): what changed with the move, in four lines, for its first weeks - the legend is about 17,000 characters,
      and this is the short way in. Closed, it stays closed in this browser (localStorage, best effort: where the browser

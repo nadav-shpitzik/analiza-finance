@@ -1850,8 +1850,8 @@ REFRESH_FAILED = "הרענון נכשל, ומוצגים הנתונים הקוד�
 @pytest.mark.parametrize("failure, said", [
     ({"status": 503, "error": "finance_unavailable"},
      REFRESH_FAILED + ": לא הצלחנו לטעון עכשיו את לוחות החיובים. אפשר לנסות שוב בעוד כמה דקות."),
-    ({"status": 500, "error": "http_500"}, REFRESH_FAILED + " (http_500)."),
-    ({"blocked": True, "status": 401, "error": "unauthorized"}, REFRESH_FAILED + " (unauthorized)."),
+    ({"status": 500, "error": "http_500"}, REFRESH_FAILED + "."),   # never the code on the screen
+    ({"blocked": True, "status": 401, "error": "unauthorized"}, REFRESH_FAILED + "."),   # never the code on the screen
     ({"message": "Failed to fetch"}, REFRESH_FAILED + "."),                  # no answer at all
 ])
 def test_a_refresh_that_fails_keeps_the_desk_and_what_was_typed_and_says_so_beside_the_readings_time(failure, said):

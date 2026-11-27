@@ -142,7 +142,7 @@ def test_a_proposals_press_says_it_is_not_to_be_proposed_and_a_marks_says_its_ro
 
 @pytest.mark.parametrize("word, says", [("evidence_changed", "ההתראה השתנתה מאז שהוצגה"), ("other_reading", "המסך התעדכן"),
                                         ("dismissals_unavailable", "לא הצלחנו לשמור עכשיו"),
-                                        ("http_500", "לא הוסתר כלום (http_500).")])
+                                        ("http_500", "לא הוסתר כלום. אפשר לנסות שוב בעוד רגע.")])
 def test_a_refused_press_says_why_hides_nothing_and_asks_the_desk_again_when_the_screen_is_behind(word, says):
     got = run([{"show": TASKS}, {"click": [{"nag": "books_doc_unclear:50501", "nagFrom": "list"}]},
                {"click": [{"nagGo": "1"}]}], refusal=word, gets=2)

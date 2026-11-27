@@ -441,7 +441,7 @@ def tick_email(company: str, summary: dict, message: str, base_url: str) -> dict
     if summary.get("run_id") is not None:
         items.append(f"סבב {summary['run_id']}: {summary.get('probed', 0)} קריאות ב-{summary.get('elapsed_s', 0)} שניות")
     if summary.get("catching_up"):
-        items.append("העותק עוד משלים את ההעתקה: חור במספור לא נשפט עד שהחזית מגיעה לסוף")
+        items.append("העותק עוד משלים את ההעתקה: חור במספור לא נבדק עד שהחזית מגיעה לסוף")
     health = base_url.rstrip("/") + "/health"
     body = f"<p>{escape(message)}</p>"
     if items:

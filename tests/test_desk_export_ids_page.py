@@ -237,7 +237,7 @@ def test_each_row_takes_the_first_of_its_leads_that_holds_a_number_and_the_rest_
     # right under it: two rows whose leads monday did not answer (r4, and r7's answered from another board), one whose
     # lead holds none, one with no lead
     assert info[at + 1:at + 4] == [
-        ("שימו לב", "ל-2 תקבולים אין ת.ז בקובץ: הלידים שלהם לא נמצאו בלוח הלידים במאנדיי (נמחקו, הועברו ללוח אחר, או "
+        ("לתשומת לבך", "ל-2 תקבולים אין ת.ז בקובץ: הלידים שלהם לא נמצאו בלוח הלידים במאנדיי (נמחקו, הועברו ללוח אחר, או "
                     "שאין לך גישה אליהם)."),
         ("תקבולים שבליד שלהם אין ת.ז", 1), ("תקבולים בלי ליד", 1)]
     assert got["toasts"][-1] == "קובץ האקסל עם ת.ז יורד: 7 תקבולים. ל-4 מהם אין ת.ז, ובגיליון \"פרטים\" כתוב למה."
