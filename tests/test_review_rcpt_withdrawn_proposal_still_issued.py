@@ -7,7 +7,7 @@ and keeps the result in the part's `receipts`. R5's `hide` (app/desk/dismissals.
 touches `receipts`, and `merge` lays them as they were. So on the same screen:
 - the students' list says the proposal to write 62702 in this row was rejected,
 - the row's chip says "הופקה בחשבשבת", its title "חשבונית מס/קבלה 62702 תקפה בחשבשבת, אחת בלבד בשם ובסכום של התקבול...",
-- the queue's line counts it among "זוהתה קבלה בחשבשבת: יש לעדכן את סטטוס שליחת הקבלה".
+- the queue's line counts it among "זוהתה קבלה בחשבשבת: יש לשלוח ...".
 "לא להציע" is R5's word for a wrong proposal ("a wrong proposal must stop showing too"): the match by name and amount that the
 person refused is exactly the evidence "found" rests on. She is told to mark a receipt sent on a payment whose receipt the
 desk has no evidence of any more.

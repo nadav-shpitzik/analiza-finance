@@ -168,7 +168,9 @@ the deployment's `/health` and `/check` (0301 says where it stands).
   invoice-receipt carrying it, answered by the books (not `missing`) and on a card of the row's name, or when the desk proposes
   the row a number (D4's proposal: from the era on, and "לא להציע" takes the label with it, dismissals.py `hide`) - the second
   review of 26.11 found "issued" on another payment's, year's or person's receipt and on one the books answered "not found";
-  its number in the chip's title and in the details; "ממתין לעדכון" when a number it cites is just past the end of its series
+  its number in the chip's title and in the details, and in the title what is left: issuing a receipt in Hashavshevet does
+  not send it (Nadav 27.11), so the title, the legend and the line over the queue ask to send it and mark "יצאה" (view.py
+  `RECEIPT_ISSUED_TODO`; the line's own words, "אותה" or "את הקבלות"); "ממתין לעדכון" when a number it cites is just past the end of its series
   (`late_numbers`, counted `later`); else "לא זוהתה בחשבשבת", which is not "none issued" (the legend says so). A chip beside the
   books' others under the state, never in "שליחת קבלה" (a word wide: "בחשבשבת" broke in the middle there), two lines at most at
   1280 and 1400 (tests/test_desk_books_page.py); the line over the queue, its split, is GET /api/desk/totals `receipts`

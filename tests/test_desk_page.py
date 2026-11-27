@@ -22,6 +22,7 @@ import json
 import re
 import shutil
 import subprocess
+from html import unescape
 from pathlib import Path
 
 import pytest
@@ -2199,21 +2200,24 @@ def test_a_pending_receipt_says_what_the_books_hold_of_it_under_its_state_and_in
 
 def test_the_queues_line_says_the_servers_split_in_words():
     one = lambda totals, books=ISSUED: _queue(books, {"count": 1, "sums": {"money_in": "4000"}, "receipts": totals})[0]
-    line = lambda html: re.search(r'<p class="fin-rcpt-line">(.*?)</p>', html).group(1)
-    # Gemini's review of 26.11: a receipt identified in the books is not one sent, so the line asks for the status, not "יצאה"
-    I = "יש לעדכן את סטטוס שליחת הקבלה בהתאם למצבה בפועל."
+    # the line as the screen shows it: its quotes are escaped in the html
+    line = lambda html: unescape(re.search(r'<p class="fin-rcpt-line">(.*?)</p>', html).group(1))
+    # Nadav 27.11: issuing a receipt in the books does not send it, so the line asks to send it and mark "יצאה"; one
+    # receipt is "אותה", several "את הקבלות"
+    I = "יש לשלוח אותה ולסמן \"יצאה\" בשליחת קבלה."
+    IS = "יש לשלוח את הקבלות ולסמן \"יצאה\" בשליחת קבלה."
     assert line(one({"issued": 1, "not": 0, "unknown": 0})) == "לתקבול זוהתה קבלה בחשבשבת: " + I
     assert line(one({"issued": 0, "not": 1, "unknown": 0}, UNSEEN)) == "לתקבול לא זוהתה קבלה בחשבשבת."
     assert line(one({"issued": 5, "not": 3, "unknown": 0})) == (
-        "ל-5 תקבולים זוהתה קבלה בחשבשבת: " + I + " ל-3 תקבולים לא זוהתה קבלה בחשבשבת.")
+        "ל-5 תקבולים זוהתה קבלה בחשבשבת: " + IS + " ל-3 תקבולים לא זוהתה קבלה בחשבשבת.")
     assert line(one({"issued": 1, "not": 7, "unknown": 0})) == (
         "לתקבול אחד זוהתה קבלה בחשבשבת: " + I + " ל-7 תקבולים לא זוהתה קבלה בחשבשבת.")
-    assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "לכל התקבולים זוהתה קבלה בחשבשבת: " + I
+    assert line(one({"issued": 4, "not": 0, "unknown": 0})) == "לכל התקבולים זוהתה קבלה בחשבשבת: " + IS
     assert line(one({"issued": 0, "not": 4, "unknown": 0}, UNSEEN)) == "לאף תקבול לא זוהתה קבלה בחשבשבת."
     assert line(one({"issued": 0, "not": 0, "unknown": 4}, None)) == "לא ניתן לבדוק כרגע אם הקבלות הופקו בחשבשבת: אין השוואה עדכנית."
     # the second review of 26.11: a number just past the end of its series is neither issued nor missing yet
     assert line(one({"issued": 2, "not": 1, "later": 1, "unknown": 0})) == (
-        "ל-2 תקבולים זוהתה קבלה בחשבשבת: " + I + " לתקבול אחד לא זוהתה קבלה בחשבשבת. בתקבול אחד מספר החשבונית טרם "
+        "ל-2 תקבולים זוהתה קבלה בחשבשבת: " + IS + " לתקבול אחד לא זוהתה קבלה בחשבשבת. בתקבול אחד מספר החשבונית טרם "
         "נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")
     assert line(one({"issued": 0, "not": 0, "later": 3, "unknown": 0})) == (
         "מספרי החשבוניות בכל השורות טרם נמצאו בעותק נתוני חשבשבת, שמתעדכן מדי שעה.")

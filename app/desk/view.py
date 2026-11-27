@@ -363,6 +363,10 @@ RECEIPT_HOW_SAID = {
     # the second review of 26.11: a number just past the end of its series is issued since the copy's last hourly read
     "not_yet": "מספר החשבונית {number} טרם נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה"}
 RECEIPT_UNSEEN_WHY = "לא נמצאה התאמה בחשבשבת לפי מספר, שם וסכום. ייתכן שהקבלה הופקה בשם או בסכום אחר."
+# Nadav 27.11: issuing an invoice-receipt in Hashavshevet does not send it to the student, so a receipt the books hold still
+# has to be sent and marked - said in the issued chip's title (books.py receipt_laid) and in the legend; the line over the
+# queue says it in its own words, singular or plural (finance.js receiptsLine)
+RECEIPT_ISSUED_TODO = "ההפקה בחשבשבת לא שולחת אותה: יש לשלוח אותה ולסמן %s בשליחת קבלה." % _q(RECEIPT[R_SENT])
 LEGEND = {
     "b2c": [
         ("תקבול", "שורה אחת בלוח Student Charge: תשלום אחד של סטודנט/ית."),
@@ -439,10 +443,10 @@ LEGEND = {
         ("%s · %s · %s" % (RECEIPT_ISSUED_SAID, RECEIPT_UNSEEN_SAID, RECEIPT_LATER_SAID),
          "מתחת לשיבוץ של תקבול ב%s, ובפרטים שלו. %s: יש בחשבשבת חשבונית מס/קבלה תקפה עליו - המספר שבאסמכתת חשבונית, "
          "באותו שם ובאותו סכום, או הצעה של רישום מחשבשבת (אחת בלבד בשם ובסכום שלו, עד %d יום מהתאריך שלו, ששום שורה לא "
-         "מפנה אליה). כלומר הקבלה הופקה, ואת סטטוס שליחת הקבלה יש לעדכן במאנדיי לפי מצבה בפועל. המספר שלה כתוב "
-         "במעבר עם העכבר ובפרטים. %s: %s. %s: מספר החשבונית שבשורה טרם נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה. מעל הרשימה "
+         "מפנה אליה). כלומר הקבלה הופקה. %s המספר שלה כתוב "
+         "במעבר עם העכבר ובפרטים. %s: %s %s: מספר החשבונית שבשורה טרם נמצא בעותק נתוני חשבשבת, שמתעדכן מדי שעה. מעל הרשימה "
          "כתוב כמה מכל אחד. בלי השוואה עדכנית לחשבשבת לא כתוב אף אחד מהם."
-         % (_q(RECEIPT_QUEUE_LABEL), _q(RECEIPT_ISSUED_SAID), FILL_WINDOW_DAYS,
+         % (_q(RECEIPT_QUEUE_LABEL), _q(RECEIPT_ISSUED_SAID), FILL_WINDOW_DAYS, RECEIPT_ISSUED_TODO,
             _q(RECEIPT_UNSEEN_SAID), RECEIPT_UNSEEN_WHY, _q(RECEIPT_LATER_SAID))),
         # the second review of 26.11: the queue's days, drawn in every list a pending receipt is in, were in no term
         ("ממתין N ימים",

@@ -89,10 +89,13 @@ def test_merge_lays_it_on_the_queue_from_a_current_part_of_this_reading():
     rows = {r["id"]: r for r in db.merge(view, current(part, view))["b2c"]["rows"]}
     assert rows["1"]["receipt_books"] == {
         "issued": True, "number": "62701", "how": "cited", "text": "הופקה בחשבשבת",
-        "title": "חשבונית מס/קבלה 62701 תקפה בחשבשבת, המספר שבאסמכתת חשבונית, באותו שם ובאותו סכום"}
+        "title": "חשבונית מס/קבלה 62701 תקפה בחשבשבת, המספר שבאסמכתת חשבונית, באותו שם ובאותו סכום. " + fd.RECEIPT_ISSUED_TODO}
     assert rows["2"]["receipt_books"]["how"] == "found"
     assert rows["2"]["receipt_books"]["title"].startswith("חשבונית מס/קבלה 62702 תקפה בחשבשבת, אחת בלבד בשם ובסכום")
     assert "30 יום" in rows["2"]["receipt_books"]["title"]
+    # Nadav 27.11: issuing does not send it - a green chip says what is left, in its title
+    assert rows["2"]["receipt_books"]["title"].endswith(fd.RECEIPT_ISSUED_TODO)
+    assert fd.RECEIPT_ISSUED_TODO == "ההפקה בחשבשבת לא שולחת אותה: יש לשלוח אותה ולסמן \"יצאה\" בשליחת קבלה."
     for i in ("3", "4", "5", "6", "7", "8", "10"):
         assert rows[i]["receipt_books"] == {"issued": False, "text": "לא זוהתה בחשבשבת", "title": fd.RECEIPT_UNSEEN_WHY}
     assert "receipt_books" not in rows["9"]
@@ -126,7 +129,7 @@ def test_the_split_is_counted_once_on_the_rows_of_the_list():
 def test_the_legend_says_what_each_means_and_that_none_identified_is_not_none_issued():
     words = dict(fd.LEGEND["b2c"])
     said = next(t for k, t in words.items() if fd.RECEIPT_UNSEEN_SAID in k)
-    assert fd.RECEIPT_ISSUED_SAID in said and "יש לעדכן במאנדיי" in said and "מתחת לשיבוץ" in said
+    assert fd.RECEIPT_ISSUED_SAID in said and fd.RECEIPT_ISSUED_TODO in said and "מתחת לשיבוץ" in said
     assert "ייתכן שהקבלה הופקה בשם או בסכום אחר" in said and "30 יום" in said
 
 
@@ -149,3 +152,17 @@ def test_the_totals_of_the_queue_carry_the_split_and_no_other_list_does(booked):
     assert t["count"] == len(queue) and t["receipts"] == want and want["issued"] >= 1
     for other in ("", "tasks", "done"):
         assert "receipts" not in booked.client.get(path % (other, taken, key), headers=auth).json()
+
+
+def test_the_legend_says_what_is_left_of_an_issued_receipt_and_no_sentence_ends_twice():
+    """Nadav 27.11: issuing a receipt in Hashavshevet does not send it, so the legend's entry for the receipts' three chips
+    says what is left; and a sentence that ends in a constant's own period never gets a second one (the entry said
+    "בסכום אחר.." until 27.11). Every legend, every term and sentence: exactly two periods are a slip, an ellipsis is not."""
+    import re
+    entry = [s for t, s in fd.LEGEND["b2c"] if t.startswith(fd.RECEIPT_ISSUED_SAID)]
+    assert len(entry) == 1 and fd.RECEIPT_ISSUED_TODO in entry[0]
+    assert "לפי מצבה בפועל" not in entry[0]
+    twice = re.compile(r"(?<!\.)\.\s?\.(?!\.)")
+    for tab, entries in fd.LEGEND.items():
+        for term, said in entries:
+            assert not twice.search(term) and not twice.search(said), (tab, term)

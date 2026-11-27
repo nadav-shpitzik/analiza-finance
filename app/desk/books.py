@@ -109,7 +109,8 @@ from . import dismissals as dz
 from .dismissals_store import DismissalRefused
 from .reading import AC, ACCOUNTS_BOARD, B2, masked
 from .view import (BOOKS_FILL_BUTTON, BOOKS_LIST_TITLE, BOOKS_UNCLEAR_TITLE, DESK_TZ, LEGEND_FLAGS, P_PROBLEM, P_UNPAID,
-                   RECEIPT_HOW_SAID, RECEIPT_ISSUED_SAID, RECEIPT_LATER_SAID, RECEIPT_UNSEEN_SAID, RECEIPT_UNSEEN_WHY,
+                   RECEIPT_HOW_SAID, RECEIPT_ISSUED_SAID, RECEIPT_ISSUED_TODO, RECEIPT_LATER_SAID, RECEIPT_UNSEEN_SAID,
+                   RECEIPT_UNSEEN_WHY,
                    TASK_STATES, status_word)
 
 logger = logging.getLogger("analiza_finance.desk")
@@ -562,8 +563,9 @@ def receipt_laid(found: dict) -> dict:
         return {"issued": None, "number": found["number"], "how": "not_yet", "text": RECEIPT_LATER_SAID,
                 "title": RECEIPT_HOW_SAID["not_yet"].format(number=found["number"])}
     if found:
+        # Nadav 27.11: issuing does not send it, so the title says what is left (a green chip is not a receipt sent)
         return {"issued": True, "number": found["number"], "how": found["how"], "text": RECEIPT_ISSUED_SAID,
-                "title": RECEIPT_HOW_SAID[found["how"]].format(number=found["number"])}
+                "title": RECEIPT_HOW_SAID[found["how"]].format(number=found["number"]) + ". " + RECEIPT_ISSUED_TODO}
     return {"issued": False, "text": RECEIPT_UNSEEN_SAID, "title": RECEIPT_UNSEEN_WHY}
 
 

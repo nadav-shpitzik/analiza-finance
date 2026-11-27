@@ -608,8 +608,9 @@
     return n === 0 ? "ממתין מהיום" : "ממתין " + plural(-n, "יום אחד", "ימים");
   }
   /* Nadav 26.11 (receipts go out slowly): under the state of a payment in "שולם, קבלה לטיפול", beside the books' other
-     chips, what the books say of its receipt - issued there, so only monday is behind ("הופקה בחשבשבת", its number in its
-     title), or none identified there ("לא זוהתה בחשבשבת"); the words and their title the server's (app/desk/books.py
+     chips, what the books say of its receipt - issued there, so what is left is to send it (issuing does not, Nadav 27.11)
+     and mark it ("הופקה בחשבשבת", its number in its title, and what is left), or none identified there ("לא זוהתה
+     בחשבשבת"); the words and their title the server's (app/desk/books.py
      receipt_laid, laid only from a current part of this reading), so nothing at all when the books are not laid. Not in
      "שליחת קבלה": that column is a word wide, and "בחשבשבת" broke in the middle there */
   function receiptBooks(r) {
@@ -637,10 +638,11 @@
     if (!n) { return ""; }
     if (x.unknown) { return "<p class=\"fin-rcpt-line\">" + esc(RECEIPTS_UNKNOWN) + "</p>"; }
     if (x.issued) {
-      /* Gemini's review of 26.11: an issued receipt is not proof that it was sent */
+      /* Nadav 27.11: issuing it in Hashavshevet does not send it to the student, so what is left is to send it and mark
+         "יצאה" (Gemini's review of 26.11, not knowing, had asked only to update the status) */
       out.push((x.issued === n ? (n === 1 ? "לתקבול זוהתה קבלה" : "לכל התקבולים זוהתה קבלה")
         : x.issued === 1 ? "לתקבול אחד זוהתה קבלה" : "ל-" + NF.format(x.issued) + " תקבולים זוהתה קבלה") +
-        " בחשבשבת: יש לעדכן את סטטוס שליחת הקבלה בהתאם למצבה בפועל.");
+        " בחשבשבת: יש לשלוח " + (x.issued === 1 ? "אותה" : "את הקבלות") + " ולסמן \"יצאה\" בשליחת קבלה.");
     }
     if (x.not) {
       out.push((x.not === n ? (n === 1 ? "לתקבול לא זוהתה קבלה" : "לאף תקבול לא זוהתה קבלה")
